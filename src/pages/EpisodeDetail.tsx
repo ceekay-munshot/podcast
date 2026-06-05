@@ -32,6 +32,7 @@ export default function EpisodeDetail() {
   const [tab, setTab] = useState<Tab>(paramTab ?? 'summary')
   const [jumpTo, setJumpTo] = useState<string | null>(null)
   const [jumpTick, setJumpTick] = useState(0) // re-fires the scroll even when re-jumping the same segment
+  const [jumpLabel, setJumpLabel] = useState<string | undefined>(undefined) // the takeaway/moment we jumped from
   const [shared, setShared] = useState(false)
 
   const episode = id ? episodeById(id) : undefined
@@ -82,10 +83,11 @@ export default function EpisodeDetail() {
     { id: 'transcript', label: 'Transcript', show: true },
   ]
 
-  function openTranscript(segmentId?: string) {
+  function openTranscript(segmentId?: string, label?: string) {
     setTab('transcript')
     if (segmentId) {
       setJumpTo(segmentId)
+      setJumpLabel(label)
       setJumpTick((n) => n + 1)
     }
   }
@@ -158,7 +160,9 @@ export default function EpisodeDetail() {
           {tab === 'takeaways' && <TakeawaysTab episode={episode} onOpen={openTranscript} />}
           {tab === 'qa' && <QATab episode={episode} />}
           {tab === 'moments' && <MomentsTab episode={episode} hasTranscript={hasTranscript} onOpen={openTranscript} />}
-          {tab === 'transcript' && <TranscriptTab episode={episode} />}
+          {tab === 'transcript' && (
+            <TranscriptTab episode={episode} focusId={jumpTo} focusLabel={jumpLabel} focusTick={jumpTick} />
+          )}
         </>
       )}
     </div>
@@ -226,7 +230,7 @@ function SummaryTab({ episode }: { episode: Episode }) {
 }
 
 // ── Takeaways tab — numbered, with copy ──────────────────────────────────────
-function TakeawaysTab({ episode, onOpen }: { episode: Episode; onOpen: (segmentId?: string) => void }) {
+function TakeawaysTab({ episode, onOpen }: { episode: Episode; onOpen: (segmentId?: string, label?: string) => void }) {
   const s = episode.summary!
   const terms = entityTerms(episode.entities)
   const segments = episode.transcript
@@ -247,13 +251,13 @@ function TakeawaysTab({ episode, onOpen }: { episode: Episode; onOpen: (segmentI
               <div
                 role={anchor ? 'button' : undefined}
                 tabIndex={anchor ? 0 : undefined}
-                onClick={anchor ? () => onOpen(anchor) : undefined}
+                onClick={anchor ? () => onOpen(anchor, t.title) : undefined}
                 onKeyDown={
                   anchor
                     ? (e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault()
-                          onOpen(anchor)
+                          onOpen(anchor, t.title)
                         }
                       }
                     : undefined
@@ -318,7 +322,7 @@ function MomentsTab({
 }: {
   episode: Episode
   hasTranscript: boolean
-  onOpen: (segmentId?: string) => void
+  onOpen: (segmentId?: string, label?: string) => void
 }) {
   const moments = episode.summary!.moments
   const terms = entityTerms(episode.entities)
@@ -342,7 +346,7 @@ function MomentsTab({
           return (
             <li key={m.id}>
               <button
-                onClick={() => clickable && onOpen(m.segmentId)}
+                onClick={() => clickable && onOpen(m.segmentId, m.title)}
                 className={`flex w-full items-start gap-md rounded-xl border border-outline-variant bg-surface-container-lowest p-md text-left shadow-card ${
                   clickable ? 'lift hover:shadow-card-hover' : 'cursor-default'
                 }`}
@@ -367,11 +371,32 @@ function MomentsTab({
 }
 
 // ── Transcript tab — Highlights list ↔ transcript ────────────────────────────
-function TranscriptTab({ episode }: { episode: Episode }) {
+function TranscriptTab({
+  episode,
+  focusId,
+  focusLabel,
+  focusTick,
+}: {
+  episode: Episode
+  focusId?: string | null
+  focusLabel?: string
+  focusTick?: number
+}) {
   const [activeRef, setActiveRef] = useState<string | null>(null)
+  // The segment we jumped to from a takeaway/moment — stays highlighted so the
+  // reader knows exactly which passage the summary point came from.
+  const [focus, setFocus] = useState<{ id: string; label?: string } | null>(
+    focusId ? { id: focusId, label: focusLabel } : null,
+  )
   const [q, setQ] = useState('')
   const segments = episode.transcript ?? []
   const moments = episode.summary?.moments.filter((m) => m.segmentId) ?? []
+
+  // Re-apply the persistent highlight whenever a fresh jump arrives.
+  useEffect(() => {
+    if (focusId) setFocus({ id: focusId, label: focusLabel })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusTick])
 
   if (!segments.length) {
     return (
@@ -390,6 +415,7 @@ function TranscriptTab({ episode }: { episode: Episode }) {
   const visible = needle ? segments.filter((s) => s.text.toLowerCase().includes(needle)) : segments
 
   function jump(segmentId?: string, refId?: string) {
+    setFocus(null) // a Highlights-panel pick takes over from the takeaway focus
     if (refId) setActiveRef(refId)
     if (segmentId) document.getElementById(`seg-${segmentId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
@@ -438,7 +464,14 @@ function TranscriptTab({ episode }: { episode: Episode }) {
         </div>
         <div className="flex flex-col">
           {visible.map((seg) => (
-            <TranscriptRow key={seg.id} seg={seg} activeRef={activeRef} onHover={setActiveRef} />
+            <TranscriptRow
+              key={seg.id}
+              seg={seg}
+              activeRef={activeRef}
+              onHover={setActiveRef}
+              focused={focus?.id === seg.id}
+              focusLabel={focus?.id === seg.id ? focus.label : undefined}
+            />
           ))}
           {visible.length === 0 && <p className="py-md text-center text-metadata text-secondary">No lines match “{q}”.</p>}
         </div>
@@ -451,24 +484,37 @@ function TranscriptRow({
   seg,
   activeRef,
   onHover,
+  focused = false,
+  focusLabel,
 }: {
   seg: TranscriptSegment
   activeRef: string | null
   onHover: (ref: string | null) => void
+  /** The segment a takeaway/moment jumped to — persistently highlighted. */
+  focused?: boolean
+  focusLabel?: string
 }) {
   const isActive = !!seg.highlight && activeRef === seg.highlight.refId
   return (
     <div
       id={`seg-${seg.id}`}
-      className={`grid scroll-mt-24 grid-cols-[64px_84px_1fr] gap-2 rounded-lg px-2 py-3 transition-colors ${
-        isActive ? 'bg-[#eff5ff]' : ''
+      className={`scroll-mt-24 rounded-lg py-3 transition-colors ${
+        focused ? 'border-l-4 border-primary bg-[#eff5ff] pl-3 pr-2' : isActive ? 'bg-[#eff5ff] px-2' : 'px-2'
       }`}
     >
-      <span className="text-metadata font-semibold text-primary">{seg.timestamp}</span>
-      <span className={`text-metadata font-semibold ${seg.role === 'guest' ? 'text-on-surface' : 'text-on-surface-variant'}`}>
-        {seg.speaker}
-      </span>
-      <p className="text-body-md leading-relaxed text-on-surface">{renderText(seg, activeRef, onHover)}</p>
+      {focused && (
+        <p className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold text-primary">
+          <Icon name="my_location" size={14} className="shrink-0" />
+          <span className="truncate">{focusLabel ?? 'You jumped here'}</span>
+        </p>
+      )}
+      <div className="grid grid-cols-[64px_84px_1fr] gap-2">
+        <span className="text-metadata font-semibold text-primary">{seg.timestamp}</span>
+        <span className={`text-metadata font-semibold ${seg.role === 'guest' ? 'text-on-surface' : 'text-on-surface-variant'}`}>
+          {seg.speaker}
+        </span>
+        <p className="text-body-md leading-relaxed text-on-surface">{renderText(seg, activeRef, onHover)}</p>
+      </div>
     </div>
   )
 }

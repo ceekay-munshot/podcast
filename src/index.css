@@ -83,19 +83,20 @@
   }
 }
 
-/* Brief highlight when jumping to a transcript segment (from a takeaway, moment,
-   or search result). Color-only — a gentle cue that survives reduced-motion. */
+/* Arrival pulse when jumping to a transcript segment (from a takeaway or moment).
+   A ring that fades, so it layers over the segment's persistent highlight instead
+   of overriding its background. The highlight itself is what stays put. */
 @keyframes seg-flash {
-  0%,
-  18% {
-    background-color: rgba(37, 99, 235, 0.16);
+  0% {
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.4);
   }
   100% {
-    background-color: transparent;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0);
   }
 }
 .seg-flash {
-  animation: seg-flash 1.9s var(--ease-out);
+  border-radius: 0.5rem;
+  animation: seg-flash 1.6s var(--ease-out);
 }
 
 /* Minimal scrollbar to keep the editorial calm. */
