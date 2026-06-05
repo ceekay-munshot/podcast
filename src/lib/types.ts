@@ -97,8 +97,12 @@ export interface Episode {
   blurb: string
   /** Deep link to the episode at its origin (Apple Podcasts, YouTube, RSS). When absent, the UI falls back to a source search. */
   sourceUrl?: string
-  /** Publisher show-notes (trimmed) — the raw material the AI summary is generated from. */
+  /** Publisher show-notes (trimmed) — fallback material for the AI summary when no transcript exists. */
   notes?: string
+  /** Publisher-provided transcript file (SRT/VTT) from the feed, when available — preferred summary source. */
+  transcriptUrl?: string
+  /** Audio enclosure URL — source for Whisper transcription (paid/free-tier providers). */
+  audioUrl?: string
   entities: EpisodeEntities
   /** Present once status === 'ready'. */
   summary?: Summary

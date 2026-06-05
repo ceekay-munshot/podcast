@@ -59,7 +59,13 @@ export class NoApiKeyError extends Error {}
 // Generate a real AI summary from an episode's show-notes via /api/summary
 // (Claude). Throws NoApiKeyError when the server has no ANTHROPIC_API_KEY set,
 // so the UI can show a "connect a key" hint instead of a generic failure.
-export async function generateSummary(input: { title: string; show: string; notes: string }): Promise<Summary> {
+export async function generateSummary(input: {
+  title: string
+  show: string
+  notes?: string
+  transcriptUrl?: string
+  audioUrl?: string
+}): Promise<Summary> {
   const r = await fetch('/api/summary', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

@@ -94,13 +94,20 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const summarizeEpisode = useCallback(async (episode: Episode, podcast?: Podcast) => {
-    if (episode.summary || !episode.notes || summarizing.current.has(episode.id)) return
+    // Skip only if already summarized/in-flight, or there's nothing to summarize from.
+    if (episode.summary || (!episode.notes && !episode.transcriptUrl) || summarizing.current.has(episode.id)) return
     summarizing.current.add(episode.id)
     const setStatus = (status: Episode['status'], summary?: Episode['summary']) =>
       setEpisodes((prev) => prev.map((e) => (e.id === episode.id ? { ...e, status, ...(summary ? { summary } : {}) } : e)))
     setStatus('summarizing')
     try {
-      const summary = await api.generateSummary({ title: episode.title, show: podcast?.title ?? '', notes: episode.notes })
+      const summary = await api.generateSummary({
+        title: episode.title,
+        show: podcast?.title ?? '',
+        notes: episode.notes,
+        transcriptUrl: episode.transcriptUrl,
+        audioUrl: episode.audioUrl,
+      })
       setStatus('ready', summary)
       setNeedsApiKey(false)
     } catch (err) {

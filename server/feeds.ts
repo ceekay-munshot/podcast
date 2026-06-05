@@ -81,6 +81,16 @@ function attrOf(block: string, tag: string, attr: string): string {
   return m ? m[1] : ''
 }
 
+// Best publisher-provided transcript URL in an item (Podcasting 2.0 tag): prefer SRT, then VTT.
+function transcriptUrlFrom(block: string): string {
+  const tags = block.match(/<podcast:transcript\b[^>]*>/gi) || []
+  if (!tags.length) return ''
+  const urlOf = (tag: string) => (tag.match(/\burl\s*=\s*["']([^"']+)["']/i)?.[1] || '').replace(/&amp;/g, '&')
+  const srt = tags.find((t) => /application\/srt|format=SubRip/i.test(t))
+  const vtt = tags.find((t) => /text\/vtt|format=WebVTT/i.test(t))
+  return urlOf(srt || vtt || tags[0])
+}
+
 function unwrapCdata(s: string): string {
   return s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').trim()
 }
@@ -144,7 +154,9 @@ function parseEpisodes(xml: string, podcastId: string): Episode[] {
       signal: 'normal',
       blurb: truncate(notes, 200) || 'New episode — open the source to listen.',
       sourceUrl: link || undefined,
-      notes: notes ? notes.slice(0, 2500) : undefined, // material for the AI summary
+      notes: notes ? notes.slice(0, 2500) : undefined, // fallback material for the AI summary
+      transcriptUrl: transcriptUrlFrom(block) || undefined, // free publisher transcript, when present
+      audioUrl: attrOf(block, 'enclosure', 'url') || undefined, // for Whisper providers
       entities: { people: [], companies: [], themes: [] },
     })
   })
