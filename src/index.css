@@ -26,6 +26,15 @@
   -webkit-font-smoothing: antialiased;
 }
 
+/* Until the icon font is ready, hide glyphs so the raw ligature text (e.g.
+   "graphic_eq") never flashes. Reserve a glyph-width box so labels next to
+   icons don't shift on reveal. Toggled by the inline loader in index.html. */
+.fonts-loading .material-symbols-outlined {
+  visibility: hidden;
+  width: 1em;
+  overflow: hidden;
+}
+
 @layer base {
   html {
     scroll-behavior: smooth;
