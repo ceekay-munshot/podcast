@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Material Symbols ------------------------------------------------------- */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background text-on-background font-sans antialiased;
+    font-size: 16px;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: rgba(0, 112, 235, 0.16);
+    color: #001a41;
+  }
+}
+
+@layer components {
+  /* Intelligence module — 4px blue accent bar instead of a full border. */
+  .intel-bar {
+    @apply border-l-4 border-primary pl-md;
+  }
+  /* Citation / status chip with a soft blue tint. */
+  .chip-signal {
+    background: rgba(0, 112, 235, 0.08);
+    @apply text-primary;
+  }
+  /* Highlighted transcript span linked to a summary module. */
+  .transcript-mark {
+    @apply rounded px-1 cursor-pointer transition-colors;
+    background: rgba(173, 198, 255, 0.45);
+  }
+  .transcript-mark:hover,
+  .transcript-mark.is-active {
+    background: rgba(173, 198, 255, 0.95);
+  }
+}
+
+/* Minimal scrollbar to keep the editorial calm. */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #e2e2e2;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c1c6d7;
+}
