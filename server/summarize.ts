@@ -23,6 +23,9 @@ export interface SummarizeConfig {
   anthropicKey?: string
   /** Optional model override; otherwise a sensible per-provider default is used. */
   model?: string
+  // Transcription providers (threaded to the transcribe chain):
+  whisperKey?: string // paid primary (URL-based: Deepgram / AssemblyAI / OpenAI Whisper)
+  groqKey?: string // free-tier backup (Groq Whisper)
 }
 
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini'
@@ -92,7 +95,10 @@ export async function summarizeEpisode(input: SummarizeInput, config: SummarizeC
   const model = config.model || (provider === 'openai' ? DEFAULT_OPENAI_MODEL : DEFAULT_ANTHROPIC_MODEL)
 
   // Best available source: real transcript (provider chain) > show-notes.
-  const transcript = await transcribeEpisode({ title: input.title, transcriptUrl: input.transcriptUrl, audioUrl: input.audioUrl })
+  const transcript = await transcribeEpisode(
+    { title: input.title, transcriptUrl: input.transcriptUrl, audioUrl: input.audioUrl },
+    { whisperKey: config.whisperKey, groqKey: config.groqKey },
+  )
   const prompt = buildPrompt(input, transcript?.text ?? null)
 
   const cacheKey = `${provider}:${model}:${transcript ? 't' : 'n'}::${input.title}`

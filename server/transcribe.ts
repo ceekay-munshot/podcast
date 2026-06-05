@@ -48,6 +48,45 @@ export function captionsToText(raw: string): string {
     .trim()
 }
 
+// Parse an SRT/VTT timestamp ("HH:MM:SS,mmm" / "MM:SS.mmm") to seconds.
+function parseTimestamp(ts: string): number {
+  const m = ts.trim().match(/(?:(\d+):)?(\d{1,2}):(\d{2})[.,]\d{1,3}/)
+  if (!m) return 0
+  return (m[1] ? Number(m[1]) * 3600 : 0) + Number(m[2]) * 60 + Number(m[3])
+}
+
+// SRT/VTT → cue segments [{ start, text }].
+function captionsToSegments(raw: string): Array<{ start: number; text: string }> {
+  const segs: Array<{ start: number; text: string }> = []
+  for (const block of raw.replace(/\r/g, '').split(/\n\s*\n/)) {
+    const lines = block.split('\n').map((l) => l.trim()).filter(Boolean)
+    const cue = lines.find((l) => l.includes('-->'))
+    if (!cue) continue
+    const text = lines
+      .filter((l) => l !== cue && !/^\d+$/.test(l) && !/^WEBVTT/i.test(l) && !/^NOTE\b/i.test(l))
+      .map((l) => l.replace(/<[^>]+>/g, ''))
+      .join(' ')
+      .trim()
+    if (text) segs.push({ start: parseTimestamp(cue.split('-->')[0]), text })
+  }
+  return segs
+}
+
+// Join segments into plain text with a [m:ss] marker ~every minute, so the LLM
+// can cite REAL timestamps for the interesting moments instead of guessing.
+function segmentsToTimestampedText(segments: Array<{ start: number; text: string }>): string {
+  let out = ''
+  let nextMark = 0
+  for (const s of segments) {
+    if (s.start >= nextMark) {
+      out += ` [${Math.floor(s.start / 60)}:${String(Math.floor(s.start % 60)).padStart(2, '0')}] `
+      nextMark = s.start + 60
+    }
+    out += `${s.text} `
+  }
+  return out.replace(/\s+/g, ' ').trim()
+}
+
 async function fetchCaptions(url: string, maxBytes = 1_500_000, timeoutMs = 12_000): Promise<string> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -76,19 +115,92 @@ async function fetchCaptions(url: string, maxBytes = 1_500_000, timeoutMs = 12_0
   }
 }
 
-export async function transcribeEpisode(input: TranscribeInput, _config: TranscribeConfig = {}): Promise<TranscriptResult | null> {
+// Free-tier limits: Groq caps audio uploads (~25MB). Skip oversized files rather
+// than send a truncated/garbled clip — those fall back to show-notes for now
+// (long-episode chunking comes with the background-job upgrade).
+const MAX_AUDIO_BYTES = 24 * 1024 * 1024
+
+async function fetchAudioCapped(url: string, maxBytes: number, timeoutMs = 25_000): Promise<Uint8Array | null> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, { signal: controller.signal, headers: { 'user-agent': 'MunshotPodcasts/1.0' } })
+    if (!res.ok || !res.body) return null
+    const declared = Number(res.headers.get('content-length') || 0)
+    if (declared && declared > maxBytes) return null // too big for the free tier
+    const reader = res.body.getReader()
+    const chunks: Uint8Array[] = []
+    let total = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {})
+        return null // exceeded mid-stream — bail rather than upload a truncated file
+      }
+      chunks.push(value)
+    }
+    const out = new Uint8Array(total)
+    let offset = 0
+    for (const c of chunks) {
+      out.set(c, offset)
+      offset += c.byteLength
+    }
+    return out
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// Groq Whisper (OpenAI-compatible /audio/transcriptions). Returns '' on any
+// failure — including 429 rate-limits — so the caller falls back to show-notes.
+async function transcribeViaGroq(audioUrl: string, apiKey: string): Promise<string> {
+  const audio = await fetchAudioCapped(audioUrl, MAX_AUDIO_BYTES)
+  if (!audio) return ''
+  const form = new FormData()
+  form.append('file', new Blob([audio], { type: 'audio/mpeg' }), 'episode.mp3')
+  form.append('model', 'whisper-large-v3-turbo')
+  form.append('response_format', 'verbose_json') // includes segment timestamps
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 90_000)
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${apiKey}` },
+      body: form,
+      signal: controller.signal,
+    })
+    if (!res.ok) return '' // 429 / 413 / etc. → graceful fall back
+    const data = (await res.json()) as { text?: string; segments?: Array<{ start: number; text: string }> }
+    return data.segments?.length ? segmentsToTimestampedText(data.segments) : (data.text ?? '')
+  } catch {
+    return ''
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export async function transcribeEpisode(input: TranscribeInput, config: TranscribeConfig = {}): Promise<TranscriptResult | null> {
   // 1) FREE: publisher-provided transcript in the feed (Odd Lots, Acquired, …)
   if (input.transcriptUrl) {
-    const text = captionsToText(await fetchCaptions(input.transcriptUrl))
+    const raw = await fetchCaptions(input.transcriptUrl)
+    const segs = captionsToSegments(raw)
+    const text = segs.length ? segmentsToTimestampedText(segs) : captionsToText(raw)
     if (text.length > 200) return { text, source: 'feed' }
   }
 
-  // 2) PRIMARY (seam): paid Whisper on input.audioUrl when `_config.whisperKey` is set.
-  //    Download/stream the audio → transcription API → return { text, source: 'whisper-primary' }.
-  //    Needs the async/queue path for long episodes — wired in the next step.
+  // 2) PRIMARY (seam): paid Whisper on input.audioUrl when `config.whisperKey` is set.
+  //    URL-based providers (Deepgram/AssemblyAI) handle long audio server-side — wired
+  //    when the paid key is provided. Tried before the free-tier backup below.
 
-  // 3) BACKUP (seam): free-tier Whisper (Groq `_config.groqKey` or Workers AI `_config.workersAi`),
-  //    rate-limited. Same audio path; returns { text, source: 'whisper-backup' }.
+  // 3) BACKUP: free-tier Groq Whisper (rate-limit 429s fall through to show-notes).
+  if (config.groqKey && input.audioUrl) {
+    const text = await transcribeViaGroq(input.audioUrl, config.groqKey)
+    if (text.length > 200) return { text, source: 'whisper-backup' }
+  }
 
   return null
 }
