@@ -46,8 +46,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     let alive = true
     Promise.all([api.listPodcasts(), api.listEpisodes(), api.getWeekly()]).then(([p, e, w]) => {
       if (!alive) return
+      // Locked shows have no public feed — drop any (seed) episodes for them so a
+      // fabricated summary/transcript can never reach the UI. Single chokepoint:
+      // Home, Episodes, Search, Weekly, and the channel selector all derive from this.
+      const locked = new Set(p.filter((x) => x.locked).map((x) => x.id))
       setPodcasts(p)
-      setEpisodes(e)
+      setEpisodes(e.filter((ep) => !locked.has(ep.podcastId)))
       setWeekly(w)
       setLoading(false)
     })

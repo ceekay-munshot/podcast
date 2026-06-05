@@ -19,7 +19,8 @@ export const PODCASTS: Podcast[] = [
     source: 'podcast',
     color: '#0058bc',
     monogram: 'ST',
-    tracked: true,
+    tracked: false, // members-only, no public feed — can't be ingested
+    locked: true,
   },
   {
     id: 'iltb',
@@ -131,7 +132,8 @@ export const PODCASTS: Podcast[] = [
     source: 'youtube',
     color: '#d83b3b',
     monogram: 'AX',
-    tracked: false,
+    tracked: false, // no resolvable public feed — can't be ingested
+    locked: true,
   },
   {
     id: 'bg2',

@@ -32,6 +32,9 @@ export interface Podcast {
   /** Real cover art (square). When absent, the UI falls back to color + monogram. */
   artworkUrl?: string
   tracked: boolean
+  /** No public feed → episodes can't be ingested or transcribed. Rendered as a
+   *  locked show; its episodes are suppressed so users never see fabricated data. */
+  locked?: boolean
 }
 
 export interface Takeaway {

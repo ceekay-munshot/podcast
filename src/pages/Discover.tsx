@@ -19,7 +19,7 @@ export default function Discover() {
   const [query, setQuery] = useState('')
   const [accepted, setAccepted] = useState<string | null>(null)
 
-  const tracked = podcasts.filter((p) => p.tracked)
+  const tracked = podcasts.filter((p) => p.tracked && !p.locked)
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -120,6 +120,37 @@ export default function Discover() {
 }
 
 function PodcastCard({ podcast, onToggle }: { podcast: Podcast; onToggle: () => void }) {
+  // Locked = no public feed. Can't be tracked, ingested, or transcribed — render
+  // it plainly as locked rather than letting it imply analyzable content.
+  if (podcast.locked) {
+    return (
+      <div className="flex items-center gap-md rounded-xl border border-dashed border-outline-variant bg-surface-container-low p-md">
+        <div className="relative shrink-0">
+          <CoverTile podcast={podcast} className="h-16 w-16 opacity-50 grayscale" rounded="rounded-xl" showSource />
+          <span className="absolute inset-0 grid place-items-center">
+            <Icon name="lock" size={22} className="text-on-surface" />
+          </span>
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h4 className="text-[16px] font-semibold text-on-surface-variant">{podcast.title}</h4>
+            <span className="inline-flex items-center gap-1 rounded-full border border-outline-variant px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-secondary">
+              <Icon name="lock" size={11} /> Locked
+            </span>
+          </div>
+          <p className="text-[12px] text-secondary">No public feed — episodes can't be ingested or transcribed.</p>
+          <p className="mt-0.5 line-clamp-1 text-metadata text-outline">{podcast.description}</p>
+        </div>
+        <span
+          className="grid h-9 w-9 shrink-0 cursor-not-allowed place-items-center rounded-full border border-outline-variant text-outline"
+          title="No public feed — can't be tracked"
+          aria-label={`${podcast.title} is locked — no public feed`}
+        >
+          <Icon name="lock" size={18} />
+        </span>
+      </div>
+    )
+  }
   const tracked = podcast.tracked
   return (
     <div

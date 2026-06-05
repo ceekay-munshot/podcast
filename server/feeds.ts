@@ -164,7 +164,9 @@ function parseEpisodes(xml: string, podcastId: string): Episode[] {
 }
 
 async function episodesForSource(src: Source): Promise<Episode[]> {
-  if (!src.feedUrl) return mockFor(src.id)
+  // No public feed → locked show. Never serve its seed episodes: a fabricated
+  // summary/transcript must not reach users. The UI renders it as a locked show.
+  if (!src.feedUrl) return []
   const xml = await fetchFeedHead(src.feedUrl)
   const episodes = parseEpisodes(xml, src.id)
   return episodes.length ? episodes : mockFor(src.id)
