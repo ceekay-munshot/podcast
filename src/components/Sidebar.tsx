@@ -34,16 +34,6 @@ export function Sidebar() {
           </li>
         ))}
       </ul>
-
-      {/* Plan card */}
-      <div className="rounded-xl border border-outline-variant bg-surface-container-low p-3">
-        <div className="mb-0.5 flex items-center gap-1.5">
-          <Icon name="auto_awesome" size={16} className="text-primary" fill />
-          <span className="text-[13px] font-semibold text-on-surface">Munshot Pro</span>
-        </div>
-        <p className="text-[12px] text-secondary">Premium plan</p>
-        <button className="mt-1 text-[12px] font-semibold text-primary hover:underline">Manage Plan</button>
-      </div>
     </nav>
   )
 }
