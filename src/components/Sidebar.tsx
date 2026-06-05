@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { Icon } from './Icon'
+import { WeeklySubscribe } from './WeeklySubscribe'
 
 const NAV = [
   { to: '/', label: 'Home', icon: 'home', end: true },
@@ -19,7 +20,7 @@ export function Sidebar() {
       </div>
 
       {/* Primary nav */}
-      <ul className="flex flex-1 flex-col gap-1">
+      <ul className="flex flex-col gap-1">
         {NAV.map((item) => (
           <li key={item.to}>
             <NavLink to={item.to} end={item.end} className={navClass}>
@@ -32,6 +33,10 @@ export function Sidebar() {
             </NavLink>
           </li>
         ))}
+        {/* Weekly-brief subscription — small bell that opens a popup */}
+        <li className="mt-0.5">
+          <WeeklySubscribe />
+        </li>
       </ul>
     </nav>
   )
