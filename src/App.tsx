@@ -2,6 +2,7 @@ import { Route, Routes, Link } from 'react-router-dom'
 import { AppDataProvider } from './store/AppData'
 import { DateRangeProvider } from './store/DateRange'
 import { ChannelFilterProvider } from './store/ChannelFilter'
+import { SentimentProvider } from './store/Sentiment'
 import { Layout } from './components/Layout'
 import { Icon } from './components/Icon'
 import Home from './pages/Home'
@@ -16,17 +17,19 @@ export default function App() {
     <AppDataProvider>
       <DateRangeProvider>
         <ChannelFilterProvider>
-          <Routes>
-            <Route element={<Layout />}>
-              <Route index element={<Home />} />
-              <Route path="discover" element={<Discover />} />
-              <Route path="episodes" element={<Episodes />} />
-              <Route path="episodes/:id" element={<EpisodeDetail />} />
-              <Route path="weekly" element={<Weekly />} />
-              <Route path="search" element={<Search />} />
-              <Route path="*" element={<NotFound />} />
-            </Route>
-          </Routes>
+          <SentimentProvider>
+            <Routes>
+              <Route element={<Layout />}>
+                <Route index element={<Home />} />
+                <Route path="discover" element={<Discover />} />
+                <Route path="episodes" element={<Episodes />} />
+                <Route path="episodes/:id" element={<EpisodeDetail />} />
+                <Route path="weekly" element={<Weekly />} />
+                <Route path="search" element={<Search />} />
+                <Route path="*" element={<NotFound />} />
+              </Route>
+            </Routes>
+          </SentimentProvider>
         </ChannelFilterProvider>
       </DateRangeProvider>
     </AppDataProvider>

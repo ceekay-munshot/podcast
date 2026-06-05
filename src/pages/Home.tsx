@@ -2,18 +2,22 @@ import { Link } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
 import { useDateRange } from '../store/DateRange'
 import { useChannelFilter } from '../store/ChannelFilter'
+import { useSentiment } from '../store/Sentiment'
 import { formatDuration, longDate, relativeDate } from '../lib/format'
+import { episodeTone } from '../lib/tone'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
 import { RichText, entityTerms } from '../components/RichText'
 import { SourceLink } from '../components/SourceLink'
 import { StatusBadge } from '../components/StatusBadge'
+import { ToneMeter } from '../components/ToneMeter'
 import { topTopics } from '../lib/topics'
 
 export default function Home() {
   const { episodes, podcasts, podcastById, weekly } = useAppData()
   const { preset, inRange, rangeLabel } = useDateRange()
   const { channelId, inChannel } = useChannelFilter()
+  const { on: sentimentOn } = useSentiment()
 
   const trackedCount = podcasts.filter((p) => p.tracked).length
   const channel = channelId ? podcastById(channelId) : undefined
@@ -93,6 +97,7 @@ export default function Home() {
                   <span className="inline-flex items-center gap-1">
                     <Icon name="mic" size={14} /> Episode {featured.entities.people.length + 280}
                   </span>
+                  {featured.summary && sentimentOn && <ToneMeter tone={episodeTone(featured)} />}
                 </div>
                 <p className="text-body-md leading-relaxed text-on-surface-variant">
                   <RichText text={featured.blurb} terms={entityTerms(featured.entities)} />

@@ -1,19 +1,24 @@
 import { useMemo } from 'react'
 import type { ReactNode } from 'react'
+import { useSentiment } from '../store/Sentiment'
+import { findSentimentSpans, sentimentClass, sentimentTitle } from '../lib/sentiment'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RichText — automatic emphasis for a text-heavy dashboard.
 //
-// Reduces "see → process → understand" time by giving the eye anchors. Three
+// Reduces "see → process → understand" time by giving the eye anchors. Four
 // purposeful tiers, applied to plain (often machine-generated) strings:
 //
 //   1. **key clause**  → heaviest, near-black   (the gist, if you read nothing else)
 //   2. metrics/numbers → semibold BLUE          ($1.7T, 90%, 10x, 2,000-day, 2027)
 //   3. named entities  → gentle weight bump      (companies / people you pass in)
+//   4. sentiment       → soft GREEN / RED tint   (the "good" and the "bad" language)
 //
 // Numbers are detected conservatively (must carry a %, $, ×, comma, decimal, or
-// be a 19xx/20xx year) so bare counts like "3 questions" stay calm. Use on dark
-// text over light surfaces — not inside colored callouts (blue-on-blue vanishes).
+// be a 19xx/20xx year) so bare counts like "3 questions" stay calm. Sentiment is
+// applied ONLY to the plain runs left between the structural tokens above, so a
+// number stays blue and an entity stays weighted — the tiers never nest. The
+// green/red layer is gated on the global sentiment toggle.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const NUMBER = [
@@ -36,11 +41,47 @@ function stripStars(s: string): string {
 }
 
 export function RichText({ text, terms = [] }: { text: string; terms?: string[] }) {
-  const nodes = useMemo(() => tokenize(text, terms), [text, terms.join('')])
+  const { on } = useSentiment()
+  const nodes = useMemo(() => tokenize(text, terms, on), [text, terms.join(''), on])
   return <>{nodes}</>
 }
 
-function tokenize(text: string, terms: string[]): ReactNode[] {
+// Mutable key counter threaded through the plain-run splitter so every emitted
+// element gets a stable, unique key.
+type KeyRef = { n: number }
+
+// Split a plain run into green/red sentiment spans + untouched text. Only ever
+// called on the gaps BETWEEN structural tokens, so sentiment never nests inside a
+// number / entity / bold token. Stray markdown asterisks are stripped from every
+// plain run first (the model sometimes emits an unbalanced ** ), so they can never
+// render literally regardless of the toggle. When sentiment is off it still strips,
+// just pushes the cleaned string with no green/red layer.
+function pushPlain(out: ReactNode[], slice: string, sentimentOn: boolean, k: KeyRef): void {
+  const cleaned = stripStars(slice)
+  if (!cleaned) return
+  if (!sentimentOn) {
+    out.push(cleaned)
+    return
+  }
+  const spans = findSentimentSpans(cleaned)
+  if (!spans.length) {
+    out.push(cleaned)
+    return
+  }
+  let last = 0
+  for (const s of spans) {
+    if (s.start > last) out.push(cleaned.slice(last, s.start))
+    out.push(
+      <span key={k.n++} className={sentimentClass(s)} title={sentimentTitle(s)}>
+        {cleaned.slice(s.start, s.end)}
+      </span>,
+    )
+    last = s.end
+  }
+  if (last < cleaned.length) out.push(cleaned.slice(last))
+}
+
+function tokenize(text: string, terms: string[], sentimentOn: boolean): ReactNode[] {
   // Longer entities first so "Invest Like the Best" wins over "Best".
   const cleaned = [...new Set(terms)]
     .map((t) => t.trim())
@@ -52,31 +93,34 @@ function tokenize(text: string, terms: string[]): ReactNode[] {
   try {
     re = new RegExp(`(\\*\\*[^*]+\\*\\*)|(${NUMBER})${termAlt}`, 'g')
   } catch {
-    return [stripStars(text)] // never let a bad entity string break rendering
+    // Never let a bad entity string break rendering — still strip stars + apply sentiment.
+    const out: ReactNode[] = []
+    pushPlain(out, text, sentimentOn, { n: 0 })
+    return out
   }
 
   const out: ReactNode[] = []
   let last = 0
-  let key = 0
+  const k: KeyRef = { n: 0 }
   let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(stripStars(text.slice(last, m.index)))
+    if (m.index > last) pushPlain(out, text.slice(last, m.index), sentimentOn, k)
     const tok = m[0]
     if (m[1]) {
       out.push(
-        <strong key={key++} className="font-semibold text-on-surface">
+        <strong key={k.n++} className="font-semibold text-on-surface">
           {tok.slice(2, -2)}
         </strong>,
       )
     } else if (m[2]) {
       out.push(
-        <span key={key++} className="font-semibold tabular-nums text-primary">
+        <span key={k.n++} className="font-semibold tabular-nums text-primary">
           {tok}
         </span>,
       )
     } else {
       out.push(
-        <span key={key++} className="font-medium text-on-surface">
+        <span key={k.n++} className="font-medium text-on-surface">
           {tok}
         </span>,
       )
@@ -84,7 +128,7 @@ function tokenize(text: string, terms: string[]): ReactNode[] {
     last = m.index + tok.length
     if (m.index === re.lastIndex) re.lastIndex++ // guard against any zero-length match
   }
-  if (last < text.length) out.push(stripStars(text.slice(last)))
+  if (last < text.length) pushPlain(out, text.slice(last), sentimentOn, k)
   return out
 }
 

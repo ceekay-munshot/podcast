@@ -3,19 +3,28 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
 import { useDateRange } from '../store/DateRange'
 import { useChannelFilter } from '../store/ChannelFilter'
+import { useSentiment } from '../store/Sentiment'
 import { formatDuration, longDate } from '../lib/format'
+import { episodeTone } from '../lib/tone'
 import type { Episode } from '../lib/types'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
 import { SourceLink } from '../components/SourceLink'
 import { StatusBadge } from '../components/StatusBadge'
+import { ToneBadge } from '../components/ToneMeter'
+
+// Column template flexes by one when the Tone column is shown (sentiment on).
+const GRID = 'grid-cols-[2.6fr_1.6fr_1fr_0.8fr_1fr]'
+const GRID_TONE = 'grid-cols-[2.4fr_1.5fr_0.9fr_0.8fr_0.9fr_1fr]'
 
 export default function Episodes() {
   const { episodes, podcastById } = useAppData()
   const { preset, presets, setPreset, inRange, rangeLabel } = useDateRange()
   const { inChannel } = useChannelFilter()
+  const { on: sentimentOn } = useSentiment()
   const navigate = useNavigate()
   const [q, setQ] = useState('')
+  const grid = sentimentOn ? GRID_TONE : GRID
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -74,16 +83,17 @@ export default function Episodes() {
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-outline-variant bg-surface-container-lowest shadow-card">
-        <div className="grid grid-cols-[2.6fr_1.6fr_1fr_0.8fr_1fr] items-center gap-md border-b border-outline-variant px-md py-3 text-label-caps uppercase text-outline">
+        <div className={`grid ${grid} items-center gap-md border-b border-outline-variant px-md py-3 text-label-caps uppercase text-outline`}>
           <span>Episode</span>
           <span>Podcast</span>
           <span className="flex items-center gap-1">Date <Icon name="arrow_downward" size={13} /></span>
           <span>Duration</span>
+          {sentimentOn && <span>Tone</span>}
           <span>Status</span>
         </div>
 
         {rows.map((ep) => (
-          <EpisodeRow key={ep.id} episode={ep} onOpen={() => navigate(`/episodes/${ep.id}`)} />
+          <EpisodeRow key={ep.id} episode={ep} grid={grid} showTone={sentimentOn} onOpen={() => navigate(`/episodes/${ep.id}`)} />
         ))}
 
         {rows.length === 0 && (
@@ -102,9 +112,20 @@ export default function Episodes() {
   )
 }
 
-function EpisodeRow({ episode, onOpen }: { episode: Episode; onOpen: () => void }) {
+function EpisodeRow({
+  episode,
+  grid,
+  showTone,
+  onOpen,
+}: {
+  episode: Episode
+  grid: string
+  showTone: boolean
+  onOpen: () => void
+}) {
   const { podcastById } = useAppData()
   const podcast = podcastById(episode.podcastId)
+  const tone = useMemo(() => episodeTone(episode), [episode])
   return (
     <div
       role="button"
@@ -116,7 +137,7 @@ function EpisodeRow({ episode, onOpen }: { episode: Episode; onOpen: () => void 
           onOpen()
         }
       }}
-      className="group grid w-full cursor-pointer grid-cols-[2.6fr_1.6fr_1fr_0.8fr_1fr] items-center gap-md border-b border-outline-variant px-md py-3.5 text-left transition-colors last:border-b-0 hover:bg-surface-container-low/60 focus:bg-surface-container-low/60 focus:outline-none"
+      className={`group grid w-full cursor-pointer ${grid} items-center gap-md border-b border-outline-variant px-md py-3.5 text-left transition-colors last:border-b-0 hover:bg-surface-container-low/60 focus:bg-surface-container-low/60 focus:outline-none`}
     >
       <div className="flex min-w-0 items-center gap-3">
         {podcast && <CoverTile podcast={podcast} className="h-11 w-11 shrink-0" />}
@@ -128,6 +149,11 @@ function EpisodeRow({ episode, onOpen }: { episode: Episode; onOpen: () => void 
       </div>
       <span className="text-metadata text-on-surface-variant">{longDate(episode.publishedAt)}</span>
       <span className="text-metadata text-on-surface-variant">{formatDuration(episode.durationSec)}</span>
+      {showTone && (
+        <span className="min-w-0 truncate text-metadata">
+          <ToneBadge tone={tone} />
+        </span>
+      )}
       <span className="flex items-center justify-between gap-1">
         <StatusBadge status={episode.status} />
         <SourceLink episode={episode} podcast={podcast} variant="icon" />

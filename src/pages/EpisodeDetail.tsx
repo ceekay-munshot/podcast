@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
+import { useSentiment } from '../store/Sentiment'
 import { downloadSummary } from '../lib/exportSummary'
 import { formatDuration, longDate, statusMeta } from '../lib/format'
 import type { Episode, InterestingMoment, ProcessingStatus, TranscriptSegment } from '../lib/types'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
 import { RichText, entityTerms } from '../components/RichText'
+import { analyzeSentiment, findSentimentSpans, sentimentClass, sentimentTitle } from '../lib/sentiment'
+import { episodeTone } from '../lib/tone'
+import { ToneMeter } from '../components/ToneMeter'
 import { SourceLink } from '../components/SourceLink'
 import { StatusBadge } from '../components/StatusBadge'
 import { anchorSegment } from '../lib/topics'
@@ -27,6 +32,7 @@ export default function EpisodeDetail() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const { episodeById, podcastById, summarizeEpisode, needsApiKey } = useAppData()
+  const { on: sentimentOn } = useSentiment()
 
   const paramTab = params.get('tab') as Tab | null
   const [tab, setTab] = useState<Tab>(paramTab ?? 'summary')
@@ -119,6 +125,7 @@ export default function EpisodeDetail() {
               <Icon name="schedule" size={15} /> {formatDuration(episode.durationSec)}
             </span>
             <StatusBadge status={episode.status} />
+            {episode.summary && sentimentOn && <ToneMeter tone={episodeTone(episode)} />}
           </div>
         </div>
         <div className="flex items-center gap-2.5">
@@ -382,6 +389,7 @@ function TranscriptTab({
   focusLabel?: string
   focusTick?: number
 }) {
+  const { on: sentimentOn } = useSentiment()
   const [activeRef, setActiveRef] = useState<string | null>(null)
   // The segment we jumped to from a takeaway/moment — stays highlighted so the
   // reader knows exactly which passage the summary point came from.
@@ -471,6 +479,7 @@ function TranscriptTab({
               onHover={setActiveRef}
               focused={focus?.id === seg.id}
               focusLabel={focus?.id === seg.id ? focus.label : undefined}
+              sentimentOn={sentimentOn}
             />
           ))}
           {visible.length === 0 && <p className="py-md text-center text-metadata text-secondary">No lines match “{q}”.</p>}
@@ -486,6 +495,7 @@ function TranscriptRow({
   onHover,
   focused = false,
   focusLabel,
+  sentimentOn,
 }: {
   seg: TranscriptSegment
   activeRef: string | null
@@ -493,13 +503,26 @@ function TranscriptRow({
   /** The segment a takeaway/moment jumped to — persistently highlighted. */
   focused?: boolean
   focusLabel?: string
+  sentimentOn: boolean
 }) {
   const isActive = !!seg.highlight && activeRef === seg.highlight.refId
+  // Net lean of the whole segment → a thin left accent so a long transcript is
+  // scannable at a glance. Only shown when the line clearly leans one way.
+  const accent = useMemo(() => {
+    if (!sentimentOn) return ''
+    const s = analyzeSentiment(seg.text)
+    return s.confident ? (s.label === 'pos' ? 'seg-pos' : 'seg-neg') : ''
+  }, [seg.text, sentimentOn])
+
   return (
     <div
       id={`seg-${seg.id}`}
       className={`scroll-mt-24 rounded-lg py-3 transition-colors ${
-        focused ? 'border-l-4 border-primary bg-[#eff5ff] pl-3 pr-2' : isActive ? 'bg-[#eff5ff] px-2' : 'px-2'
+        focused
+          ? 'border-l-4 border-primary bg-[#eff5ff] pl-3 pr-2'
+          : isActive
+            ? `${accent} bg-[#eff5ff] px-2`
+            : `${accent} px-2`
       }`}
     >
       {focused && (
@@ -513,31 +536,71 @@ function TranscriptRow({
         <span className={`text-metadata font-semibold ${seg.role === 'guest' ? 'text-on-surface' : 'text-on-surface-variant'}`}>
           {seg.speaker}
         </span>
-        <p className="text-body-md leading-relaxed text-on-surface">{renderText(seg, activeRef, onHover)}</p>
+        <p className="text-body-md leading-relaxed text-on-surface">
+          <TranscriptText seg={seg} activeRef={activeRef} onHover={onHover} sentimentOn={sentimentOn} />
+        </p>
       </div>
     </div>
   )
 }
 
-function renderText(seg: TranscriptSegment, activeRef: string | null, onHover: (ref: string | null) => void) {
+// The moment <mark> stays the authoritative outer span; sentiment is applied
+// independently inside before / quote / after, so the green/red layer can color
+// words even within a highlighted quote without ever breaking the blue mark.
+function TranscriptText({
+  seg,
+  activeRef,
+  onHover,
+  sentimentOn,
+}: {
+  seg: TranscriptSegment
+  activeRef: string | null
+  onHover: (ref: string | null) => void
+  sentimentOn: boolean
+}) {
   const hl = seg.highlight
-  if (!hl || !hl.quote) return seg.text
+  if (!hl || !hl.quote) return <SentimentText text={seg.text} on={sentimentOn} />
   const idx = seg.text.indexOf(hl.quote)
-  if (idx === -1) return seg.text
+  if (idx === -1) return <SentimentText text={seg.text} on={sentimentOn} />
   return (
     <>
-      {seg.text.slice(0, idx)}
+      <SentimentText text={seg.text.slice(0, idx)} on={sentimentOn} />
       <mark
         className={`transcript-mark ${activeRef === hl.refId ? 'is-active' : ''}`}
         onMouseEnter={() => onHover(hl.refId)}
         onMouseLeave={() => onHover(null)}
         title={hl.label}
       >
-        {hl.quote}
+        <SentimentText text={hl.quote} on={sentimentOn} />
       </mark>
-      {seg.text.slice(idx + hl.quote.length)}
+      <SentimentText text={seg.text.slice(idx + hl.quote.length)} on={sentimentOn} />
     </>
   )
+}
+
+// A plain string with inline green/red sentiment spans only (no number/entity
+// tiers — that's RichText's job). Memoized so long transcripts stay smooth.
+function SentimentText({ text, on }: { text: string; on: boolean }) {
+  const nodes = useMemo<ReactNode[]>(() => {
+    if (!on || !text) return [text]
+    const spans = findSentimentSpans(text)
+    if (!spans.length) return [text]
+    const out: ReactNode[] = []
+    let last = 0
+    let key = 0
+    for (const s of spans) {
+      if (s.start > last) out.push(text.slice(last, s.start))
+      out.push(
+        <span key={key++} className={sentimentClass(s)} title={sentimentTitle(s)}>
+          {text.slice(s.start, s.end)}
+        </span>,
+      )
+      last = s.end
+    }
+    if (last < text.length) out.push(text.slice(last))
+    return out
+  }, [text, on])
+  return <>{nodes}</>
 }
 
 // ── Copy button helper ───────────────────────────────────────────────────────

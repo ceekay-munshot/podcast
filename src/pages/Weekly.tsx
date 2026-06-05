@@ -2,11 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
+import { useSentiment } from '../store/Sentiment'
 import { downloadWeekly } from '../lib/exportWeekly'
 import { generateWeekly } from '../lib/weeklyApi'
+import { weeklyTone } from '../lib/tone'
 import type { WeeklySummary } from '../lib/types'
 import { Icon } from '../components/Icon'
 import { RichText, entityTerms } from '../components/RichText'
+import { ToneMeter } from '../components/ToneMeter'
 
 const THEME_STYLES = [
   { tile: 'bg-[#eff5ff] text-[#2563eb] border-[#dbeafe]', icon: 'cloud' },
@@ -18,6 +21,7 @@ const THEME_STYLES = [
 
 export default function Weekly() {
   const { episodes, podcasts, episodeById, podcastById, loading } = useAppData()
+  const { on: sentimentOn } = useSentiment()
   const [weekly, setWeekly] = useState<WeeklySummary | null | undefined>(undefined) // undefined = generating
 
   const ready = useMemo(() => episodes.filter((e) => e.status === 'ready' && e.summary), [episodes])
@@ -48,6 +52,12 @@ export default function Weekly() {
                 ? weekly.rangeLabel
                 : 'No episodes analysed yet'}
           </p>
+          {weekly && sentimentOn && (
+            <div className="mt-2 flex items-center gap-2 text-metadata text-secondary">
+              <span className="font-medium">This week's tone</span>
+              <ToneMeter tone={weeklyTone(weekly)} />
+            </div>
+          )}
         </div>
         {weekly && (
           <button

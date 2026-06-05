@@ -81,6 +81,51 @@
   .transcript-mark.is-active {
     background: rgba(37, 99, 235, 0.22);
   }
+
+  /* Sentiment — soft green / red highlight for "good" and "bad" language, in the
+     same low-key family as .transcript-mark. Neutral text is left untouched. */
+  .sentiment-pos,
+  .sentiment-neg {
+    border-radius: 3px;
+    padding: 0 2px;
+    transition: background-color 150ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  .sentiment-pos {
+    background: rgba(22, 163, 74, 0.13);
+    color: #15803d;
+  }
+  .sentiment-neg {
+    background: rgba(220, 38, 38, 0.1);
+    color: #b91c1c;
+  }
+  /* Intensified hit ("brutally", "massively") — a touch more weight, no reflow. */
+  .sentiment-strong {
+    font-weight: 600;
+  }
+  /* Inside the blue moment mark, drop the tint (it would muddy on blue) and keep
+     just colored, slightly heavier text so both signals stay legible. */
+  .transcript-mark .sentiment-pos,
+  .transcript-mark .sentiment-neg {
+    background: transparent;
+    padding: 0;
+    font-weight: 600;
+  }
+  /* Per-segment net accent — a 2px inset bar (pure paint, no layout shift). */
+  .seg-pos {
+    box-shadow: inset 2px 0 0 0 rgba(22, 163, 74, 0.5);
+  }
+  .seg-neg {
+    box-shadow: inset 2px 0 0 0 rgba(220, 38, 38, 0.5);
+  }
+}
+
+/* Sentiment marks carry meaning in color + a stable shape; honor reduced motion
+   by dropping their transition. */
+@media (prefers-reduced-motion: reduce) {
+  .sentiment-pos,
+  .sentiment-neg {
+    transition: none;
+  }
 }
 
 /* Arrival pulse when jumping to a transcript segment (from a takeaway or moment).
