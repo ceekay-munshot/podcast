@@ -6,14 +6,15 @@ import { summarizeEpisode } from '../../server/summarize'
 // auto-detected by which key is present. Mirrors the Vite dev middleware.
 export const onRequestPost = async (context: {
   request: Request
-  env: { OPENAI_API_KEY?: string; ANTHROPIC_API_KEY?: string; SUMMARY_MODEL?: string; GROQ_API_KEY?: string; WHISPER_API_KEY?: string }
+  env: { OPENAI_API_KEY?: string; ANTHROPIC_API_KEY?: string; SUMMARY_MODEL?: string; GROQ_API_KEY?: string; DEEPGRAM_API_KEY?: string; DEEPGRAM_MODEL?: string }
 }): Promise<Response> => {
   const config = {
     openaiKey: context.env?.OPENAI_API_KEY,
     anthropicKey: context.env?.ANTHROPIC_API_KEY,
     model: context.env?.SUMMARY_MODEL || undefined,
-    groqKey: context.env?.GROQ_API_KEY, // free-tier Whisper backup
-    whisperKey: context.env?.WHISPER_API_KEY || undefined, // paid transcription primary (seam)
+    deepgramKey: context.env?.DEEPGRAM_API_KEY, // transcription for long episodes
+    deepgramModel: context.env?.DEEPGRAM_MODEL || undefined,
+    groqKey: context.env?.GROQ_API_KEY, // free-tier Whisper (short episodes)
   }
   const headers = { 'content-type': 'application/json' }
 

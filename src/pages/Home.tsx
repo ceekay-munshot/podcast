@@ -5,6 +5,7 @@ import { useChannelFilter } from '../store/ChannelFilter'
 import { formatDuration, longDate, relativeDate } from '../lib/format'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
+import { RichText, entityTerms } from '../components/RichText'
 import { SourceLink } from '../components/SourceLink'
 import { StatusBadge } from '../components/StatusBadge'
 
@@ -90,7 +91,9 @@ export default function Home() {
                     <Icon name="mic" size={14} /> Episode {featured.entities.people.length + 280}
                   </span>
                 </div>
-                <p className="text-body-md leading-relaxed text-on-surface-variant">{featured.blurb}</p>
+                <p className="text-body-md leading-relaxed text-on-surface-variant">
+                  <RichText text={featured.blurb} terms={entityTerms(featured.entities)} />
+                </p>
               </div>
             </div>
 
@@ -101,7 +104,9 @@ export default function Home() {
                   {featured.summary.takeaways.slice(0, 4).map((t, i) => (
                     <li key={i} className="flex gap-2.5 text-body-md text-on-surface-variant">
                       <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-                      {t.title}
+                      <span>
+                        <RichText text={t.title} terms={entityTerms(featured.entities)} />
+                      </span>
                     </li>
                   ))}
                 </ul>

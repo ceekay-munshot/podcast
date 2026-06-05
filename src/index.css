@@ -27,6 +27,18 @@
     @apply bg-background text-on-background font-sans antialiased;
     font-size: 16px;
     text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  /* Tighter, more even reading: fewer orphans in prose, balanced headings. */
+  p {
+    text-wrap: pretty;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
   }
   ::selection {
     background: rgba(37, 99, 235, 0.16);

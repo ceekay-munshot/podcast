@@ -6,6 +6,7 @@ import { formatDuration, longDate, statusMeta } from '../lib/format'
 import type { Episode, InterestingMoment, ProcessingStatus, TranscriptSegment } from '../lib/types'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
+import { RichText, entityTerms } from '../components/RichText'
 import { SourceLink } from '../components/SourceLink'
 import { StatusBadge } from '../components/StatusBadge'
 
@@ -156,22 +157,10 @@ export default function EpisodeDetail() {
   )
 }
 
-// Renders inline **bold** markup as emphasized spans, so summary data can stay plain strings.
-function renderEmphasis(text: string) {
-  return text.split(/(\*\*[^*]+\*\*)/g).map((chunk, i) =>
-    chunk.startsWith('**') && chunk.endsWith('**') ? (
-      <strong key={i} className="font-semibold text-on-surface">
-        {chunk.slice(2, -2)}
-      </strong>
-    ) : (
-      chunk
-    ),
-  )
-}
-
 // ── Summary tab — AI Summary + At a Glance ───────────────────────────────────
 function SummaryTab({ episode }: { episode: Episode }) {
   const s = episode.summary!
+  const terms = entityTerms(episode.entities)
   const glance = [
     { icon: 'star', label: 'Key Takeaways', value: s.takeaways.length },
     { icon: 'schedule', label: 'Interesting Moments', value: s.moments.length },
@@ -187,7 +176,9 @@ function SummaryTab({ episode }: { episode: Episode }) {
         </div>
         <div className="space-y-md text-body-md leading-relaxed text-on-surface-variant">
           {s.synthesis.map((p, i) => (
-            <p key={i}>{renderEmphasis(p)}</p>
+            <p key={i}>
+              <RichText text={p} terms={terms} />
+            </p>
           ))}
         </div>
       </section>
@@ -220,6 +211,7 @@ function SummaryTab({ episode }: { episode: Episode }) {
 // ── Takeaways tab — numbered, with copy ──────────────────────────────────────
 function TakeawaysTab({ episode }: { episode: Episode }) {
   const s = episode.summary!
+  const terms = entityTerms(episode.entities)
   return (
     <section className="rounded-2xl border border-outline-variant bg-surface-container-lowest shadow-card">
       <ul className="divide-y divide-outline-variant">
@@ -229,8 +221,10 @@ function TakeawaysTab({ episode }: { episode: Episode }) {
               {i + 1}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="text-body-md font-semibold text-on-surface">{t.title}</p>
-              <p className="mt-0.5 text-body-md text-on-surface-variant">{t.detail}</p>
+              <p className="text-[16px] font-semibold text-on-surface">{t.title}</p>
+              <p className="mt-1 text-body-md text-on-surface-variant">
+                <RichText text={t.detail} terms={terms} />
+              </p>
             </div>
             <CopyButton text={`${t.title} — ${t.detail}`} />
           </li>
@@ -243,6 +237,7 @@ function TakeawaysTab({ episode }: { episode: Episode }) {
 // ── Q&A tab ──────────────────────────────────────────────────────────────────
 function QATab({ episode }: { episode: Episode }) {
   const s = episode.summary!
+  const terms = entityTerms(episode.entities)
   return (
     <section className="rounded-2xl border border-outline-variant bg-surface-container-lowest shadow-card">
       <ul className="divide-y divide-outline-variant">
@@ -250,8 +245,10 @@ function QATab({ episode }: { episode: Episode }) {
           <li key={i} className="flex items-start gap-md p-md">
             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg chip-signal text-metadata font-bold">{i + 1}</span>
             <div>
-              <h3 className="mb-1.5 text-body-md font-semibold text-on-surface">{item.q}</h3>
-              <p className="text-body-md leading-relaxed text-on-surface-variant">{item.a}</p>
+              <h3 className="mb-1.5 text-[16px] font-semibold text-on-surface">{item.q}</h3>
+              <p className="text-body-md leading-relaxed text-on-surface-variant">
+                <RichText text={item.a} terms={terms} />
+              </p>
             </div>
           </li>
         ))}
@@ -271,6 +268,7 @@ function MomentsTab({
   onOpen: (segmentId?: string) => void
 }) {
   const moments = episode.summary!.moments
+  const terms = entityTerms(episode.entities)
   return (
     <section>
       <div className="mb-md flex items-center justify-between">
@@ -300,8 +298,10 @@ function MomentsTab({
                   <Icon name={style.icon} size={22} className={style.text} />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-body-md font-semibold text-on-surface">{m.title}</p>
-                  <p className="mt-0.5 text-body-md text-on-surface-variant">{m.whyItMatters}</p>
+                  <p className="text-[16px] font-semibold text-on-surface">{m.title}</p>
+                  <p className="mt-1 text-body-md text-on-surface-variant">
+                    <RichText text={m.whyItMatters} terms={terms} />
+                  </p>
                 </div>
                 <span className={`shrink-0 rounded-md px-2.5 py-1 text-metadata font-semibold ${style.pill}`}>{m.timestamp}</span>
               </button>

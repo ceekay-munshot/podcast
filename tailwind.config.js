@@ -20,7 +20,9 @@ export default {
         'surface-container-highest': '#e3e6ea',
         'surface-variant': '#f0f2f5',
         'on-surface': '#0f172a',
-        'on-surface-variant': '#475569',
+        // Body / reading text — darkened from slate-600 to slate-700 for a
+        // stronger, lower-effort read while staying clearly below headings.
+        'on-surface-variant': '#374151',
         'inverse-surface': '#111827',
         'inverse-on-surface': '#f8fafc',
         outline: '#94a3b8',

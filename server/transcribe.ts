@@ -16,15 +16,14 @@ export interface TranscribeInput {
 }
 
 export interface TranscribeConfig {
-  // Whisper providers slot in here later (kept as a seam so the chain is ready):
-  whisperKey?: string // paid primary (e.g. OpenAI Whisper / Deepgram / AssemblyAI)
-  groqKey?: string // free-tier backup
-  workersAi?: unknown // Cloudflare Workers AI binding (free-tier backup, on-stack)
+  deepgramKey?: string // URL-based, handles any length (used for long, non-feed episodes)
+  deepgramModel?: string // defaults to nova-3
+  groqKey?: string // free-tier Whisper for short episodes (within the size limit)
 }
 
 export interface TranscriptResult {
   text: string
-  source: 'feed' | 'whisper-primary' | 'whisper-backup'
+  source: 'feed' | 'groq' | 'deepgram'
 }
 
 // Strip SRT/VTT cue numbers, timestamps, and tags down to plain spoken text.
@@ -183,6 +182,36 @@ async function transcribeViaGroq(audioUrl: string, apiKey: string): Promise<stri
   }
 }
 
+// Deepgram pre-recorded (URL-based) — handles any length; Deepgram fetches the
+// audio itself, so no download/chunking on our side. Returns '' on failure.
+async function transcribeViaDeepgram(audioUrl: string, apiKey: string, model: string): Promise<string> {
+  const params = new URLSearchParams({ model, smart_format: 'true', punctuate: 'true', utterances: 'true', language: 'en' })
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 280_000)
+  try {
+    const res = await fetch(`https://api.deepgram.com/v1/listen?${params.toString()}`, {
+      method: 'POST',
+      headers: { authorization: `Token ${apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ url: audioUrl }),
+      signal: controller.signal,
+    })
+    if (!res.ok) return ''
+    const data = (await res.json()) as {
+      results?: {
+        utterances?: Array<{ start: number; transcript: string }>
+        channels?: Array<{ alternatives?: Array<{ transcript?: string }> }>
+      }
+    }
+    const utts = data.results?.utterances
+    if (utts?.length) return segmentsToTimestampedText(utts.map((u) => ({ start: u.start, text: u.transcript })))
+    return data.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? ''
+  } catch {
+    return ''
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function transcribeEpisode(input: TranscribeInput, config: TranscribeConfig = {}): Promise<TranscriptResult | null> {
   // 1) FREE: publisher-provided transcript in the feed (Odd Lots, Acquired, …)
   if (input.transcriptUrl) {
@@ -192,14 +221,18 @@ export async function transcribeEpisode(input: TranscribeInput, config: Transcri
     if (text.length > 200) return { text, source: 'feed' }
   }
 
-  // 2) PRIMARY (seam): paid Whisper on input.audioUrl when `config.whisperKey` is set.
-  //    URL-based providers (Deepgram/AssemblyAI) handle long audio server-side — wired
-  //    when the paid key is provided. Tried before the free-tier backup below.
-
-  // 3) BACKUP: free-tier Groq Whisper (rate-limit 429s fall through to show-notes).
+  // 2) FREE: Groq Whisper for episodes within its size limit (short ones). Oversized
+  //    or rate-limited (429) episodes fall through to Deepgram below.
   if (config.groqKey && input.audioUrl) {
     const text = await transcribeViaGroq(input.audioUrl, config.groqKey)
-    if (text.length > 200) return { text, source: 'whisper-backup' }
+    if (text.length > 200) return { text, source: 'groq' }
+  }
+
+  // 3) PAID: Deepgram (URL-based) handles ANY length — the catch-all for the long,
+  //    non-feed episodes nothing free could cover. Credit is only spent if we reach here.
+  if (config.deepgramKey && input.audioUrl) {
+    const text = await transcribeViaDeepgram(input.audioUrl, config.deepgramKey, config.deepgramModel || 'nova-3')
+    if (text.length > 200) return { text, source: 'deepgram' }
   }
 
   return null

@@ -60,8 +60,9 @@ export default defineConfig(({ mode }) => {
     openaiKey: pick('OPENAI_API_KEY'),
     anthropicKey: pick('ANTHROPIC_API_KEY'),
     model: pick('SUMMARY_MODEL') || undefined,
-    groqKey: pick('GROQ_API_KEY'), // free-tier Whisper backup
-    whisperKey: pick('WHISPER_API_KEY') || undefined, // paid transcription primary (seam)
+    deepgramKey: pick('DEEPGRAM_API_KEY'), // transcription for long episodes
+    deepgramModel: pick('DEEPGRAM_MODEL') || undefined,
+    groqKey: pick('GROQ_API_KEY'), // free-tier Whisper (short episodes)
   }
 
   return {

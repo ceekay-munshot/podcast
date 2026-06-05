@@ -5,6 +5,7 @@ import { useAppData } from '../store/AppData'
 import { downloadWeekly, printWeekly } from '../lib/exportWeekly'
 import { subscribeWeekly, unsubscribeWeekly } from '../lib/api'
 import { Icon } from '../components/Icon'
+import { RichText, entityTerms } from '../components/RichText'
 
 const NAV = [
   { id: 'overview', label: 'Overview', icon: 'play_circle' },
@@ -30,6 +31,7 @@ export default function Weekly() {
   if (!weekly) return null
 
   const interestingEpisode = episodeById(weekly.interesting.episodeId)
+  const terms = entityTerms(weekly.mentions)
   const ready = episodes.filter((e) => e.status === 'ready')
   const stats = [
     { icon: 'play_circle', label: 'Episodes Processed', value: weekly.episodeCount, style: THEME_STYLES[0] },
@@ -100,7 +102,9 @@ export default function Weekly() {
               <h2 className="mb-md text-[22px] font-bold tracking-tight text-on-surface">This Week in Summary</h2>
               <div className="space-y-md text-body-md leading-relaxed text-on-surface-variant">
                 {weekly.overview.map((p, i) => (
-                  <p key={i}>{p}</p>
+                  <p key={i}>
+                    <RichText text={p} terms={terms} />
+                  </p>
                 ))}
               </div>
             </section>
@@ -132,7 +136,8 @@ export default function Weekly() {
                   <li key={i} className="flex gap-2.5 text-body-md text-on-surface-variant">
                     <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
                     <span>
-                      <span className="font-semibold text-on-surface">{t.title}.</span> {t.detail}
+                      <span className="font-semibold text-on-surface">{t.title}.</span>{' '}
+                      <RichText text={t.detail} terms={terms} />
                     </span>
                   </li>
                 ))}
@@ -182,7 +187,9 @@ export default function Weekly() {
                 {weekly.contradictions.map((c, i) => (
                   <div key={i} className="flex gap-2.5 rounded-xl border border-outline-variant bg-surface-container-low p-md">
                     <Icon name="balance" size={20} className="shrink-0 text-tertiary" />
-                    <p className="text-body-md text-on-surface-variant">{c}</p>
+                    <p className="text-body-md text-on-surface-variant">
+                      <RichText text={c} terms={terms} />
+                    </p>
                   </div>
                 ))}
               </div>
@@ -204,7 +211,9 @@ export default function Weekly() {
                 {weekly.questions.map((q, i) => (
                   <li key={i} className="flex items-start gap-2.5 rounded-xl border border-outline-variant bg-surface-container-low p-md">
                     <Icon name="help" size={20} className="shrink-0 text-primary" />
-                    <p className="text-body-md text-on-surface">{q}</p>
+                    <p className="text-body-md text-on-surface-variant">
+                      <RichText text={q} terms={terms} />
+                    </p>
                   </li>
                 ))}
               </ul>

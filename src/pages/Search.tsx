@@ -5,6 +5,7 @@ import { longDate } from '../lib/format'
 import type { Episode } from '../lib/types'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
+import { RichText, entityTerms } from '../components/RichText'
 import { StatusBadge } from '../components/StatusBadge'
 import { SectionLabel } from '../components/SectionLabel'
 
@@ -182,7 +183,9 @@ export default function Search() {
                         {moment.timestamp}
                       </span>
                     </div>
-                    <p className="text-[14px] leading-relaxed text-on-surface-variant">{moment.whyItMatters}</p>
+                    <p className="text-[14px] leading-relaxed text-on-surface-variant">
+                      <RichText text={moment.whyItMatters} terms={entityTerms(episode.entities)} />
+                    </p>
                     <p className="mt-1.5 text-[12px] text-secondary">{podcastById(episode.podcastId)?.title}</p>
                   </Link>
                 ))}
