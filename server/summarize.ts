@@ -57,7 +57,8 @@ const SCHEMA = {
     qa: {
       type: 'array',
       items: { type: 'object', additionalProperties: false, properties: { q: { type: 'string' }, a: { type: 'string' } }, required: ['q', 'a'] },
-      description: '1-2 sharp questions the episode answers, with concise answers.',
+      description:
+        'The 3-5 most useful questions this episode actually answers (as many as the material genuinely supports). Phrase each question as a complete, self-contained sentence that names its specific subject — someone who never heard the episode should understand exactly what is being asked (avoid vague stems like "What is the main focus?"). Each answer is a dense, self-explanatory paragraph of 2-4 full sentences that completely answers the question using the concrete specifics from the material — names, numbers, mechanisms, and the reasoning behind them — so it stands on its own without the audio. Draw every detail from the source; never pad or speculate to fill space.',
     },
     moments: {
       type: 'array',
@@ -74,7 +75,7 @@ const SCHEMA = {
 }
 
 const SYSTEM_BASE =
-  'You are Munshot, an AI that writes sharp one-page intelligence summaries of podcast episodes for busy operators and investors. Produce the summary by calling the emit_summary tool/function. Rules:\n- Base everything ONLY on the provided material. Do NOT invent facts, quotes, names, or numbers.\n- synthesis: lead with the core argument; bold the few most important phrases with **double asterisks**.\n- Be concrete and non-obvious in takeaways.'
+  'You are Munshot, an AI that writes sharp one-page intelligence summaries of podcast episodes for busy operators and investors. Produce the summary by calling the emit_summary tool/function. Rules:\n- Base everything ONLY on the provided material. Do NOT invent facts, quotes, names, or numbers.\n- synthesis: lead with the core argument; bold the few most important phrases with **double asterisks**.\n- Be concrete and non-obvious in takeaways.\n- qa: anticipate what a sharp operator would actually want to ask. Make every question specific and self-contained (it should read clearly on its own), and every answer thorough, concrete, and fully understandable without the audio — 2-4 real sentences that explain the "why" and the specifics, never one terse line, but never padded or invented either.'
 
 const SYSTEM_TRANSCRIPT = `${SYSTEM_BASE}\n- You have the FULL transcript, annotated with [mm:ss] markers. Ground everything in what was actually said.\n- For "moments", pick ones from DIFFERENT parts of the episode — early, middle, and late, not all from the opening — and set each timestamp to the real [mm:ss] of the nearest marker. Never use 0:00.`
 const SYSTEM_NOTES = `${SYSTEM_BASE}\n- You only have the publisher's show-notes (not the audio). If they are thin or promotional, keep the summary brief and high-level rather than fabricating. Use "—" for moment timestamps.`
@@ -234,7 +235,7 @@ async function viaOpenAI(prompt: { system: string; user: string }, apiKey: strin
     headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
       model,
-      max_completion_tokens: 2048,
+      max_completion_tokens: 4096,
       messages: [
         { role: 'system', content: prompt.system },
         { role: 'user', content: prompt.user },
@@ -260,7 +261,7 @@ async function viaAnthropic(prompt: { system: string; user: string }, apiKey: st
     headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
     body: JSON.stringify({
       model,
-      max_tokens: 2048,
+      max_tokens: 4096,
       system: prompt.system,
       tools: [{ name: 'emit_summary', description: 'Emit the structured one-page summary.', input_schema: SCHEMA }],
       tool_choice: { type: 'tool', name: 'emit_summary' },
