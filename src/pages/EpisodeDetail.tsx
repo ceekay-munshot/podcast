@@ -120,10 +120,10 @@ export default function EpisodeDetail() {
               setTimeout(() => setShared(false), 2500)
             }}
             disabled={!episode.summary}
-            title="Download a formatted summary document"
+            title="Download a formatted Word document (.doc)"
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <Icon name={shared ? 'check' : 'ios_share'} size={18} /> {shared ? 'Downloaded' : 'Share'}
+            <Icon name={shared ? 'check' : 'download'} size={18} /> {shared ? 'Downloaded' : 'Download'}
           </button>
         </div>
       </div>

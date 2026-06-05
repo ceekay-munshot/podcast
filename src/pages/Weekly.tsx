@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
-import { downloadWeekly, printWeekly } from '../lib/exportWeekly'
+import { downloadWeekly } from '../lib/exportWeekly'
 import { Icon } from '../components/Icon'
 import { RichText, entityTerms } from '../components/RichText'
 
@@ -51,22 +51,13 @@ export default function Weekly() {
           <h1 className="text-display-lg tracking-tight text-on-surface">Weekly Summary</h1>
           <p className="mt-1 text-body-md text-secondary">{weekly.rangeLabel}</p>
         </div>
-        <div className="flex items-center gap-2.5">
-          <button
-            onClick={() => downloadWeekly(weekly, episodeById, podcastById)}
-            title="Download the structured summary document"
-            className="inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-md py-2.5 text-metadata font-semibold text-on-surface transition-colors hover:bg-surface-container-low"
-          >
-            <Icon name="ios_share" size={18} /> Share
-          </button>
-          <button
-            onClick={() => printWeekly(weekly, episodeById, podcastById)}
-            title="Print the structured document to PDF"
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container"
-          >
-            <Icon name="picture_as_pdf" size={18} /> Export PDF
-          </button>
-        </div>
+        <button
+          onClick={() => downloadWeekly(weekly, episodeById, podcastById)}
+          title="Download a formatted Word document (.doc)"
+          className="inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container"
+        >
+          <Icon name="download" size={18} /> Download
+        </button>
       </div>
 
       <div className="grid grid-cols-12 gap-gutter">
