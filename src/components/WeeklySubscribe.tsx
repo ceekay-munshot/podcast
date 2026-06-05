@@ -69,7 +69,7 @@ export function WeeklySubscribe() {
         onClick={() => setOpen((o) => !o)}
         aria-label="Weekly brief email"
         aria-expanded={open}
-        className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 transition-colors ${
+        className={`press-soft flex w-full items-center gap-3 rounded-lg px-3 py-2.5 ${
           open ? 'bg-surface-container-low text-on-surface' : 'font-medium text-secondary hover:bg-surface-container-low hover:text-on-surface'
         }`}
       >
@@ -89,7 +89,7 @@ export function WeeklySubscribe() {
         <>
           {/* click-away */}
           <button className="fixed inset-0 z-40 cursor-default" aria-hidden onClick={() => setOpen(false)} />
-          <div className="absolute bottom-0 left-full z-50 ml-2 w-72 rounded-xl border border-outline-variant bg-surface p-md shadow-card-hover">
+          <div className="pop absolute bottom-0 left-full z-50 ml-2 w-72 origin-bottom-left rounded-xl border border-outline-variant bg-surface p-md shadow-card-hover">
             {stored ? (
               <>
                 <div className="mb-3 flex items-center gap-2.5">
@@ -105,7 +105,7 @@ export function WeeklySubscribe() {
                 <button
                   onClick={unsubscribe}
                   disabled={busy}
-                  className="w-full rounded-lg border border-outline-variant bg-surface px-md py-2 text-[13px] font-semibold text-on-surface transition-colors hover:bg-surface-container-low disabled:opacity-60"
+                  className="press w-full rounded-lg border border-outline-variant bg-surface px-md py-2 text-[13px] font-semibold text-on-surface hover:bg-surface-container-low disabled:opacity-60"
                 >
                   {busy ? 'Updating…' : 'Unsubscribe'}
                 </button>
@@ -132,7 +132,7 @@ export function WeeklySubscribe() {
                 <button
                   type="submit"
                   disabled={busy}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-md py-2.5 text-[14px] font-semibold text-on-primary transition-colors hover:bg-primary-container disabled:opacity-60"
+                  className="press flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-md py-2.5 text-[14px] font-semibold text-on-primary hover:bg-primary-container disabled:opacity-60"
                 >
                   <Icon name="notifications_active" size={16} /> {busy ? 'Subscribing…' : 'Subscribe'}
                 </button>

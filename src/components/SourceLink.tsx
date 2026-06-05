@@ -26,7 +26,7 @@ export function SourceLink({ episode, podcast, variant = 'button', className = '
         onClick={(e) => e.stopPropagation()}
         title={label}
         aria-label={label}
-        className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg transition-colors hover:bg-surface-container ${className}`}
+        className={`press grid h-8 w-8 shrink-0 place-items-center rounded-lg hover:bg-surface-container ${className}`}
       >
         <SourceMark youtube={youtube} size={18} />
       </a>
@@ -39,7 +39,7 @@ export function SourceLink({ episode, podcast, variant = 'button', className = '
       target="_blank"
       rel="noreferrer"
       onClick={(e) => e.stopPropagation()}
-      className={`group inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface py-2 pl-2 pr-3.5 text-metadata font-semibold text-on-surface transition-colors hover:border-primary/40 hover:bg-surface-container-low ${className}`}
+      className={`press group inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface py-2 pl-2 pr-3.5 text-metadata font-semibold text-on-surface hover:border-primary/40 hover:bg-surface-container-low ${className}`}
     >
       <SourceMark youtube={youtube} size={22} />
       {label}

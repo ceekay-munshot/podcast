@@ -98,7 +98,7 @@ export default function Discover() {
                 {tracked.slice(0, 4).map((p) => (
                   <span key={p.id} className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant bg-surface px-2 py-1.5 text-[13px] font-medium text-on-surface">
                     <CoverTile podcast={p} className="h-5 w-5" rounded="rounded" /> {p.title}
-                    <button onClick={() => toggleTracked(p.id)} className="text-outline hover:text-error" aria-label={`Remove ${p.title}`}>
+                    <button onClick={() => toggleTracked(p.id)} className="press text-outline hover:text-error" aria-label={`Remove ${p.title}`}>
                       <Icon name="close" size={15} />
                     </button>
                   </span>
@@ -107,7 +107,7 @@ export default function Discover() {
               </div>
               <button
                 onClick={() => navigate('/')}
-                className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-primary px-lg py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container"
+                className="press inline-flex shrink-0 items-center gap-2 rounded-lg bg-primary px-lg py-2.5 text-metadata font-semibold text-on-primary hover:bg-primary-container"
               >
                 Continue <Icon name="arrow_forward" size={18} />
               </button>
@@ -154,7 +154,7 @@ function PodcastCard({ podcast, onToggle }: { podcast: Podcast; onToggle: () => 
   const tracked = podcast.tracked
   return (
     <div
-      className={`flex items-center gap-md rounded-xl border bg-surface-container-lowest p-md transition-shadow hover:shadow-card ${
+      className={`lift flex items-center gap-md rounded-xl border bg-surface-container-lowest p-md hover:shadow-card ${
         tracked ? 'border-primary ring-1 ring-primary/15' : 'border-outline-variant'
       }`}
     >
@@ -166,7 +166,7 @@ function PodcastCard({ podcast, onToggle }: { podcast: Podcast; onToggle: () => 
       </div>
       <button
         onClick={onToggle}
-        className={`grid h-9 w-9 shrink-0 place-items-center rounded-full transition-colors ${
+        className={`press grid h-9 w-9 shrink-0 place-items-center rounded-full ${
           tracked ? 'bg-primary text-on-primary' : 'border border-outline-variant text-primary hover:bg-surface-container-low'
         }`}
         aria-label={tracked ? `Remove ${podcast.title}` : `Add ${podcast.title}`}

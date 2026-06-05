@@ -119,13 +119,13 @@ export default function Home() {
             <div className="mt-md flex flex-wrap items-center gap-2.5">
               <Link
                 to={`/episodes/${featured.id}`}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container"
+                className="press inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary hover:bg-primary-container"
               >
                 <Icon name="description" size={18} /> Read Summary
               </Link>
               <Link
                 to={`/episodes/${featured.id}?tab=transcript`}
-                className="inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-md py-2.5 text-metadata font-semibold text-on-surface transition-colors hover:bg-surface-container-low"
+                className="press inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-md py-2.5 text-metadata font-semibold text-on-surface hover:bg-surface-container-low"
               >
                 <Icon name="article" size={18} /> Open Transcript
               </Link>
@@ -234,7 +234,7 @@ export default function Home() {
                       key={t.label}
                       to={`/search?q=${encodeURIComponent(t.label)}`}
                       title={`${t.count} mention${t.count === 1 ? '' : 's'} across your episodes`}
-                      className="rounded-full chip-signal px-2.5 py-1 text-[12px] font-medium transition-opacity hover:opacity-80"
+                      className="press rounded-full chip-signal px-2.5 py-1 text-[12px] font-medium hover:opacity-80"
                     >
                       {t.label}
                     </Link>
@@ -244,7 +244,7 @@ export default function Home() {
             )}
             <Link
               to="/weekly"
-              className="mt-md flex items-center justify-center gap-2 rounded-lg border border-outline-variant py-2.5 text-metadata font-semibold text-primary transition-colors hover:bg-surface-container-low"
+              className="press mt-md flex items-center justify-center gap-2 rounded-lg border border-outline-variant py-2.5 text-metadata font-semibold text-primary hover:bg-surface-container-low"
             >
               <Icon name="bar_chart" size={18} /> View Weekly Summary
             </Link>

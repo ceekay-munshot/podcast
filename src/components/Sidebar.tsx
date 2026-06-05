@@ -12,7 +12,7 @@ export function Sidebar() {
   return (
     <nav className="fixed left-0 top-0 z-50 flex h-screen w-64 flex-col border-r border-outline-variant bg-surface px-3 py-5">
       {/* Brand — links to Home */}
-      <Link to="/" aria-label="Munshot — go to Home" className="mb-7 flex items-center gap-2.5 rounded-lg px-2 py-1 transition-opacity hover:opacity-90">
+      <Link to="/" aria-label="Munshot — go to Home" className="press mb-7 flex items-center gap-2.5 rounded-lg px-2 py-1 hover:opacity-90">
         <span
           className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-[10px] shadow-sm"
           style={{ background: 'linear-gradient(150deg, #2a2e38 0%, #0c0e13 100%)' }}
@@ -47,7 +47,7 @@ export function Sidebar() {
 
 function navClass({ isActive }: { isActive: boolean }): string {
   return [
-    'flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors',
+    'press-soft flex items-center gap-3 rounded-lg px-3 py-2.5',
     isActive
       ? 'bg-primary-fixed/60 font-semibold text-primary'
       : 'font-medium text-secondary hover:bg-surface-container-low hover:text-on-surface',

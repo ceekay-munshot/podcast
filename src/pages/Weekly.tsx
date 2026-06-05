@@ -53,7 +53,7 @@ export default function Weekly() {
           <button
             onClick={() => downloadWeekly(weekly, episodeById, podcastById)}
             title="Download a formatted Word document (.doc)"
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container"
+            className="press inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary hover:bg-primary-container"
           >
             <Icon name="download" size={18} /> Download
           </button>
@@ -127,7 +127,7 @@ function WeeklyDoc({
             <li key={n.id}>
               <button
                 onClick={() => go(n.id)}
-                className={`flex w-full items-center gap-2.5 rounded-lg border-l-2 px-3 py-2 text-left text-[14px] transition-colors ${
+                className={`press-soft flex w-full items-center gap-2.5 rounded-lg border-l-2 px-3 py-2 text-left text-[14px] ${
                   active === n.id
                     ? 'border-primary bg-primary-fixed/50 font-semibold text-primary'
                     : 'border-transparent text-secondary hover:bg-surface-container-low hover:text-on-surface'
@@ -167,7 +167,7 @@ function WeeklyDoc({
                     <Link
                       key={t.label}
                       to={`/search?q=${encodeURIComponent(t.label)}`}
-                      className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-[14px] font-medium ${s.tile}`}
+                      className={`press inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-[14px] font-medium ${s.tile}`}
                     >
                       <Icon name={s.icon} size={16} /> {t.label}
                     </Link>
@@ -219,7 +219,7 @@ function WeeklyDoc({
                   {interestingEpisode && (
                     <Link
                       to={`/episodes/${interestingEpisode.id}`}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-2 text-metadata font-semibold backdrop-blur transition-colors hover:bg-white/25"
+                      className="press inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-2 text-metadata font-semibold backdrop-blur hover:bg-white/25"
                     >
                       <Icon name="open_in_new" size={16} /> Double-click this
                     </Link>
@@ -317,7 +317,7 @@ function EmptyState() {
         Your weekly master summary is built from analysed episodes. Once a few episodes are summarised, the cross-episode
         synthesis appears here — drawn entirely from real content.
       </p>
-      <Link to="/episodes" className="mt-1 inline-flex items-center gap-2 rounded-lg bg-primary px-lg py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container">
+      <Link to="/episodes" className="press mt-1 inline-flex items-center gap-2 rounded-lg bg-primary px-lg py-2.5 text-metadata font-semibold text-on-primary hover:bg-primary-container">
         <Icon name="play_circle" size={18} /> Go to Episodes
       </Link>
     </div>
@@ -335,7 +335,7 @@ function MentionGroup({ title, icon, items }: { title: string; icon: string; ite
           <Link
             key={it}
             to={`/search?q=${encodeURIComponent(it)}`}
-            className="rounded-full border border-outline-variant bg-surface px-2.5 py-1 text-[12px] text-on-surface-variant transition-colors hover:border-primary hover:text-primary"
+            className="press rounded-full border border-outline-variant bg-surface px-2.5 py-1 text-[12px] text-on-surface-variant hover:border-primary hover:text-primary"
           >
             {it}
           </Link>

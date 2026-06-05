@@ -121,7 +121,7 @@ export default function EpisodeDetail() {
             }}
             disabled={!episode.summary}
             title="Download a formatted Word document (.doc)"
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container disabled:cursor-not-allowed disabled:opacity-40"
+            className="press inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary hover:bg-primary-container disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Icon name={shared ? 'check' : 'download'} size={18} /> {shared ? 'Downloaded' : 'Download'}
           </button>
@@ -290,8 +290,8 @@ function MomentsTab({
             <li key={m.id}>
               <button
                 onClick={() => clickable && onOpen(m.segmentId)}
-                className={`flex w-full items-start gap-md rounded-xl border border-outline-variant bg-surface-container-lowest p-md text-left shadow-card transition-shadow ${
-                  clickable ? 'hover:shadow-card-hover' : 'cursor-default'
+                className={`flex w-full items-start gap-md rounded-xl border border-outline-variant bg-surface-container-lowest p-md text-left shadow-card ${
+                  clickable ? 'lift hover:shadow-card-hover' : 'cursor-default'
                 }`}
               >
                 <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg ${style.tile}`}>
@@ -359,7 +359,7 @@ function TranscriptTab({ episode }: { episode: Episode }) {
                 <button
                   onMouseEnter={() => setActiveRef(m.id)}
                   onClick={() => jump(m.segmentId, m.id)}
-                  className={`w-full rounded-lg border p-3 text-left transition-colors ${
+                  className={`press-soft w-full rounded-lg border p-3 text-left ${
                     active ? 'border-l-4 border-primary bg-[#eff5ff]' : 'border-outline-variant bg-surface-container-lowest hover:bg-surface-container-low'
                   }`}
                 >
@@ -457,7 +457,7 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
     return (
       <button
         onClick={copy}
-        className="inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-3 py-2 text-metadata font-semibold text-on-surface transition-colors hover:bg-surface-container-low"
+        className="press inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-3 py-2 text-metadata font-semibold text-on-surface hover:bg-surface-container-low"
       >
         <Icon name={copied ? 'check' : 'content_copy'} size={16} className={copied ? 'text-success' : ''} />
         {copied ? 'Copied' : label}
@@ -467,7 +467,7 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
   return (
     <button
       onClick={copy}
-      className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-secondary transition-colors hover:bg-surface-container hover:text-primary"
+      className="press grid h-8 w-8 shrink-0 place-items-center rounded-lg text-secondary hover:bg-surface-container hover:text-primary"
       aria-label="Copy"
     >
       <Icon name={copied ? 'check' : 'content_copy'} size={17} className={copied ? 'text-success' : ''} />
@@ -541,7 +541,7 @@ function ProcessingPanel({ episode, onRetry, needsApiKey }: { episode: Episode; 
       {failed && onRetry && (
         <button
           onClick={onRetry}
-          className="mt-md inline-flex items-center gap-2 rounded-lg bg-primary px-lg py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container"
+          className="press mt-md inline-flex items-center gap-2 rounded-lg bg-primary px-lg py-2.5 text-metadata font-semibold text-on-primary hover:bg-primary-container"
         >
           <Icon name="refresh" size={18} /> Retry processing
         </button>

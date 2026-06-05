@@ -40,7 +40,7 @@ export default function Episodes() {
         </div>
         <Link
           to="/discover"
-          className="inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-md py-2 text-metadata font-semibold text-on-surface transition-colors hover:bg-surface-container-low"
+          className="press inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-md py-2 text-metadata font-semibold text-on-surface hover:bg-surface-container-low"
         >
           <Icon name="add" size={18} /> Add source
         </Link>
@@ -62,7 +62,7 @@ export default function Episodes() {
           <button
             key={p.id}
             onClick={() => setPreset(p.id)}
-            className={`rounded-lg px-4 py-1.5 text-[13px] font-medium transition-colors ${
+            className={`press rounded-lg px-4 py-1.5 text-[13px] font-medium ${
               preset.id === p.id
                 ? 'bg-primary-fixed/60 text-primary ring-1 ring-primary/20'
                 : 'border border-outline-variant bg-surface text-secondary hover:bg-surface-container-low'

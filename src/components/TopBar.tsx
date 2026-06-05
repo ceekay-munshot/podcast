@@ -41,7 +41,7 @@ export function TopBar() {
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search episodes, podcasts, people, companies…"
-            className="w-full rounded-xl border border-outline-variant bg-surface-container-low py-2.5 pl-11 pr-sm text-[14px] text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary focus:bg-surface"
+            className="w-full rounded-xl border border-outline-variant bg-surface-container-low py-2.5 pl-11 pr-sm text-[14px] text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary focus:bg-surface focus:ring-2 focus:ring-primary/15"
           />
         </form>
 
@@ -50,7 +50,7 @@ export function TopBar() {
           <div className="relative hidden md:block">
             <button
               onClick={() => setChanOpen((o) => !o)}
-              className={`flex items-center gap-2 whitespace-nowrap rounded-xl border px-3 py-2 text-[13px] font-medium transition-colors ${
+              className={`press flex items-center gap-2 whitespace-nowrap rounded-xl border px-3 py-2 text-[13px] font-medium ${
                 chanOpen || selected
                   ? 'border-primary bg-surface-container-low text-on-surface'
                   : 'border-outline-variant bg-surface text-on-surface hover:bg-surface-container-low'
@@ -68,7 +68,7 @@ export function TopBar() {
             {chanOpen && (
               <>
                 <button className="fixed inset-0 z-40 cursor-default" aria-hidden onClick={() => setChanOpen(false)} />
-                <div className="absolute right-0 z-50 mt-2 max-h-[70vh] w-64 overflow-y-auto rounded-xl border border-outline-variant bg-surface p-1 shadow-card-hover">
+                <div className="pop absolute right-0 z-50 mt-2 max-h-[70vh] w-64 origin-top-right overflow-y-auto rounded-xl border border-outline-variant bg-surface p-1 shadow-card-hover">
                   <p className="px-2.5 py-1.5 text-label-caps uppercase text-outline">Filter by channel</p>
                   <button
                     onClick={() => {
@@ -108,7 +108,7 @@ export function TopBar() {
           <div className="relative hidden lg:block">
             <button
               onClick={() => setDateOpen((o) => !o)}
-              className={`flex items-center gap-2 whitespace-nowrap rounded-xl border px-3 py-2 text-[13px] font-medium transition-colors ${
+              className={`press flex items-center gap-2 whitespace-nowrap rounded-xl border px-3 py-2 text-[13px] font-medium ${
                 dateOpen ? 'border-primary bg-surface-container-low text-on-surface' : 'border-outline-variant bg-surface text-on-surface hover:bg-surface-container-low'
               }`}
             >
@@ -120,7 +120,7 @@ export function TopBar() {
             {dateOpen && (
               <>
                 <button className="fixed inset-0 z-40 cursor-default" aria-hidden onClick={() => setDateOpen(false)} />
-                <div className="absolute right-0 z-50 mt-2 w-52 rounded-xl border border-outline-variant bg-surface p-1 shadow-card-hover">
+                <div className="pop absolute right-0 z-50 mt-2 w-52 origin-top-right rounded-xl border border-outline-variant bg-surface p-1 shadow-card-hover">
                   <p className="px-2.5 py-1.5 text-label-caps uppercase text-outline">Filter by date</p>
                   {presets.map((p) => (
                     <button
@@ -143,7 +143,7 @@ export function TopBar() {
           </div>
 
           {/* Account */}
-          <button className="flex items-center gap-1.5 rounded-full pl-0.5 transition-opacity hover:opacity-80" aria-label="Account">
+          <button className="press flex items-center gap-1.5 rounded-full pl-0.5 hover:opacity-80" aria-label="Account">
             <span className="grid h-9 w-9 place-items-center rounded-full bg-primary-fixed text-[12px] font-bold text-on-primary-container">
               CK
             </span>

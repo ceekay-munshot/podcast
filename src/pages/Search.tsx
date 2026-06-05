@@ -90,7 +90,7 @@ export default function Search() {
                 <button
                   key={t.label}
                   onClick={() => setParams({ q: t.label })}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-outline-variant bg-surface px-md py-2 text-metadata text-on-surface transition-colors hover:border-primary hover:text-primary"
+                  className="press inline-flex items-center gap-1.5 rounded-full border border-outline-variant bg-surface px-md py-2 text-metadata text-on-surface hover:border-primary hover:text-primary"
                 >
                   <Icon name="tag" size={15} /> {t.label}
                 </button>
@@ -121,7 +121,7 @@ export default function Search() {
                     <Link
                       key={`${ex.episode.id}-${ex.segment.id}`}
                       to={`/episodes/${ex.episode.id}?tab=transcript`}
-                      className="group block rounded-xl border border-outline-variant bg-surface-container-lowest p-md transition-shadow hover:shadow-card"
+                      className="lift group block rounded-xl border border-outline-variant bg-surface-container-lowest p-md hover:shadow-card"
                     >
                       {/* Provenance */}
                       <div className="mb-2.5 flex items-center gap-2.5">
@@ -165,7 +165,7 @@ export default function Search() {
                   <button
                     key={name}
                     onClick={() => setParams({ q: name })}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-outline-variant bg-surface px-3 py-1.5 text-metadata text-on-surface transition-colors hover:border-primary hover:text-primary"
+                    className="press inline-flex items-center gap-1.5 rounded-full border border-outline-variant bg-surface px-3 py-1.5 text-metadata text-on-surface hover:border-primary hover:text-primary"
                   >
                     <Icon name={icon} size={15} className="text-secondary" />
                     {name}
@@ -213,7 +213,7 @@ export default function Search() {
                   <Link
                     key={p.id}
                     to="/discover"
-                    className="flex items-center gap-md rounded-xl border border-outline-variant bg-surface-container-lowest p-sm transition-shadow hover:shadow-card"
+                    className="lift flex items-center gap-md rounded-xl border border-outline-variant bg-surface-container-lowest p-sm hover:shadow-card"
                   >
                     <CoverTile podcast={p} className="h-11 w-11 shrink-0" showSource />
                     <div className="min-w-0">
@@ -235,7 +235,7 @@ export default function Search() {
                   <Link
                     key={moment.id}
                     to={`/episodes/${episode.id}`}
-                    className="block rounded-xl border border-outline-variant bg-surface-container-lowest p-md transition-shadow hover:shadow-card"
+                    className="lift block rounded-xl border border-outline-variant bg-surface-container-lowest p-md hover:shadow-card"
                   >
                     <div className="mb-1 flex items-center justify-between gap-sm">
                       <p className="text-metadata font-bold text-on-surface">{moment.title}</p>

@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Motion design tokens --------------------------------------------------- */
+/* The built-in CSS easings are too weak — these carry the intentional "snap". */
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
 /* Material Symbols ------------------------------------------------------- */
 .material-symbols-outlined {
   font-family: 'Material Symbols Outlined';
@@ -81,4 +88,85 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #c1c6d7;
+}
+
+/* ───────────────────────────────────────────────────────────────────────── */
+/* Interaction primitives. Defined unlayered (after @tailwind utilities) so    */
+/* they win over `transition-*` utilities on the same element, and animate     */
+/* transform/opacity only — GPU-friendly, off the main thread.                 */
+/* ───────────────────────────────────────────────────────────────────────── */
+
+/* Press feedback for any control: scales down on press, with the colors/shadow
+   a button fades riding the same strong curve. `.press-soft` for wide rows. */
+.press,
+.press-soft {
+  transition:
+    transform 160ms var(--ease-out),
+    background-color 160ms var(--ease-out),
+    border-color 160ms var(--ease-out),
+    color 160ms var(--ease-out),
+    box-shadow 160ms var(--ease-out),
+    opacity 160ms var(--ease-out);
+}
+.press:active {
+  transform: scale(0.97);
+}
+.press-soft:active {
+  transform: scale(0.985);
+}
+
+/* Card lift: hover raises, press settles back. Movement, gated to real pointers. */
+.lift {
+  transition:
+    transform 200ms var(--ease-out),
+    box-shadow 200ms var(--ease-out);
+}
+.lift:active {
+  transform: translateY(0) scale(0.992);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lift:hover {
+    transform: translateY(-2px);
+  }
+}
+
+/* Origin-aware popover/menu entrance. Pair with a Tailwind `origin-*` so the
+   menu grows from its trigger, never from center. */
+.pop {
+  opacity: 1;
+  transform: scale(1);
+  transition:
+    opacity 160ms var(--ease-out),
+    transform 160ms var(--ease-out);
+}
+@starting-style {
+  .pop {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* Reduced motion: keep the color/opacity fades that aid comprehension; drop
+   every transform-based movement and the entrance translate. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .animate-fade-up {
+    animation: none;
+  }
+  .press:active,
+  .press-soft:active,
+  .lift:hover,
+  .lift:active {
+    transform: none;
+  }
+  .pop {
+    transition-property: opacity;
+  }
+  @starting-style {
+    .pop {
+      transform: none;
+    }
+  }
 }
