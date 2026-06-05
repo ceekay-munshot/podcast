@@ -16,7 +16,7 @@ export function StatusBadge({ status, compact = false }: StatusBadgeProps) {
       className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-label-caps uppercase ${meta.tone}`}
     >
       {meta.pulse ? (
-        <span className="h-1.5 w-1.5 rounded-full bg-primary motion-safe:animate-pulse" />
+        <span className={`h-1.5 w-1.5 rounded-full ${meta.dot ?? 'bg-primary'}`} />
       ) : (
         <Icon name={meta.icon} size={13} className={animating ? 'motion-safe:animate-spin' : ''} />
       )}

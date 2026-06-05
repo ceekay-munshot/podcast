@@ -13,37 +13,44 @@ export function TopBar() {
   }
 
   return (
-    <header className="sticky top-0 z-40 h-16 border-b border-outline-variant bg-surface/80 backdrop-blur-md">
-      <div className="mx-auto flex h-full max-w-container items-center justify-between gap-md px-lg">
-        <form onSubmit={onSubmit} className="group relative flex-1 max-w-md">
+    <header className="sticky top-0 z-40 h-16 border-b border-outline-variant bg-surface/85 backdrop-blur-md">
+      <div className="flex h-full items-center gap-md px-lg">
+        {/* Search */}
+        <form onSubmit={onSubmit} className="group relative w-full max-w-xl">
           <Icon
             name="search"
             size={20}
-            className="pointer-events-none absolute left-sm top-1/2 -translate-y-1/2 text-outline transition-colors group-focus-within:text-primary"
+            className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-outline transition-colors group-focus-within:text-primary"
           />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search transcripts, people, companies, themes…"
-            className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2 pl-11 pr-sm text-body-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary focus:ring-1 focus:ring-primary"
+            placeholder="Search episodes, podcasts, people, companies…"
+            className="w-full rounded-xl border border-outline-variant bg-surface-container-low py-2.5 pl-11 pr-sm text-[14px] text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary focus:bg-surface"
           />
         </form>
 
-        <div className="flex items-center gap-xs">
-          <button
-            type="button"
-            className="relative grid h-10 w-10 place-items-center rounded-full text-on-surface-variant transition-colors hover:bg-surface-container hover:text-primary"
-            aria-label="Notifications"
-          >
-            <Icon name="notifications" />
-            <span className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full border-2 border-surface bg-primary" />
+        <div className="ml-auto flex items-center gap-2.5">
+          {/* Channel filter (cosmetic in the prototype) */}
+          <button className="hidden items-center gap-2 rounded-xl border border-outline-variant bg-surface whitespace-nowrap px-3 py-2 text-[13px] font-medium text-on-surface transition-colors hover:bg-surface-container-low md:flex">
+            <span className="grid h-4 w-4 place-items-center rounded bg-inverse-surface text-[8px] font-bold text-white">M</span>
+            All Channels
+            <Icon name="expand_more" size={18} className="text-outline" />
           </button>
-          <button
-            type="button"
-            className="grid h-10 w-10 place-items-center rounded-full text-on-surface-variant transition-colors hover:bg-surface-container hover:text-primary"
-            aria-label="Account"
-          >
-            <Icon name="account_circle" fill />
+
+          {/* Date range (cosmetic) */}
+          <button className="hidden items-center gap-2 rounded-xl border border-outline-variant bg-surface whitespace-nowrap px-3 py-2 text-[13px] font-medium text-on-surface transition-colors hover:bg-surface-container-low lg:flex">
+            <Icon name="calendar_today" size={16} className="text-outline" />
+            May 30 – Jun 5, 2026
+            <Icon name="expand_more" size={18} className="text-outline" />
+          </button>
+
+          {/* Account */}
+          <button className="flex items-center gap-1.5 rounded-full pl-0.5 transition-opacity hover:opacity-80" aria-label="Account">
+            <span className="grid h-9 w-9 place-items-center rounded-full bg-primary-fixed text-[12px] font-bold text-on-primary-container">
+              CK
+            </span>
+            <Icon name="expand_more" size={18} className="text-outline" />
           </button>
         </div>
       </div>

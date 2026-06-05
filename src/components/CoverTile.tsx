@@ -24,11 +24,11 @@ export function CoverTile({
   return (
     <div
       className={`relative grid place-items-center overflow-hidden ${rounded} ${className}`}
-      style={{ background: `linear-gradient(145deg, ${podcast.color} 0%, ${shade(podcast.color, -28)} 100%)` }}
+      style={{ background: `linear-gradient(145deg, ${podcast.color} 0%, ${shade(podcast.color, -16)} 100%)` }}
     >
       <div
-        className="absolute inset-0 opacity-40"
-        style={{ background: 'radial-gradient(120% 80% at 20% 0%, rgba(255,255,255,0.35), transparent 60%)' }}
+        className="absolute inset-0 opacity-25"
+        style={{ background: 'radial-gradient(120% 80% at 20% 0%, rgba(255,255,255,0.3), transparent 60%)' }}
       />
       <svg viewBox="0 0 100 100" className="relative h-full w-full" role="img" aria-label={podcast.monogram}>
         <text

@@ -1,4 +1,4 @@
-# SignalCast — Podcast Intelligence
+# Munshot Podcasts — Podcast Intelligence
 
 > Choose podcasts → get one-page AI summaries → double-click what's interesting → read one weekly master summary.
 
@@ -65,7 +65,7 @@ Replace the bodies and the UI is live.
 
 ### Design system
 
-SignalCast — *"signal over noise."* A paper-like `#f9f9f9` canvas, white cards with 24px radii and 1px `#c1c6d7` borders, **Inter** type, and a single blue accent (`#0058bc`) reserved for actions, citations, and active states. Tokens live in [`tailwind.config.js`](./tailwind.config.js). Cover art is generated from each show's brand color + monogram (an SVG), so the prototype ships with zero external image dependencies.
+Clean, minimal, editorial SaaS. A near-white `#fafbfc` canvas, white cards with subtle borders + faint shadows, **Inter** type, and a single bright blue accent (`#2563eb`) reserved for actions and active states. Green denotes a ready summary. Tokens live in [`tailwind.config.js`](./tailwind.config.js) — the whole app re-skins from that one file. Cover art is generated from each show's brand color + monogram (an SVG), so the prototype ships with zero external image dependencies.
 
 ## What's mocked vs. real
 

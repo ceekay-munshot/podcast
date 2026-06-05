@@ -50,20 +50,22 @@ export interface StatusMeta {
   tone: string
   spin?: boolean
   pulse?: boolean
+  /** Dot color class when pulse is set. */
+  dot?: string
 }
 
 export function statusMeta(status: ProcessingStatus): StatusMeta {
   switch (status) {
     case 'ready':
-      return { label: 'Summary ready', icon: 'check_circle', tone: 'chip-signal', pulse: true }
+      return { label: 'Ready', icon: 'check_circle', tone: 'bg-success-container text-on-success-container', pulse: true, dot: 'bg-success' }
     case 'summarizing':
-      return { label: 'Summarizing', icon: 'auto_awesome', tone: 'bg-surface-container-high text-on-surface-variant', spin: false }
+      return { label: 'Summarizing', icon: 'progress_activity', tone: 'chip-signal', spin: true }
     case 'transcribing':
-      return { label: 'Transcribing', icon: 'graphic_eq', tone: 'bg-surface-container-high text-on-surface-variant' }
+      return { label: 'Transcribing', icon: 'progress_activity', tone: 'chip-signal', spin: true }
     case 'fetching':
-      return { label: 'Fetching audio', icon: 'downloading', tone: 'bg-surface-container-high text-on-surface-variant' }
+      return { label: 'Fetching', icon: 'progress_activity', tone: 'chip-signal', spin: true }
     case 'detected':
-      return { label: 'New · detected', icon: 'fiber_new', tone: 'bg-surface border border-outline-variant text-secondary' }
+      return { label: 'Detected', icon: 'fiber_new', tone: 'bg-surface-container text-on-surface-variant' }
     case 'failed':
       return { label: 'Failed', icon: 'error', tone: 'bg-error-container text-on-error-container' }
   }

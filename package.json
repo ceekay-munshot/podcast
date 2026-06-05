@@ -1,9 +1,9 @@
 {
-  "name": "signalcast",
+  "name": "munshot-podcasts",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "SignalCast — podcast intelligence dashboard (UI prototype)",
+  "description": "Munshot Podcasts — podcast intelligence dashboard (UI prototype)",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

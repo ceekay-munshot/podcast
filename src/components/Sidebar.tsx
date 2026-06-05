@@ -1,41 +1,33 @@
 import { NavLink } from 'react-router-dom'
 import { Icon } from './Icon'
 
-const MAIN = [
+const NAV = [
   { to: '/', label: 'Home', icon: 'home', end: true },
-  { to: '/discover', label: 'Discover', icon: 'travel_explore' },
-  { to: '/episodes', label: 'Episodes', icon: 'library_music' },
-  { to: '/weekly', label: 'Weekly Summary', icon: 'summarize' },
-]
-
-const FOOTER = [
+  { to: '/episodes', label: 'Episodes', icon: 'play_circle' },
+  { to: '/weekly', label: 'Weekly Summary', icon: 'bar_chart' },
   { to: '/settings', label: 'Settings', icon: 'settings' },
-  { to: '/search', label: 'Search', icon: 'search' },
 ]
 
 export function Sidebar() {
   return (
-    <nav className="fixed left-0 top-0 z-50 flex h-screen w-64 flex-col border-r border-outline-variant bg-surface px-sm py-lg">
+    <nav className="fixed left-0 top-0 z-50 flex h-screen w-64 flex-col border-r border-outline-variant bg-surface px-3 py-5">
       {/* Brand */}
-      <div className="mb-xl px-sm">
-        <div className="mb-base flex items-center gap-xs">
-          <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-on-primary">
-            <Icon name="graphic_eq" size={20} fill />
-          </span>
-          <h1 className="text-display-sm font-bold tracking-tight text-primary">SignalCast</h1>
-        </div>
-        <p className="px-base text-metadata text-secondary">Podcast Intelligence</p>
+      <div className="mb-7 flex items-center gap-2.5 px-2">
+        <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-on-primary shadow-sm">
+          <span className="text-[16px] font-extrabold leading-none">M</span>
+        </span>
+        <span className="text-[19px] font-bold tracking-tight text-on-surface">Munshot</span>
       </div>
 
       {/* Primary nav */}
-      <ul className="flex flex-1 flex-col gap-base">
-        {MAIN.map((item) => (
+      <ul className="flex flex-1 flex-col gap-1">
+        {NAV.map((item) => (
           <li key={item.to}>
             <NavLink to={item.to} end={item.end} className={navClass}>
               {({ isActive }) => (
                 <>
                   <Icon name={item.icon} size={20} fill={isActive} />
-                  <span className="text-body-md">{item.label}</span>
+                  <span className="text-[14px]">{item.label}</span>
                 </>
               )}
             </NavLink>
@@ -43,31 +35,14 @@ export function Sidebar() {
         ))}
       </ul>
 
-      {/* Footer nav */}
-      <ul className="mt-auto flex flex-col gap-base border-t border-outline-variant pt-lg">
-        {FOOTER.map((item) => (
-          <li key={item.to}>
-            <NavLink to={item.to} className={navClass}>
-              {({ isActive }) => (
-                <>
-                  <Icon name={item.icon} size={20} fill={isActive} />
-                  <span className="text-body-md">{item.label}</span>
-                </>
-              )}
-            </NavLink>
-          </li>
-        ))}
-      </ul>
-
-      {/* User chip */}
-      <div className="mt-lg flex items-center gap-sm px-sm">
-        <span className="grid h-9 w-9 place-items-center rounded-full bg-primary-fixed text-[12px] font-bold text-on-primary-container">
-          CK
-        </span>
-        <div className="min-w-0">
-          <p className="truncate text-metadata font-semibold text-on-surface">Chiraag Kapil</p>
-          <p className="truncate text-[11px] text-secondary">Founding plan</p>
+      {/* Plan card */}
+      <div className="rounded-xl border border-outline-variant bg-surface-container-low p-3">
+        <div className="mb-0.5 flex items-center gap-1.5">
+          <Icon name="auto_awesome" size={16} className="text-primary" fill />
+          <span className="text-[13px] font-semibold text-on-surface">Munshot Pro</span>
         </div>
+        <p className="text-[12px] text-secondary">Premium plan</p>
+        <button className="mt-1 text-[12px] font-semibold text-primary hover:underline">Manage Plan</button>
       </div>
     </nav>
   )
@@ -75,9 +50,9 @@ export function Sidebar() {
 
 function navClass({ isActive }: { isActive: boolean }): string {
   return [
-    'flex items-center gap-md rounded-lg px-sm py-2.5 transition-colors',
+    'flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors',
     isActive
-      ? 'bg-surface-container font-semibold text-primary'
-      : 'text-secondary hover:bg-surface-container-low hover:text-on-surface',
+      ? 'bg-primary-fixed/60 font-semibold text-primary'
+      : 'font-medium text-secondary hover:bg-surface-container-low hover:text-on-surface',
   ].join(' ')
 }

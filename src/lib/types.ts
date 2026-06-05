@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// SignalCast domain model
+// Munshot Podcasts domain model
 // These types are the contract between the UI and the (future) backend. The
 // mock api in `api.ts` returns exactly these shapes, so swapping mock data for
 // real `fetch()` calls is a drop-in change.

@@ -29,8 +29,8 @@
     text-rendering: optimizeLegibility;
   }
   ::selection {
-    background: rgba(0, 112, 235, 0.16);
-    color: #001a41;
+    background: rgba(37, 99, 235, 0.16);
+    color: #1e3a8a;
   }
 }
 
@@ -41,17 +41,17 @@
   }
   /* Citation / status chip with a soft blue tint. */
   .chip-signal {
-    background: rgba(0, 112, 235, 0.08);
+    background: #eff5ff;
     @apply text-primary;
   }
   /* Highlighted transcript span linked to a summary module. */
   .transcript-mark {
     @apply rounded px-1 cursor-pointer transition-colors;
-    background: rgba(173, 198, 255, 0.45);
+    background: rgba(37, 99, 235, 0.12);
   }
   .transcript-mark:hover,
   .transcript-mark.is-active {
-    background: rgba(173, 198, 255, 0.95);
+    background: rgba(37, 99, 235, 0.22);
   }
 }
 
