@@ -1,47 +1,39 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
-import { formatDuration, longDate, NOW } from '../lib/format'
+import { useDateRange } from '../store/DateRange'
+import { formatDuration, longDate } from '../lib/format'
 import type { Episode } from '../lib/types'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
 import { StatusBadge } from '../components/StatusBadge'
 
-type Filter = 'all' | 'today' | 'week' | 'month'
-
-const FILTERS: { id: Filter; label: string; days: number | null }[] = [
-  { id: 'all', label: 'All', days: null },
-  { id: 'today', label: 'Today', days: 0 },
-  { id: 'week', label: 'This Week', days: 7 },
-  { id: 'month', label: 'This Month', days: 31 },
-]
-
 export default function Episodes() {
   const { episodes, podcastById } = useAppData()
+  const { preset, presets, setPreset, inRange, rangeLabel } = useDateRange()
   const navigate = useNavigate()
-  const [filter, setFilter] = useState<Filter>('all')
   const [q, setQ] = useState('')
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase()
-    const def = FILTERS.find((f) => f.id === filter)!
     return episodes
-      .filter((e) => {
-        if (def.days === null) return true
-        const ageDays = Math.floor((startOfDay(NOW) - startOfDay(+new Date(e.publishedAt))) / 86_400_000)
-        return def.days === 0 ? ageDays <= 0 : ageDays < def.days
-      })
+      .filter((e) => inRange(e.publishedAt))
       .filter((e) => {
         if (!needle) return true
         return e.title.toLowerCase().includes(needle) || podcastById(e.podcastId)?.title.toLowerCase().includes(needle)
       })
       .sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt))
-  }, [episodes, filter, q, podcastById])
+  }, [episodes, inRange, q, podcastById])
 
   return (
     <div className="animate-fade-up">
       <div className="mb-md flex flex-wrap items-center justify-between gap-md">
-        <h2 className="text-display-lg text-on-background">Episodes</h2>
+        <div>
+          <h2 className="text-display-lg text-on-background">Episodes</h2>
+          <p className="mt-1 text-metadata text-secondary">
+            {rows.length} episode{rows.length === 1 ? '' : 's'} · {preset.days === null ? 'all time' : rangeLabel}
+          </p>
+        </div>
         <Link
           to="/discover"
           className="inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-md py-2 text-metadata font-semibold text-on-surface transition-colors hover:bg-surface-container-low"
@@ -60,18 +52,19 @@ export default function Episodes() {
         />
       </div>
 
+      {/* Date filter chips — synced with the top-bar date range */}
       <div className="mb-md flex flex-wrap gap-2">
-        {FILTERS.map((f) => (
+        {presets.map((p) => (
           <button
-            key={f.id}
-            onClick={() => setFilter(f.id)}
+            key={p.id}
+            onClick={() => setPreset(p.id)}
             className={`rounded-lg px-4 py-1.5 text-[13px] font-medium transition-colors ${
-              filter === f.id
+              preset.id === p.id
                 ? 'bg-primary-fixed/60 text-primary ring-1 ring-primary/20'
                 : 'border border-outline-variant bg-surface text-secondary hover:bg-surface-container-low'
             }`}
           >
-            {f.label}
+            {p.label}
           </button>
         ))}
       </div>
@@ -89,7 +82,17 @@ export default function Episodes() {
           <EpisodeRow key={ep.id} episode={ep} onOpen={() => navigate(`/episodes/${ep.id}`)} />
         ))}
 
-        {rows.length === 0 && <div className="px-md py-xl text-center text-body-md text-secondary">No episodes match this filter.</div>}
+        {rows.length === 0 && (
+          <div className="flex flex-col items-center gap-1 px-md py-xl text-center">
+            <Icon name="event_busy" size={28} className="text-outline" />
+            <p className="text-body-md text-secondary">No episodes in {preset.days === null ? 'your library' : rangeLabel}.</p>
+            {preset.days !== null && (
+              <button onClick={() => setPreset('all')} className="text-metadata font-semibold text-primary hover:underline">
+                Show all time
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -118,10 +121,4 @@ function EpisodeRow({ episode, onOpen }: { episode: Episode; onOpen: () => void 
       </span>
     </button>
   )
-}
-
-function startOfDay(ms: number): number {
-  const d = new Date(ms)
-  d.setHours(0, 0, 0, 0)
-  return d.getTime()
 }

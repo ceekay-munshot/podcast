@@ -1,6 +1,7 @@
 import { Route, Routes, Link } from 'react-router-dom'
 import { AppDataProvider } from './store/AppData'
 import { PlayerProvider } from './store/Player'
+import { DateRangeProvider } from './store/DateRange'
 import { Layout } from './components/Layout'
 import { Icon } from './components/Icon'
 import Home from './pages/Home'
@@ -14,8 +15,9 @@ import Search from './pages/Search'
 export default function App() {
   return (
     <AppDataProvider>
-      <PlayerProvider>
-        <Routes>
+      <DateRangeProvider>
+        <PlayerProvider>
+          <Routes>
           <Route element={<Layout />}>
             <Route index element={<Home />} />
             <Route path="discover" element={<Discover />} />
@@ -26,8 +28,9 @@ export default function App() {
             <Route path="search" element={<Search />} />
             <Route path="*" element={<NotFound />} />
           </Route>
-        </Routes>
-      </PlayerProvider>
+          </Routes>
+        </PlayerProvider>
+      </DateRangeProvider>
     </AppDataProvider>
   )
 }

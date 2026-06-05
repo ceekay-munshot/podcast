@@ -185,9 +185,9 @@ export const EPISODES: Episode[] = [
     },
     summary: {
       synthesis: [
-        `Ben revisits Aggregation Theory through the lens of generative AI and lands on a counter-consensus take: the incumbents who own demand are the most likely winners, not the labs that own the models. Models are converging in capability and falling in price, which makes them a cost center, not a moat. The durable advantage is the same as it ever was — owning the user relationship and the distribution surface where AI gets consumed.`,
-        `The episode draws a sharp line between "AI as a feature" and "AI as a business." Companies with an existing aggregation surface (Search, Feed, Office, iOS) can fold AI in at near-zero marginal customer-acquisition cost. Pure-play model providers, by contrast, must buy distribution at brutal prices — which is exactly why they keep partnering with the very incumbents they hoped to disrupt.`,
-        `Ben closes on the attention economy: if generation cost collapses to zero, scarcity migrates from content to attention and trust. The platforms that already arbitrate attention inherit the surplus. The provocative implication for founders is that the best AI businesses may look less like "an LLM wrapper" and more like a wedge into someone's distribution.`,
+        `Ben revisits Aggregation Theory through the lens of generative AI and lands on a counter-consensus take: **the incumbents who own demand are the most likely winners**, not the labs that own the models. Models are converging in capability and falling in price, which makes them **a cost center, not a moat**. The durable advantage is the same as it ever was — **owning the user relationship and the distribution surface** where AI gets consumed.`,
+        `The episode draws a sharp line between **"AI as a feature"** and **"AI as a business"**. Companies with an existing aggregation surface (Search, Feed, Office, iOS) can fold AI in at **near-zero marginal customer-acquisition cost**. Pure-play model providers, by contrast, **must buy distribution at brutal prices** — which is exactly why they keep partnering with the very incumbents they hoped to disrupt.`,
+        `Ben closes on the attention economy: if generation cost collapses to zero, **scarcity migrates from content to attention and trust**. The platforms that already arbitrate attention inherit the surplus. The provocative implication for founders is that the best AI businesses may look less like "an LLM wrapper" and more like **a wedge into someone's distribution**.`,
       ],
       takeaways: [
         {
@@ -330,9 +330,9 @@ export const EPISODES: Episode[] = [
     },
     summary: {
       synthesis: [
-        `The guest makes the case that permanent capital is structurally underrated: by removing redemption risk, it converts time itself into an edge. Most investors are forced sellers at the worst moments; a permanent vehicle can be the buyer on the other side, which over decades is where the bulk of the returns hide.`,
-        `Much of the conversation is a clinic on incentives. The best decentralized compounders push capital-allocation authority down to the operators closest to the cash flows, then hold them to a hard hurdle rate. Centralized M&A teams, by contrast, optimize for deal volume because that's what they're paid for — the classic agency problem dressed up as "synergy."`,
-        `The episode lands on temperament. Edge isn't a smarter spreadsheet; it's the behavioral capacity to do nothing for long stretches and then act decisively when price dislocates from value.`,
+        `The guest makes the case that **permanent capital is structurally underrated**: by removing redemption risk, it **converts time itself into an edge**. Most investors are forced sellers at the worst moments; a permanent vehicle can be the buyer on the other side, which over decades is where the bulk of the returns hide.`,
+        `Much of the conversation is a clinic on incentives. The best decentralized compounders **push capital-allocation authority down to the operators** closest to the cash flows, then hold them to **a hard hurdle rate**. Centralized M&A teams, by contrast, optimize for deal volume because that's what they're paid for — the classic agency problem dressed up as "synergy."`,
+        `The episode lands on temperament. Edge isn't a smarter spreadsheet; it's **the behavioral capacity to do nothing for long stretches** and then act decisively when price dislocates from value.`,
       ],
       takeaways: [
         { title: 'Permanent capital turns time into alpha', detail: `No redemptions means you can be the buyer when everyone else is a forced seller — the single biggest structural edge available.` },
@@ -368,9 +368,9 @@ export const EPISODES: Episode[] = [
     },
     summary: {
       synthesis: [
-        `The guest — a former hyperscaler energy lead — argues the AI buildout has quietly become an electricity story. The scarce input is no longer GPUs; it's firm power and the physical gear to deliver it. Interconnection queues now stretch past 2,000 days in parts of the US, which means a data center can be financed, designed, and chip-stocked and still sit dark waiting for a grid connection.`,
-        `A surprising amount of the bottleneck is mundane hardware: large power transformers have multi-year lead times and are largely built overseas. The conversation ranges, in classic Odd Lots fashion, from the exotic (behind-the-meter nuclear, talk of putting compute where the power is — even half-joking about data centers in space) all the way down to the deeply unglamorous choice of UPS and backup-power topology inside the building.`,
-        `The takeaway for investors is that the value is migrating to whoever controls firm generation and interconnection rights. Utilities, independent power producers, and anyone sitting on a permitted site with a grid connection suddenly hold a far more valuable asset than the market priced a year ago.`,
+        `The guest — a former hyperscaler energy lead — argues the AI buildout has quietly become **an electricity story**. The scarce input is no longer GPUs; it's **firm power and the physical gear to deliver it**. Interconnection queues now stretch **past 2,000 days** in parts of the US, which means a data center can be financed, designed, and chip-stocked and still sit dark waiting for a grid connection.`,
+        `A surprising amount of the bottleneck is mundane hardware: **large power transformers have multi-year lead times** and are largely built overseas. The conversation ranges, in classic Odd Lots fashion, from the exotic (behind-the-meter nuclear, talk of putting compute where the power is — even half-joking about data centers in space) all the way down to the deeply unglamorous choice of UPS and backup-power topology inside the building.`,
+        `The takeaway for investors is that **the value is migrating to whoever controls firm generation and interconnection rights**. Utilities, independent power producers, and anyone sitting on a permitted site with a grid connection suddenly hold a far more valuable asset than the market priced a year ago.`,
       ],
       takeaways: [
         { title: 'Power, not chips, is the binding constraint', detail: `You can buy GPUs with money. You cannot buy a grid interconnection with money — you wait in a queue measured in years.` },
@@ -485,8 +485,8 @@ export const EPISODES: Episode[] = [
     },
     summary: {
       synthesis: [
-        `The panel splits on the central question of the moment: is hyperscaler AI capex a rational supercycle or a late-stage bubble? The bull case leans on real revenue and the power-constraint thesis; the bear case points to circular financing and depreciation schedules that may be wildly optimistic.`,
-        `There's consensus on one thing: a reopening IPO window changes venture math. Several late-stage names finally have a clearing price, which pulls forward distributions and resets the bar for what stays private. The group debates whether this is healthy price discovery or a liquidity-driven head-fake.`,
+        `The panel splits on the central question of the moment: **is hyperscaler AI capex a rational supercycle or a late-stage bubble?** The bull case leans on real revenue and the power-constraint thesis; the bear case points to **circular financing** and depreciation schedules that may be wildly optimistic.`,
+        `There's consensus on one thing: **a reopening IPO window changes venture math**. Several late-stage names finally have a clearing price, which pulls forward distributions and resets the bar for what stays private. The group debates whether this is healthy price discovery or a liquidity-driven head-fake.`,
       ],
       takeaways: [
         { title: 'AI capex: supercycle vs. bubble', detail: `The disagreement hinges on depreciation. If GPUs are 6-year assets, the math works; if they're 3-year assets, much of the reported margin is fiction.` },
@@ -538,8 +538,8 @@ export const EPISODES: Episode[] = [
     },
     summary: {
       synthesis: [
-        `Ben and David trace how Morris Chang's pure-play foundry model inverted the chip industry: by never designing its own chips, TSMC became the trusted manufacturing partner for everyone, accumulating a process lead that now compounds. The episode frames TSMC as the keystone of the entire AI economy.`,
-        `The strategic punchline is concentration risk. A single company, on a single island, in a single geopolitical flashpoint, fabricates the overwhelming majority of leading-edge chips. The CHIPS-Act-era reshoring is real but slow, and the hosts are skeptical it meaningfully de-risks the next decade.`,
+        `Ben and David trace how Morris Chang's **pure-play foundry model inverted the chip industry**: by never designing its own chips, TSMC became the trusted manufacturing partner for everyone, accumulating a process lead that now compounds. The episode frames **TSMC as the keystone of the entire AI economy**.`,
+        `The strategic punchline is **concentration risk**. A single company, on a single island, in a single geopolitical flashpoint, fabricates the overwhelming majority of leading-edge chips. The CHIPS-Act-era reshoring is real but slow, and the hosts are skeptical it meaningfully de-risks the next decade.`,
       ],
       takeaways: [
         { title: 'The foundry model was the masterstroke', detail: `By not competing with its customers, TSMC earned the trust to manufacture for all of them — and the volume to out-invest everyone.` },
@@ -607,8 +607,8 @@ export const EPISODES: Episode[] = [
     },
     summary: {
       synthesis: [
-        `The group argues humanoid robotics has crossed from science project to investable thesis, driven by the same model advances powering language AI. The debate is on timelines and unit economics, not direction.`,
-        `A recurring thread ties back to energy: robots, like data centers, are ultimately a power story. The "energy trade" is becoming the panel's most consensus position, which itself raises the contrarian question of whether it's now crowded.`,
+        `The group argues **humanoid robotics has crossed from science project to investable thesis**, driven by the same model advances powering language AI. The debate is on timelines and unit economics, not direction.`,
+        `A recurring thread ties back to energy: **robots, like data centers, are ultimately a power story**. The "energy trade" is becoming the panel's most consensus position, which itself raises the contrarian question of whether it's now crowded.`,
       ],
       takeaways: [
         { title: 'Robotics is now investable', detail: `Foundation-model progress transfers to manipulation and planning, pulling humanoid timelines forward.` },

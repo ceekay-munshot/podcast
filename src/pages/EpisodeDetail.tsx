@@ -142,6 +142,19 @@ export default function EpisodeDetail() {
   )
 }
 
+// Renders inline **bold** markup as emphasized spans, so summary data can stay plain strings.
+function renderEmphasis(text: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((chunk, i) =>
+    chunk.startsWith('**') && chunk.endsWith('**') ? (
+      <strong key={i} className="font-semibold text-on-surface">
+        {chunk.slice(2, -2)}
+      </strong>
+    ) : (
+      chunk
+    ),
+  )
+}
+
 // ── Summary tab — AI Summary + At a Glance ───────────────────────────────────
 function SummaryTab({ episode }: { episode: Episode }) {
   const s = episode.summary!
@@ -166,7 +179,7 @@ function SummaryTab({ episode }: { episode: Episode }) {
         </div>
         <div className="space-y-md text-body-md leading-relaxed text-on-surface-variant">
           {s.synthesis.map((p, i) => (
-            <p key={i}>{p}</p>
+            <p key={i}>{renderEmphasis(p)}</p>
           ))}
         </div>
       </section>

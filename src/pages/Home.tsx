@@ -1,8 +1,8 @@
 import { Link } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
 import { usePlayer } from '../store/Player'
+import { useDateRange } from '../store/DateRange'
 import { formatDuration, longDate, relativeDate } from '../lib/format'
-import type { Episode } from '../lib/types'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
 import { StatusBadge } from '../components/StatusBadge'
@@ -10,17 +10,20 @@ import { StatusBadge } from '../components/StatusBadge'
 export default function Home() {
   const { episodes, podcasts, podcastById, weekly } = useAppData()
   const { play } = usePlayer()
+  const { preset, inRange, rangeLabel } = useDateRange()
 
   const trackedCount = podcasts.filter((p) => p.tracked).length
+  // Hero is the latest high-signal episode (editorial pick — always shown).
   const featured = episodes.find((e) => e.signal === 'high' && e.status === 'ready') ?? episodes[0]
   const featuredPodcast = podcastById(featured.podcastId)
 
-  const byDate = [...episodes].sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt))
-  const activity = byDate.slice(0, 4)
-  const recent = byDate.filter((e) => e.id !== featured.id).slice(0, 4)
+  // Everything else respects the active date range.
+  const inWindow = [...episodes].filter((e) => inRange(e.publishedAt)).sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt))
+  const activity = inWindow.slice(0, 4)
+  const recent = inWindow.filter((e) => e.id !== featured.id).slice(0, 4)
 
-  // Real derived "this week" stats.
-  const ready = episodes.filter((e) => e.status === 'ready')
+  // Stats derived over ready episodes inside the window.
+  const ready = inWindow.filter((e) => e.status === 'ready')
   const stats = {
     processed: ready.length,
     takeaways: ready.reduce((n, e) => n + (e.summary?.takeaways.length ?? 0), 0),
@@ -126,6 +129,14 @@ export default function Home() {
                   </li>
                 )
               })}
+              {recent.length === 0 && (
+                <li className="py-6 text-center text-metadata text-secondary">
+                  No episodes in {rangeLabel}.{' '}
+                  <Link to="/episodes" className="font-semibold text-primary hover:underline">
+                    View all
+                  </Link>
+                </li>
+              )}
             </ul>
           </article>
         </div>
@@ -165,13 +176,16 @@ export default function Home() {
                   </li>
                 )
               })}
+              {activity.length === 0 && (
+                <li className="py-6 text-center text-metadata text-secondary">No activity in {rangeLabel}.</li>
+              )}
             </ul>
           </div>
 
           {/* This week */}
           <div className="rounded-2xl border border-outline-variant bg-surface-container-lowest p-md shadow-card">
             <h3 className="mb-3 flex items-center gap-2 text-[17px] font-semibold text-on-surface">
-              <Icon name="calendar_month" size={20} className="text-primary" /> This Week
+              <Icon name="calendar_month" size={20} className="text-primary" /> {preset.stat}
             </h3>
             <div className="grid grid-cols-3 gap-2 text-center">
               <Stat label="Episodes Processed" value={stats.processed} />
