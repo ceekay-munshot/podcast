@@ -93,6 +93,8 @@ export interface Episode {
   signal: 'high' | 'normal'
   /** One-line teaser shown in lists and the hero card. */
   blurb: string
+  /** Deep link to the episode at its origin (Apple Podcasts, YouTube, RSS). When absent, the UI falls back to a source search. */
+  sourceUrl?: string
   entities: EpisodeEntities
   /** Present once status === 'ready'. */
   summary?: Summary
@@ -116,9 +118,3 @@ export interface WeeklySummary {
   sourceEpisodeIds: string[]
 }
 
-export interface Settings {
-  summaryLength: 'concise' | 'standard' | 'detailed'
-  weeklySummary: boolean
-  emailNotifications: boolean
-  email: string
-}

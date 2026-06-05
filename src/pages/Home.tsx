@@ -1,26 +1,31 @@
 import { Link } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
-import { usePlayer } from '../store/Player'
 import { useDateRange } from '../store/DateRange'
+import { useChannelFilter } from '../store/ChannelFilter'
 import { formatDuration, longDate, relativeDate } from '../lib/format'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
+import { SourceLink } from '../components/SourceLink'
 import { StatusBadge } from '../components/StatusBadge'
 
 export default function Home() {
   const { episodes, podcasts, podcastById, weekly } = useAppData()
-  const { play } = usePlayer()
   const { preset, inRange, rangeLabel } = useDateRange()
+  const { channelId, inChannel } = useChannelFilter()
 
   const trackedCount = podcasts.filter((p) => p.tracked).length
-  // Hero is the latest high-signal episode (editorial pick — always shown).
-  const featured = episodes.find((e) => e.signal === 'high' && e.status === 'ready') ?? episodes[0]
-  const featuredPodcast = podcastById(featured.podcastId)
+  const channel = channelId ? podcastById(channelId) : undefined
 
-  // Everything else respects the active date range.
-  const inWindow = [...episodes].filter((e) => inRange(e.publishedAt)).sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt))
+  // Scope the whole dashboard to the selected channel (all episodes when null).
+  const scoped = episodes.filter((e) => inChannel(e.podcastId))
+  // Hero is the latest high-signal episode in scope (editorial pick).
+  const featured = scoped.find((e) => e.signal === 'high' && e.status === 'ready') ?? scoped[0]
+  const featuredPodcast = featured ? podcastById(featured.podcastId) : undefined
+
+  // Everything else also respects the active date range.
+  const inWindow = scoped.filter((e) => inRange(e.publishedAt)).sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt))
   const activity = inWindow.slice(0, 4)
-  const recent = inWindow.filter((e) => e.id !== featured.id).slice(0, 4)
+  const recent = inWindow.filter((e) => e.id !== featured?.id).slice(0, 4)
 
   // Stats derived over ready episodes inside the window.
   const ready = inWindow.filter((e) => e.status === 'ready')
@@ -30,11 +35,30 @@ export default function Home() {
     moments: ready.reduce((n, e) => n + (e.summary?.moments.length ?? 0), 0),
   }
 
+  if (!featured) {
+    return (
+      <div className="animate-fade-up">
+        <header className="mb-lg">
+          <h2 className="text-display-lg text-on-background">Today's Intelligence</h2>
+          <p className="mt-1 text-body-md text-secondary">
+            {channel ? `No episodes from ${channel.title} yet.` : 'No episodes yet.'}
+          </p>
+        </header>
+        <div className="grid place-items-center gap-1 rounded-2xl border border-outline-variant bg-surface-container-lowest py-xl text-center">
+          <Icon name="podcasts" size={30} className="mb-1 text-outline" />
+          <p className="text-body-md text-secondary">Nothing to show for this channel.</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="animate-fade-up">
       <header className="mb-lg">
         <h2 className="text-display-lg text-on-background">Today's Intelligence</h2>
-        <p className="mt-1 text-body-md text-secondary">AI summaries from your {trackedCount} tracked podcasts.</p>
+        <p className="mt-1 text-body-md text-secondary">
+          {channel ? `Latest intelligence from ${channel.title}.` : `AI summaries from your ${trackedCount} tracked podcasts.`}
+        </p>
       </header>
 
       <div className="grid grid-cols-1 gap-gutter lg:grid-cols-12">
@@ -97,6 +121,7 @@ export default function Home() {
               >
                 <Icon name="article" size={18} /> Open Transcript
               </Link>
+              <SourceLink episode={featured} podcast={featuredPodcast} />
             </div>
           </article>
 

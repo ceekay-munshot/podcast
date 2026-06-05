@@ -1,4 +1,4 @@
-import type { Episode, Podcast, Settings, WeeklySummary } from './types'
+import type { Episode, Podcast, WeeklySummary } from './types'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mock data. Modelled on the customer's actual lineup (Stratechery, Invest Like
@@ -519,6 +519,25 @@ export const EPISODES: Episode[] = [
       companies: ['Anthropic', 'OpenAI', 'Salesforce'],
       themes: ['AI agents', 'Enterprise adoption', 'Governance'],
     },
+    summary: {
+      synthesis: [
+        `The brief's thesis is that 2026 is the year **agentic workflows cross from demo to deployment**. The unlock isn't a smarter model — it's the surrounding scaffolding: tool use, memory, and evaluation harnesses that make an agent reliable enough to hand a real task. **Reliability, not capability, is the gate.**`,
+        `The unsolved problem is **governance**. Once an agent can take actions — move money, email customers, change records — enterprises need permissions, audit trails, and a human-in-the-loop story before they grant write access. Whoever ships the trust layer captures the deployment, not just the demo.`,
+      ],
+      takeaways: [
+        { title: 'Reliability is the real unlock', detail: `Capability is sufficient; the bottleneck is making agents dependable enough to trust with a real workflow.` },
+        { title: 'Write access needs a trust layer', detail: `Permissions, audit logs, and human checkpoints are the prerequisites for agents that take consequential actions.` },
+        { title: 'Distribution favors incumbents', detail: `Salesforce and peers can drop agents onto existing data and permissions — a cold-start advantage pure-play agents lack.` },
+      ],
+      qa: [
+        { q: `What's actually blocking enterprise agent rollouts?`, a: `Not model quality — it's governance: who approved the action, what it touched, and how to roll it back. Until that's legible, agents stay read-only.` },
+        { q: `Is an "agent" a feature or a company?`, a: `Whittemore's take: the durable businesses own the trust-and-permissions layer, not the agent loop itself, which is commoditizing fast.` },
+      ],
+      moments: [
+        { id: 'm-ad-1', title: 'Reliability, not capability, is the gate', timestamp: '12:40', whyItMatters: `Reframes the agent race away from benchmarks toward the unglamorous engineering that actually ships deployments.` },
+        { id: 'm-ad-2', title: 'The governance gap nobody has closed', timestamp: '18:05', whyItMatters: `Names the specific blocker — write-access accountability — that decides which vendors win enterprise budgets.` },
+      ],
+    },
   },
 
   // ── 6. Acquired — analysed, summary only ───────────────────────────────────
@@ -571,6 +590,25 @@ export const EPISODES: Episode[] = [
       companies: ['Norges Bank Investment Management'],
       themes: ['Sovereign wealth', 'Long-term ownership', 'Governance'],
     },
+    summary: {
+      synthesis: [
+        `Tangen frames the fund's edge as **structural patience**: owning roughly 1.5% of every listed company means you cannot trade your way out, so the only real lever is being a thoughtful long-term owner. Permanence changes the question from "will this pop" to **"will this compound for decades."**`,
+        `Most of the conversation is about **active ownership through voting and engagement** rather than stock-picking. At that scale you can't beat the index by trading; you improve returns by improving governance across the companies you already own — board quality, executive pay, and long-horizon capital allocation.`,
+      ],
+      takeaways: [
+        { title: 'Scale converts trading into ownership', detail: `Owning a slice of everything removes the exit option, so value comes from stewardship, not timing.` },
+        { title: 'Governance is the return lever', detail: `Voting, engagement, and pay discipline move the needle more than security selection at index scale.` },
+        { title: 'Patience is the moat', detail: `A mandate measured in decades lets the fund hold through drawdowns that force others to sell.` },
+      ],
+      qa: [
+        { q: `How do you add value if you basically own the index?`, a: `By being an active owner — voting thoughtfully, pushing on board quality and pay, setting long-term expectations — not by trading in and out.` },
+        { q: `What's the hardest part of the job?`, a: `Tangen points to temperament and communication: staying calm through volatility and explaining a 30-year mandate to a public that judges quarterly.` },
+      ],
+      moments: [
+        { id: 'm-gc-1', title: 'Why permanence changes the question', timestamp: '22:10', whyItMatters: `A clean articulation of how an unsellable position reshapes every decision toward the long term.` },
+        { id: 'm-gc-2', title: 'Engagement beats stock-picking at scale', timestamp: '36:48', whyItMatters: `A useful mental model for any large, diversified owner thinking about where returns actually come from.` },
+      ],
+    },
   },
 
   // ── 8. Cheeky Pint — fetching ──────────────────────────────────────────────
@@ -587,6 +625,25 @@ export const EPISODES: Episode[] = [
       people: ['John Collison'],
       companies: ['Stripe'],
       themes: ['Developer experience', 'Payments', 'API design'],
+    },
+    summary: {
+      synthesis: [
+        `Collison's core claim is that in payments **a few hundred milliseconds is a competitive weapon**: latency shows up directly in authorization rates and checkout conversion, so shaving it compounds into real revenue for every business on the platform. Performance isn't a vanity metric — it's the product.`,
+        `The deeper theme is that **developer experience compounds into a moat**. Clean APIs, great docs, and the small daily delights — "developer joy" — lower integration cost, which drives adoption, which funds more polish. It's a flywheel competitors struggle to copy because it's **a thousand small decisions, not one feature.**`,
+      ],
+      takeaways: [
+        { title: 'Latency is a revenue feature', detail: `In payments, milliseconds move authorization and conversion rates — speed is a direct line to customers' top line.` },
+        { title: 'Developer joy is strategy', detail: `Docs, ergonomics, and polish lower integration cost and compound into adoption that's hard to dislodge.` },
+        { title: 'Good APIs compound', detail: `Each well-designed primitive makes the next integration easier, widening the moat over time.` },
+      ],
+      qa: [
+        { q: `Why obsess over a few hundred milliseconds?`, a: `Because latency is measurable in authorization rates and checkout conversion — it's not polish, it's money for every business on Stripe.` },
+        { q: `Is developer experience really defensible?`, a: `Collison argues yes: it's a thousand small decisions and sustained investment, far harder to clone than a single headline feature.` },
+      ],
+      moments: [
+        { id: 'm-cp-1', title: 'Milliseconds as a competitive weapon', timestamp: '14:25', whyItMatters: `Connects an engineering metric straight to customer revenue — a reframing any infrastructure company can borrow.` },
+        { id: 'm-cp-2', title: 'Why developer joy compounds', timestamp: '29:50', whyItMatters: `Explains how DX becomes a moat rather than a nicety, via a compounding adoption flywheel.` },
+      ],
     },
   },
 
@@ -690,11 +747,4 @@ export const WEEKLY: WeeklySummary = {
     'ep-iltb-compounders',
     'ep-acquired-tsmc',
   ],
-}
-
-export const DEFAULT_SETTINGS: Settings = {
-  summaryLength: 'standard',
-  weeklySummary: true,
-  emailNotifications: true,
-  email: 'ceekay@muns.io',
 }

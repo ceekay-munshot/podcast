@@ -1,5 +1,5 @@
-import type { Episode, Podcast, Settings, WeeklySummary } from './types'
-import { DEFAULT_SETTINGS, EPISODES, PODCASTS, WEEKLY } from './mock-data'
+import type { Episode, Podcast, WeeklySummary } from './types'
+import { EPISODES, PODCASTS, WEEKLY } from './mock-data'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE SEAM.
@@ -41,10 +41,6 @@ export function getWeekly(): Promise<WeeklySummary> {
   return delay(clone(WEEKLY))
 }
 
-export function getSettings(): Promise<Settings> {
-  return delay(clone(DEFAULT_SETTINGS))
-}
-
 // ── Mutations — optimistic on the client, persisted here in a real backend ───
 
 export function setPodcastTracked(id: string, tracked: boolean): Promise<{ id: string; tracked: boolean }> {
@@ -52,9 +48,16 @@ export function setPodcastTracked(id: string, tracked: boolean): Promise<{ id: s
   return delay({ id, tracked })
 }
 
-export function updateSettings(next: Settings): Promise<Settings> {
-  // SEAM: PUT /api/settings
-  return delay(clone(next))
+// SEAM: weekly-digest email subscription. Wire your email-sending mechanism in
+// here (Cloudflare Email, Resend, SES, …); the server schedules one email a week.
+export function subscribeWeekly(email: string): Promise<{ subscribed: boolean; email: string }> {
+  // SEAM: POST /api/subscriptions/weekly
+  return delay({ subscribed: true, email })
+}
+
+export function unsubscribeWeekly(email: string): Promise<{ subscribed: boolean; email: string }> {
+  // SEAM: DELETE /api/subscriptions/weekly
+  return delay({ subscribed: false, email })
 }
 
 export interface TrackSourceInput {

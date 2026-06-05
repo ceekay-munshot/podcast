@@ -2,28 +2,32 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
 import { useDateRange } from '../store/DateRange'
+import { useChannelFilter } from '../store/ChannelFilter'
 import { formatDuration, longDate } from '../lib/format'
 import type { Episode } from '../lib/types'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
+import { SourceLink } from '../components/SourceLink'
 import { StatusBadge } from '../components/StatusBadge'
 
 export default function Episodes() {
   const { episodes, podcastById } = useAppData()
   const { preset, presets, setPreset, inRange, rangeLabel } = useDateRange()
+  const { inChannel } = useChannelFilter()
   const navigate = useNavigate()
   const [q, setQ] = useState('')
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase()
     return episodes
+      .filter((e) => inChannel(e.podcastId))
       .filter((e) => inRange(e.publishedAt))
       .filter((e) => {
         if (!needle) return true
         return e.title.toLowerCase().includes(needle) || podcastById(e.podcastId)?.title.toLowerCase().includes(needle)
       })
       .sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt))
-  }, [episodes, inRange, q, podcastById])
+  }, [episodes, inChannel, inRange, q, podcastById])
 
   return (
     <div className="animate-fade-up">
@@ -102,9 +106,17 @@ function EpisodeRow({ episode, onOpen }: { episode: Episode; onOpen: () => void 
   const { podcastById } = useAppData()
   const podcast = podcastById(episode.podcastId)
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
-      className="group grid w-full grid-cols-[2.6fr_1.6fr_1fr_0.8fr_1fr] items-center gap-md border-b border-outline-variant px-md py-3.5 text-left transition-colors last:border-b-0 hover:bg-surface-container-low/60"
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpen()
+        }
+      }}
+      className="group grid w-full cursor-pointer grid-cols-[2.6fr_1.6fr_1fr_0.8fr_1fr] items-center gap-md border-b border-outline-variant px-md py-3.5 text-left transition-colors last:border-b-0 hover:bg-surface-container-low/60 focus:bg-surface-container-low/60 focus:outline-none"
     >
       <div className="flex min-w-0 items-center gap-3">
         {podcast && <CoverTile podcast={podcast} className="h-11 w-11 shrink-0" />}
@@ -116,9 +128,10 @@ function EpisodeRow({ episode, onOpen }: { episode: Episode; onOpen: () => void 
       </div>
       <span className="text-metadata text-on-surface-variant">{longDate(episode.publishedAt)}</span>
       <span className="text-metadata text-on-surface-variant">{formatDuration(episode.durationSec)}</span>
-      <span>
+      <span className="flex items-center justify-between gap-1">
         <StatusBadge status={episode.status} />
+        <SourceLink episode={episode} podcast={podcast} variant="icon" />
       </span>
-    </button>
+    </div>
   )
 }

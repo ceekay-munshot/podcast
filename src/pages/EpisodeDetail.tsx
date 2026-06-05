@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
-import { usePlayer } from '../store/Player'
+import { downloadSummary } from '../lib/exportSummary'
 import { formatDuration, longDate, statusMeta } from '../lib/format'
 import type { Episode, InterestingMoment, ProcessingStatus, TranscriptSegment } from '../lib/types'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
+import { SourceLink } from '../components/SourceLink'
 import { StatusBadge } from '../components/StatusBadge'
 
 type Tab = 'summary' | 'takeaways' | 'qa' | 'moments' | 'transcript'
@@ -24,11 +25,11 @@ export default function EpisodeDetail() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const { episodeById, podcastById } = useAppData()
-  const { play } = usePlayer()
 
   const paramTab = params.get('tab') as Tab | null
   const [tab, setTab] = useState<Tab>(paramTab ?? 'summary')
   const [jumpTo, setJumpTo] = useState<string | null>(null)
+  const [shared, setShared] = useState(false)
 
   const episode = id ? episodeById(id) : undefined
   const podcast = episode ? podcastById(episode.podcastId) : undefined
@@ -101,14 +102,18 @@ export default function EpisodeDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2.5">
+          <SourceLink episode={episode} podcast={podcast} />
           <button
-            onClick={() => play(episode)}
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container"
+            onClick={() => {
+              downloadSummary(episode, podcast)
+              setShared(true)
+              setTimeout(() => setShared(false), 2500)
+            }}
+            disabled={!episode.summary}
+            title="Download a formatted summary document"
+            className="inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <Icon name="play_arrow" size={18} fill /> Listen
-          </button>
-          <button className="inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-md py-2.5 text-metadata font-semibold text-on-surface transition-colors hover:bg-surface-container-low">
-            <Icon name="ios_share" size={18} /> Share
+            <Icon name={shared ? 'check' : 'ios_share'} size={18} /> {shared ? 'Downloaded' : 'Share'}
           </button>
         </div>
       </div>
@@ -158,16 +163,10 @@ function renderEmphasis(text: string) {
 // ── Summary tab — AI Summary + At a Glance ───────────────────────────────────
 function SummaryTab({ episode }: { episode: Episode }) {
   const s = episode.summary!
-  const wordCount = useMemo(() => {
-    const text = [...s.synthesis, ...s.takeaways.flatMap((t) => [t.title, t.detail]), ...s.qa.flatMap((q) => [q.q, q.a])].join(' ')
-    return text.trim().split(/\s+/).length
-  }, [s])
-
   const glance = [
     { icon: 'star', label: 'Key Takeaways', value: s.takeaways.length },
     { icon: 'schedule', label: 'Interesting Moments', value: s.moments.length },
     { icon: 'help', label: 'Q&A', value: s.qa.length },
-    { icon: 'text_fields', label: 'Word Count', value: wordCount.toLocaleString() },
   ]
 
   return (

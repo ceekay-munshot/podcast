@@ -1,6 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
+import { downloadWeekly, printWeekly } from '../lib/exportWeekly'
+import { subscribeWeekly, unsubscribeWeekly } from '../lib/api'
 import { Icon } from '../components/Icon'
 
 const NAV = [
@@ -49,17 +52,24 @@ export default function Weekly() {
           <p className="mt-1 text-body-md text-secondary">{weekly.rangeLabel}</p>
         </div>
         <div className="flex items-center gap-2.5">
-          <button className="inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-md py-2.5 text-metadata font-semibold text-on-surface transition-colors hover:bg-surface-container-low">
+          <button
+            onClick={() => downloadWeekly(weekly, episodeById, podcastById)}
+            title="Download the structured summary document"
+            className="inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-md py-2.5 text-metadata font-semibold text-on-surface transition-colors hover:bg-surface-container-low"
+          >
             <Icon name="ios_share" size={18} /> Share
           </button>
           <button
-            onClick={() => window.print()}
+            onClick={() => printWeekly(weekly, episodeById, podcastById)}
+            title="Print the structured document to PDF"
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container"
           >
             <Icon name="picture_as_pdf" size={18} /> Export PDF
           </button>
         </div>
       </div>
+
+      <WeeklySubscribe />
 
       <div className="grid grid-cols-12 gap-gutter">
         {/* In-page sub-nav */}
@@ -230,6 +240,117 @@ export default function Weekly() {
         </div>
       </div>
     </div>
+  )
+}
+
+// Weekly-digest email subscription. Persists locally; the actual send is wired
+// through api.subscribeWeekly (see the SEAM in lib/api.ts).
+const SUB_KEY = 'munshot:weekly-subscription'
+
+function WeeklySubscribe() {
+  const [stored, setStored] = useState<string | null>(null)
+  const [email, setEmail] = useState('ceekay@muns.io')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(SUB_KEY)
+      if (saved) {
+        setStored(saved)
+        setEmail(saved)
+      }
+    } catch {
+      /* localStorage unavailable — fine, just won't persist */
+    }
+  }, [])
+
+  async function subscribe(e: FormEvent) {
+    e.preventDefault()
+    const addr = email.trim()
+    if (!addr || busy) return
+    setBusy(true)
+    try {
+      const res = await subscribeWeekly(addr)
+      if (res.subscribed) {
+        try {
+          localStorage.setItem(SUB_KEY, res.email)
+        } catch {
+          /* ignore */
+        }
+        setStored(res.email)
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function unsubscribe() {
+    if (busy) return
+    setBusy(true)
+    try {
+      await unsubscribeWeekly(stored ?? email)
+      try {
+        localStorage.removeItem(SUB_KEY)
+      } catch {
+        /* ignore */
+      }
+      setStored(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (stored) {
+    return (
+      <div className="mb-lg flex flex-wrap items-center gap-3 rounded-2xl border border-primary/25 bg-primary-fixed/40 p-md">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-primary text-on-primary">
+          <Icon name="mark_email_read" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-body-md font-semibold text-on-surface">You're subscribed to the weekly brief</p>
+          <p className="text-metadata text-secondary">
+            One email every Monday to <span className="font-medium text-on-surface">{stored}</span> with this summary.
+          </p>
+        </div>
+        <button
+          onClick={unsubscribe}
+          disabled={busy}
+          className="inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-md py-2.5 text-metadata font-semibold text-on-surface transition-colors hover:bg-surface-container-low disabled:opacity-50"
+        >
+          {busy ? 'Updating…' : 'Unsubscribe'}
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <form
+      onSubmit={subscribe}
+      className="mb-lg flex flex-wrap items-center gap-3 rounded-2xl border border-outline-variant bg-surface-container-lowest p-md shadow-card"
+    >
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full chip-signal">
+        <Icon name="mail" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-body-md font-semibold text-on-surface">Get the weekly brief in your inbox</p>
+        <p className="text-metadata text-secondary">One email a week from Munshot — every Monday, this whole summary.</p>
+      </div>
+      <input
+        type="email"
+        required
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        placeholder="you@example.com"
+        className="w-56 rounded-lg border border-outline-variant bg-surface px-3 py-2.5 text-[14px] outline-none focus:border-primary"
+      />
+      <button
+        type="submit"
+        disabled={busy}
+        className="inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container disabled:opacity-50"
+      >
+        <Icon name="notifications_active" size={18} /> {busy ? 'Subscribing…' : 'Subscribe'}
+      </button>
+    </form>
   )
 }
 

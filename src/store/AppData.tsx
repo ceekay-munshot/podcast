@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { Episode, Podcast, Settings, WeeklySummary } from '../lib/types'
+import type { Episode, Podcast, ProcessingStatus, WeeklySummary } from '../lib/types'
 import * as api from '../lib/api'
 
 // One provider loads everything through the api seam on mount and hands it to
@@ -11,23 +11,23 @@ interface AppData {
   podcasts: Podcast[]
   episodes: Episode[]
   weekly: WeeklySummary | null
-  settings: Settings
   // selectors
   podcastById: (id: string) => Podcast | undefined
   episodeById: (id: string) => Episode | undefined
   episodesByPodcast: (podcastId: string) => Episode[]
   // mutations
   toggleTracked: (id: string) => void
-  saveSettings: (next: Settings) => void
 }
 
 const Ctx = createContext<AppData | null>(null)
 
-const FALLBACK_SETTINGS: Settings = {
-  summaryLength: 'standard',
-  weeklySummary: true,
-  emailNotifications: true,
-  email: '',
+// Pipeline order driving the simulated processing progression below.
+const PIPELINE_ORDER: ProcessingStatus[] = ['detected', 'fetching', 'transcribing', 'summarizing', 'ready']
+
+function nextStatus(status: ProcessingStatus): ProcessingStatus | null {
+  if (status === 'ready' || status === 'failed') return null
+  const i = PIPELINE_ORDER.indexOf(status)
+  return i >= 0 && i < PIPELINE_ORDER.length - 1 ? PIPELINE_ORDER[i + 1] : null
 }
 
 export function AppDataProvider({ children }: { children: ReactNode }) {
@@ -35,24 +35,38 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [podcasts, setPodcasts] = useState<Podcast[]>([])
   const [episodes, setEpisodes] = useState<Episode[]>([])
   const [weekly, setWeekly] = useState<WeeklySummary | null>(null)
-  const [settings, setSettings] = useState<Settings>(FALLBACK_SETTINGS)
 
   useEffect(() => {
     let alive = true
-    Promise.all([api.listPodcasts(), api.listEpisodes(), api.getWeekly(), api.getSettings()]).then(
-      ([p, e, w, s]) => {
-        if (!alive) return
-        setPodcasts(p)
-        setEpisodes(e)
-        setWeekly(w)
-        setSettings(s)
-        setLoading(false)
-      },
-    )
+    Promise.all([api.listPodcasts(), api.listEpisodes(), api.getWeekly()]).then(([p, e, w]) => {
+      if (!alive) return
+      setPodcasts(p)
+      setEpisodes(e)
+      setWeekly(w)
+      setLoading(false)
+    })
     return () => {
       alive = false
     }
   }, [])
+
+  // Simulated pipeline: advance any in-progress episode one stage every few
+  // seconds so the processing UI genuinely moves. There is no real backend yet —
+  // this is a client-side simulation. Swap it for a poll / websocket against the
+  // real API and the same `status` field keeps driving the UI unchanged.
+  useEffect(() => {
+    if (loading) return
+    const timer = setInterval(() => {
+      setEpisodes((prev) => {
+        if (!prev.some((e) => nextStatus(e.status))) return prev // nothing in flight
+        return prev.map((e) => {
+          const next = nextStatus(e.status)
+          return next ? { ...e, status: next } : e
+        })
+      })
+    }, 4500)
+    return () => clearInterval(timer)
+  }, [loading])
 
   const podcastById = useCallback((id: string) => podcasts.find((p) => p.id === id), [podcasts])
   const episodeById = useCallback((id: string) => episodes.find((e) => e.id === id), [episodes])
@@ -70,25 +84,18 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const saveSettings = useCallback((next: Settings) => {
-    setSettings(next)
-    void api.updateSettings(next) // optimistic
-  }, [])
-
   const value = useMemo<AppData>(
     () => ({
       loading,
       podcasts,
       episodes,
       weekly,
-      settings,
       podcastById,
       episodeById,
       episodesByPodcast,
       toggleTracked,
-      saveSettings,
     }),
-    [loading, podcasts, episodes, weekly, settings, podcastById, episodeById, episodesByPodcast, toggleTracked, saveSettings],
+    [loading, podcasts, episodes, weekly, podcastById, episodeById, episodesByPodcast, toggleTracked],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

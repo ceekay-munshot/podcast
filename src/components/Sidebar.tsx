@@ -5,7 +5,6 @@ const NAV = [
   { to: '/', label: 'Home', icon: 'home', end: true },
   { to: '/episodes', label: 'Episodes', icon: 'play_circle' },
   { to: '/weekly', label: 'Weekly Summary', icon: 'bar_chart' },
-  { to: '/settings', label: 'Settings', icon: 'settings' },
 ]
 
 export function Sidebar() {

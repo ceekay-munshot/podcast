@@ -1,7 +1,7 @@
 import { Route, Routes, Link } from 'react-router-dom'
 import { AppDataProvider } from './store/AppData'
-import { PlayerProvider } from './store/Player'
 import { DateRangeProvider } from './store/DateRange'
+import { ChannelFilterProvider } from './store/ChannelFilter'
 import { Layout } from './components/Layout'
 import { Icon } from './components/Icon'
 import Home from './pages/Home'
@@ -9,27 +9,25 @@ import Discover from './pages/Discover'
 import Episodes from './pages/Episodes'
 import EpisodeDetail from './pages/EpisodeDetail'
 import Weekly from './pages/Weekly'
-import Settings from './pages/Settings'
 import Search from './pages/Search'
 
 export default function App() {
   return (
     <AppDataProvider>
       <DateRangeProvider>
-        <PlayerProvider>
+        <ChannelFilterProvider>
           <Routes>
-          <Route element={<Layout />}>
-            <Route index element={<Home />} />
-            <Route path="discover" element={<Discover />} />
-            <Route path="episodes" element={<Episodes />} />
-            <Route path="episodes/:id" element={<EpisodeDetail />} />
-            <Route path="weekly" element={<Weekly />} />
-            <Route path="settings" element={<Settings />} />
-            <Route path="search" element={<Search />} />
-            <Route path="*" element={<NotFound />} />
-          </Route>
+            <Route element={<Layout />}>
+              <Route index element={<Home />} />
+              <Route path="discover" element={<Discover />} />
+              <Route path="episodes" element={<Episodes />} />
+              <Route path="episodes/:id" element={<EpisodeDetail />} />
+              <Route path="weekly" element={<Weekly />} />
+              <Route path="search" element={<Search />} />
+              <Route path="*" element={<NotFound />} />
+            </Route>
           </Routes>
-        </PlayerProvider>
+        </ChannelFilterProvider>
       </DateRangeProvider>
     </AppDataProvider>
   )
