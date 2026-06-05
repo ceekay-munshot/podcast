@@ -24,8 +24,8 @@ export const onRequestPost = async (context: {
 
   try {
     const input = (await context.request.json()) as { title: string; show: string; notes: string }
-    const summary = await summarizeEpisode(input, config)
-    return new Response(JSON.stringify(summary), { headers })
+    const result = await summarizeEpisode(input, config) // { summary, transcript, transcriptSource }
+    return new Response(JSON.stringify(result), { headers })
   } catch (e) {
     return new Response(JSON.stringify({ error: 'summarize_failed', detail: String(e).slice(0, 200) }), { status: 502, headers })
   }

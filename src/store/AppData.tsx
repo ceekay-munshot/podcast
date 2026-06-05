@@ -94,21 +94,22 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const summarizeEpisode = useCallback(async (episode: Episode, podcast?: Podcast) => {
-    // Skip only if already summarized/in-flight, or there's nothing to summarize from.
-    if (episode.summary || (!episode.notes && !episode.transcriptUrl) || summarizing.current.has(episode.id)) return
+    // Skip only if already summarized/in-flight, or there's nothing to work from.
+    // audioUrl counts: Groq/Deepgram can transcribe it even with no notes or feed transcript.
+    if (episode.summary || (!episode.notes && !episode.transcriptUrl && !episode.audioUrl) || summarizing.current.has(episode.id)) return
     summarizing.current.add(episode.id)
-    const setStatus = (status: Episode['status'], summary?: Episode['summary']) =>
-      setEpisodes((prev) => prev.map((e) => (e.id === episode.id ? { ...e, status, ...(summary ? { summary } : {}) } : e)))
+    const setStatus = (status: Episode['status'], patch?: Partial<Episode>) =>
+      setEpisodes((prev) => prev.map((e) => (e.id === episode.id ? { ...e, status, ...(patch ?? {}) } : e)))
     setStatus('summarizing')
     try {
-      const summary = await api.generateSummary({
+      const { summary, transcript } = await api.generateSummary({
         title: episode.title,
         show: podcast?.title ?? '',
         notes: episode.notes,
         transcriptUrl: episode.transcriptUrl,
         audioUrl: episode.audioUrl,
       })
-      setStatus('ready', summary)
+      setStatus('ready', { summary, ...(transcript?.length ? { transcript } : {}) })
       setNeedsApiKey(false)
     } catch (err) {
       if (err instanceof api.NoApiKeyError) {

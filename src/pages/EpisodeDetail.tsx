@@ -422,7 +422,7 @@ function TranscriptRow({
 
 function renderText(seg: TranscriptSegment, activeRef: string | null, onHover: (ref: string | null) => void) {
   const hl = seg.highlight
-  if (!hl) return seg.text
+  if (!hl || !hl.quote) return seg.text
   const idx = seg.text.indexOf(hl.quote)
   if (idx === -1) return seg.text
   return (

@@ -1,4 +1,4 @@
-import type { Episode, Podcast, Summary, WeeklySummary } from './types'
+import type { Episode, Podcast, Summary, TranscriptSegment, WeeklySummary } from './types'
 import { EPISODES, PODCASTS, WEEKLY } from './mock-data'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,16 +56,17 @@ export function setPodcastTracked(id: string, tracked: boolean): Promise<{ id: s
 
 export class NoApiKeyError extends Error {}
 
-// Generate a real AI summary from an episode's show-notes via /api/summary
-// (Claude). Throws NoApiKeyError when the server has no ANTHROPIC_API_KEY set,
-// so the UI can show a "connect a key" hint instead of a generic failure.
+// Generate a real AI summary via /api/summary. Returns the one-page summary AND
+// the full transcript it was built from (when a transcript source exists), so the
+// Transcript tab can render the real thing. Throws NoApiKeyError when the server
+// has no LLM key set, so the UI can show a "connect a key" hint.
 export async function generateSummary(input: {
   title: string
   show: string
   notes?: string
   transcriptUrl?: string
   audioUrl?: string
-}): Promise<Summary> {
+}): Promise<{ summary: Summary; transcript?: TranscriptSegment[] }> {
   const r = await fetch('/api/summary', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -73,7 +74,7 @@ export async function generateSummary(input: {
   })
   if (r.status === 503) throw new NoApiKeyError('no_api_key')
   if (!r.ok) throw new Error(`summary failed: ${r.status}`)
-  return (await r.json()) as Summary
+  return (await r.json()) as { summary: Summary; transcript?: TranscriptSegment[] }
 }
 
 // SEAM: weekly-digest email subscription. Wire your email-sending mechanism in

@@ -21,9 +21,17 @@ export interface TranscribeConfig {
   groqKey?: string // free-tier Whisper for short episodes (within the size limit)
 }
 
-export interface TranscriptResult {
+/** A raw, ungrouped transcript segment straight from a provider. */
+export interface RawSegment {
+  start: number // seconds into the episode
   text: string
+  speaker?: number // diarization index (Deepgram), when available
+}
+
+export interface TranscriptResult {
+  text: string // timestamped flat text — the LLM summary source
   source: 'feed' | 'groq' | 'deepgram'
+  segments: RawSegment[] // structured segments — the Transcript-tab source
 }
 
 // Strip SRT/VTT cue numbers, timestamps, and tags down to plain spoken text.
@@ -156,9 +164,10 @@ async function fetchAudioCapped(url: string, maxBytes: number, timeoutMs = 25_00
 
 // Groq Whisper (OpenAI-compatible /audio/transcriptions). Returns '' on any
 // failure — including 429 rate-limits — so the caller falls back to show-notes.
-async function transcribeViaGroq(audioUrl: string, apiKey: string): Promise<string> {
+async function transcribeViaGroq(audioUrl: string, apiKey: string): Promise<{ text: string; segments: RawSegment[] }> {
+  const empty = { text: '', segments: [] as RawSegment[] }
   const audio = await fetchAudioCapped(audioUrl, MAX_AUDIO_BYTES)
-  if (!audio) return ''
+  if (!audio) return empty
   const form = new FormData()
   form.append('file', new Blob([audio], { type: 'audio/mpeg' }), 'episode.mp3')
   form.append('model', 'whisper-large-v3-turbo')
@@ -172,11 +181,13 @@ async function transcribeViaGroq(audioUrl: string, apiKey: string): Promise<stri
       body: form,
       signal: controller.signal,
     })
-    if (!res.ok) return '' // 429 / 413 / etc. → graceful fall back
+    if (!res.ok) return empty // 429 / 413 / etc. → graceful fall back
     const data = (await res.json()) as { text?: string; segments?: Array<{ start: number; text: string }> }
-    return data.segments?.length ? segmentsToTimestampedText(data.segments) : (data.text ?? '')
+    const segments: RawSegment[] = (data.segments ?? []).map((s) => ({ start: s.start, text: s.text.trim() }))
+    const text = segments.length ? segmentsToTimestampedText(segments) : (data.text ?? '')
+    return { text, segments: segments.length ? segments : text ? [{ start: 0, text }] : [] }
   } catch {
-    return ''
+    return empty
   } finally {
     clearTimeout(timer)
   }
@@ -184,8 +195,10 @@ async function transcribeViaGroq(audioUrl: string, apiKey: string): Promise<stri
 
 // Deepgram pre-recorded (URL-based) — handles any length; Deepgram fetches the
 // audio itself, so no download/chunking on our side. Returns '' on failure.
-async function transcribeViaDeepgram(audioUrl: string, apiKey: string, model: string): Promise<string> {
-  const params = new URLSearchParams({ model, smart_format: 'true', punctuate: 'true', utterances: 'true', language: 'en' })
+async function transcribeViaDeepgram(audioUrl: string, apiKey: string, model: string): Promise<{ text: string; segments: RawSegment[] }> {
+  const empty = { text: '', segments: [] as RawSegment[] }
+  // diarize → per-speaker turns, so the Transcript tab can label "Speaker 1/2".
+  const params = new URLSearchParams({ model, smart_format: 'true', punctuate: 'true', utterances: 'true', diarize: 'true', language: 'en' })
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 280_000)
   try {
@@ -195,18 +208,22 @@ async function transcribeViaDeepgram(audioUrl: string, apiKey: string, model: st
       body: JSON.stringify({ url: audioUrl }),
       signal: controller.signal,
     })
-    if (!res.ok) return ''
+    if (!res.ok) return empty
     const data = (await res.json()) as {
       results?: {
-        utterances?: Array<{ start: number; transcript: string }>
+        utterances?: Array<{ start: number; transcript: string; speaker?: number }>
         channels?: Array<{ alternatives?: Array<{ transcript?: string }> }>
       }
     }
     const utts = data.results?.utterances
-    if (utts?.length) return segmentsToTimestampedText(utts.map((u) => ({ start: u.start, text: u.transcript })))
-    return data.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? ''
+    if (utts?.length) {
+      const segments: RawSegment[] = utts.map((u) => ({ start: u.start, text: u.transcript.trim(), speaker: u.speaker }))
+      return { text: segmentsToTimestampedText(segments), segments }
+    }
+    const flat = data.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? ''
+    return { text: flat, segments: flat ? [{ start: 0, text: flat }] : [] }
   } catch {
-    return ''
+    return empty
   } finally {
     clearTimeout(timer)
   }
@@ -217,22 +234,26 @@ export async function transcribeEpisode(input: TranscribeInput, config: Transcri
   if (input.transcriptUrl) {
     const raw = await fetchCaptions(input.transcriptUrl)
     const segs = captionsToSegments(raw)
-    const text = segs.length ? segmentsToTimestampedText(segs) : captionsToText(raw)
-    if (text.length > 200) return { text, source: 'feed' }
+    if (segs.length) {
+      const text = segmentsToTimestampedText(segs)
+      if (text.length > 200) return { text, source: 'feed', segments: segs }
+    }
+    const flat = captionsToText(raw)
+    if (flat.length > 200) return { text: flat, source: 'feed', segments: [{ start: 0, text: flat }] }
   }
 
   // 2) FREE: Groq Whisper for episodes within its size limit (short ones). Oversized
   //    or rate-limited (429) episodes fall through to Deepgram below.
   if (config.groqKey && input.audioUrl) {
-    const text = await transcribeViaGroq(input.audioUrl, config.groqKey)
-    if (text.length > 200) return { text, source: 'groq' }
+    const r = await transcribeViaGroq(input.audioUrl, config.groqKey)
+    if (r.text.length > 200) return { text: r.text, source: 'groq', segments: r.segments }
   }
 
   // 3) PAID: Deepgram (URL-based) handles ANY length — the catch-all for the long,
   //    non-feed episodes nothing free could cover. Credit is only spent if we reach here.
   if (config.deepgramKey && input.audioUrl) {
-    const text = await transcribeViaDeepgram(input.audioUrl, config.deepgramKey, config.deepgramModel || 'nova-3')
-    if (text.length > 200) return { text, source: 'deepgram' }
+    const r = await transcribeViaDeepgram(input.audioUrl, config.deepgramKey, config.deepgramModel || 'nova-3')
+    if (r.text.length > 200) return { text: r.text, source: 'deepgram', segments: r.segments }
   }
 
   return null

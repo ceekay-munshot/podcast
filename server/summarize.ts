@@ -1,4 +1,4 @@
-import type { Summary } from '../src/lib/types'
+import type { InterestingMoment, Summary, TranscriptSegment } from '../src/lib/types'
 import { transcribeEpisode } from './transcribe'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -27,6 +27,14 @@ export interface SummarizeConfig {
   deepgramKey?: string // URL-based, handles long episodes
   deepgramModel?: string
   groqKey?: string // free-tier Whisper (short episodes)
+}
+
+/** What /api/summary returns: the one-page summary PLUS the full transcript it was
+ *  built from (so the Transcript tab can render the real thing), when one exists. */
+export interface SummarizeResult {
+  summary: Summary
+  transcript: TranscriptSegment[]
+  transcriptSource?: 'feed' | 'groq' | 'deepgram'
 }
 
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini'
@@ -89,9 +97,101 @@ function normalize(raw: Partial<Summary> | undefined): Summary {
   }
 }
 
-const cache = new Map<string, Summary>()
+// ── Transcript display: group raw provider segments into readable rows, and
+//    wire each summary "moment" to the nearest row for the Highlights ↔ jump UX ─
 
-export async function summarizeEpisode(input: SummarizeInput, config: SummarizeConfig): Promise<Summary> {
+function mmss(sec: number): string {
+  const s = Math.max(0, Math.floor(sec))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const ss = String(s % 60).padStart(2, '0')
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`
+}
+
+// Parse a "mm:ss" / "h:mm:ss" clock string (as the LLM cites moments) to seconds.
+function parseClock(ts: string): number | null {
+  const parts = ts.trim().split(':')
+  if (parts.length < 2 || parts.length > 3) return null
+  const nums = parts.map(Number)
+  if (nums.some((n) => !Number.isFinite(n))) return null
+  return parts.length === 3 ? nums[0] * 3600 + nums[1] * 60 + nums[2] : nums[0] * 60 + nums[1]
+}
+
+type RawSeg = { start: number; text: string; speaker?: number }
+
+// Some feeds embed speaker labels inline ("Speaker 1: … Speaker 2: …") instead of
+// as diarization metadata. Split those into one piece per turn with the speaker
+// extracted, so the transcript reads as clean dialogue rather than run-on blocks.
+// (Deepgram/Groq text has no such labels, so those pass through untouched.)
+function expandInlineSpeakers(raw: RawSeg[]): RawSeg[] {
+  const out: RawSeg[] = []
+  for (const s of raw) {
+    const parts = s.text.split(/\bSpeakers?\s+(\d+):\s*/i) // [lead, num, text, num, text, …]
+    if (parts.length === 1) {
+      out.push(s)
+      continue
+    }
+    if (parts[0].trim()) out.push({ start: s.start, text: parts[0].trim(), speaker: s.speaker })
+    for (let i = 1; i < parts.length; i += 2) {
+      const num = Number(parts[i])
+      const text = (parts[i + 1] ?? '').trim()
+      if (text) out.push({ start: s.start, text, speaker: Number.isFinite(num) ? num - 1 : s.speaker })
+    }
+  }
+  return out
+}
+
+// Merge raw cues/utterances into paragraph-sized rows: break on speaker change,
+// otherwise accumulate up to ~maxChars so the transcript reads in natural blocks.
+function groupSegments(raw: RawSeg[], maxChars = 650): RawSeg[] {
+  const out: RawSeg[] = []
+  for (const s of raw) {
+    const text = s.text.trim()
+    if (!text) continue
+    const last = out[out.length - 1]
+    if (last && last.speaker === s.speaker && last.text.length + text.length + 1 <= maxChars) {
+      last.text = `${last.text} ${text}`
+    } else {
+      out.push({ start: s.start, text, speaker: s.speaker })
+    }
+  }
+  return out
+}
+
+function buildTranscript(raw: RawSeg[], moments: InterestingMoment[]): { segments: TranscriptSegment[]; moments: InterestingMoment[] } {
+  const grouped = groupSegments(expandInlineSpeakers(raw))
+  const segments: TranscriptSegment[] = grouped.map((g, i) => ({
+    id: `t${i}`,
+    speaker: g.speaker != null ? `Speaker ${g.speaker + 1}` : '',
+    role: (g.speaker ?? 0) === 0 ? 'host' : 'guest',
+    timestamp: mmss(g.start),
+    text: g.text,
+  }))
+
+  // Anchor each moment to the row whose start time is closest to its timestamp,
+  // so clicking a Highlight jumps to the right place and the row glows.
+  const linked = moments.map((m) => {
+    const sec = parseClock(m.timestamp)
+    if (sec == null || !grouped.length) return m
+    let best = 0
+    let bestDelta = Infinity
+    grouped.forEach((g, i) => {
+      const d = Math.abs(g.start - sec)
+      if (d < bestDelta) {
+        bestDelta = d
+        best = i
+      }
+    })
+    segments[best].highlight = { refId: m.id, quote: '', label: m.title }
+    return { ...m, segmentId: segments[best].id }
+  })
+
+  return { segments, moments: linked }
+}
+
+const cache = new Map<string, SummarizeResult>()
+
+export async function summarizeEpisode(input: SummarizeInput, config: SummarizeConfig): Promise<SummarizeResult> {
   const provider = config.openaiKey ? 'openai' : config.anthropicKey ? 'anthropic' : null
   if (!provider) throw new Error('no_api_key')
   const model = config.model || (provider === 'openai' ? DEFAULT_OPENAI_MODEL : DEFAULT_ANTHROPIC_MODEL)
@@ -112,9 +212,19 @@ export async function summarizeEpisode(input: SummarizeInput, config: SummarizeC
       ? await viaOpenAI(prompt, config.openaiKey as string, model)
       : await viaAnthropic(prompt, config.anthropicKey as string, model)
 
+  // Bundle the real transcript (the same one the summary was built from) so the
+  // Transcript tab renders it — no second transcription, no extra cost.
+  let result: SummarizeResult
+  if (transcript && transcript.segments.length) {
+    const built = buildTranscript(transcript.segments, summary.moments)
+    result = { summary: { ...summary, moments: built.moments }, transcript: built.segments, transcriptSource: transcript.source }
+  } else {
+    result = { summary, transcript: [] }
+  }
+
   if (cache.size > 300) cache.clear()
-  cache.set(cacheKey, summary)
-  return summary
+  cache.set(cacheKey, result)
+  return result
 }
 
 // ── OpenAI (Chat Completions + forced function call) ─────────────────────────
