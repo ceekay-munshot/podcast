@@ -29,6 +29,12 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+// Drop any leftover markdown asterisks (the model sometimes emits an unbalanced
+// ** ) so they can never render as literal characters in the UI.
+function stripStars(s: string): string {
+  return s.replace(/\*+/g, '')
+}
+
 export function RichText({ text, terms = [] }: { text: string; terms?: string[] }) {
   const nodes = useMemo(() => tokenize(text, terms), [text, terms.join('')])
   return <>{nodes}</>
@@ -46,7 +52,7 @@ function tokenize(text: string, terms: string[]): ReactNode[] {
   try {
     re = new RegExp(`(\\*\\*[^*]+\\*\\*)|(${NUMBER})${termAlt}`, 'g')
   } catch {
-    return [text] // never let a bad entity string break rendering
+    return [stripStars(text)] // never let a bad entity string break rendering
   }
 
   const out: ReactNode[] = []
@@ -54,7 +60,7 @@ function tokenize(text: string, terms: string[]): ReactNode[] {
   let key = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(text.slice(last, m.index))
+    if (m.index > last) out.push(stripStars(text.slice(last, m.index)))
     const tok = m[0]
     if (m[1]) {
       out.push(
@@ -78,7 +84,7 @@ function tokenize(text: string, terms: string[]): ReactNode[] {
     last = m.index + tok.length
     if (m.index === re.lastIndex) re.lastIndex++ // guard against any zero-length match
   }
-  if (last < text.length) out.push(text.slice(last))
+  if (last < text.length) out.push(stripStars(text.slice(last)))
   return out
 }
 

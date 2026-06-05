@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
 import { downloadSummary } from '../lib/exportSummary'
@@ -9,6 +9,7 @@ import { Icon } from '../components/Icon'
 import { RichText, entityTerms } from '../components/RichText'
 import { SourceLink } from '../components/SourceLink'
 import { StatusBadge } from '../components/StatusBadge'
+import { anchorSegment } from '../lib/topics'
 
 type Tab = 'summary' | 'takeaways' | 'qa' | 'moments' | 'transcript'
 
@@ -30,6 +31,7 @@ export default function EpisodeDetail() {
   const paramTab = params.get('tab') as Tab | null
   const [tab, setTab] = useState<Tab>(paramTab ?? 'summary')
   const [jumpTo, setJumpTo] = useState<string | null>(null)
+  const [jumpTick, setJumpTick] = useState(0) // re-fires the scroll even when re-jumping the same segment
   const [shared, setShared] = useState(false)
 
   const episode = id ? episodeById(id) : undefined
@@ -38,14 +40,17 @@ export default function EpisodeDetail() {
   useEffect(() => {
     if (tab !== 'transcript' || !jumpTo) return
     const el = document.getElementById(`seg-${jumpTo}`)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      const mark = el.querySelector('.transcript-mark')
-      mark?.classList.add('is-active')
-      const t = setTimeout(() => mark?.classList.remove('is-active'), 1800)
-      return () => clearTimeout(t)
-    }
-  }, [tab, jumpTo])
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.classList.add('seg-flash')
+    const mark = el.querySelector('.transcript-mark')
+    mark?.classList.add('is-active')
+    const t = setTimeout(() => {
+      el.classList.remove('seg-flash')
+      mark?.classList.remove('is-active')
+    }, 2000)
+    return () => clearTimeout(t)
+  }, [tab, jumpTo, jumpTick])
 
   // When a real (un-summarized) episode is opened, generate its AI summary from
   // the show-notes. Idempotent — AppData dedupes in-flight requests per id.
@@ -79,7 +84,10 @@ export default function EpisodeDetail() {
 
   function openTranscript(segmentId?: string) {
     setTab('transcript')
-    if (segmentId) setJumpTo(segmentId)
+    if (segmentId) {
+      setJumpTo(segmentId)
+      setJumpTick((n) => n + 1)
+    }
   }
 
   return (
@@ -147,7 +155,7 @@ export default function EpisodeDetail() {
           </div>
 
           {tab === 'summary' && <SummaryTab episode={episode} />}
-          {tab === 'takeaways' && <TakeawaysTab episode={episode} />}
+          {tab === 'takeaways' && <TakeawaysTab episode={episode} onOpen={openTranscript} />}
           {tab === 'qa' && <QATab episode={episode} />}
           {tab === 'moments' && <MomentsTab episode={episode} hasTranscript={hasTranscript} onOpen={openTranscript} />}
           {tab === 'transcript' && <TranscriptTab episode={episode} />}
@@ -174,9 +182,18 @@ function SummaryTab({ episode }: { episode: Episode }) {
           <Icon name="auto_awesome" fill />
           <h2 className="text-[19px] font-semibold text-on-surface">AI Summary</h2>
         </div>
-        <div className="space-y-md text-body-md leading-relaxed text-on-surface-variant">
+        {/* Lead paragraph reads larger + darker for editorial hierarchy; the rest
+            settle into calm body text. */}
+        <div className="space-y-4">
           {s.synthesis.map((p, i) => (
-            <p key={i}>
+            <p
+              key={i}
+              className={
+                i === 0
+                  ? 'text-body-lg leading-relaxed text-on-surface'
+                  : 'text-body-md leading-relaxed text-on-surface-variant'
+              }
+            >
               <RichText text={p} terms={terms} />
             </p>
           ))}
@@ -209,26 +226,62 @@ function SummaryTab({ episode }: { episode: Episode }) {
 }
 
 // ── Takeaways tab — numbered, with copy ──────────────────────────────────────
-function TakeawaysTab({ episode }: { episode: Episode }) {
+function TakeawaysTab({ episode, onOpen }: { episode: Episode; onOpen: (segmentId?: string) => void }) {
   const s = episode.summary!
   const terms = entityTerms(episode.entities)
+  const segments = episode.transcript
+  // Anchor each takeaway to the transcript passage it's drawn from, so a click
+  // jumps straight there. Null when there's no transcript or no strong match.
+  const anchors = useMemo(
+    () => s.takeaways.map((t) => anchorSegment(`${t.title} ${t.detail}`, segments)),
+    [s.takeaways, segments],
+  )
+
   return (
-    <section className="rounded-2xl border border-outline-variant bg-surface-container-lowest shadow-card">
+    <section className="overflow-hidden rounded-2xl border border-outline-variant bg-surface-container-lowest shadow-card">
       <ul className="divide-y divide-outline-variant">
-        {s.takeaways.map((t, i) => (
-          <li key={i} className="flex items-start gap-md p-md">
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full chip-signal text-metadata font-bold">
-              {i + 1}
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-[16px] font-semibold text-on-surface">{t.title}</p>
-              <p className="mt-1 text-body-md text-on-surface-variant">
-                <RichText text={t.detail} terms={terms} />
-              </p>
-            </div>
-            <CopyButton text={`${t.title} — ${t.detail}`} />
-          </li>
-        ))}
+        {s.takeaways.map((t, i) => {
+          const anchor = anchors[i]
+          return (
+            <li key={i}>
+              <div
+                role={anchor ? 'button' : undefined}
+                tabIndex={anchor ? 0 : undefined}
+                onClick={anchor ? () => onOpen(anchor) : undefined}
+                onKeyDown={
+                  anchor
+                    ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          onOpen(anchor)
+                        }
+                      }
+                    : undefined
+                }
+                className={`group flex items-start gap-md p-md transition-colors ${
+                  anchor ? 'cursor-pointer hover:bg-surface-container-low/70 focus:bg-surface-container-low/70 focus:outline-none' : ''
+                }`}
+              >
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full chip-signal text-metadata font-bold">
+                  {i + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[16px] font-semibold text-on-surface">{t.title}</p>
+                  <p className="mt-1 text-body-md text-on-surface-variant">
+                    <RichText text={t.detail} terms={terms} />
+                  </p>
+                  {anchor && (
+                    <span className="mt-2 inline-flex items-center gap-1 text-metadata font-semibold text-primary opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus:opacity-100">
+                      <Icon name="article" size={15} /> Open in transcript
+                      <Icon name="arrow_forward" size={14} className="transition-transform group-hover:translate-x-0.5" />
+                    </span>
+                  )}
+                </div>
+                <CopyButton text={`${t.title} — ${t.detail}`} />
+              </div>
+            </li>
+          )
+        })}
       </ul>
     </section>
   )
@@ -466,7 +519,10 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
   }
   return (
     <button
-      onClick={copy}
+      onClick={(e) => {
+        e.stopPropagation() // don't trigger a takeaway-row jump when copying
+        copy()
+      }}
       className="press grid h-8 w-8 shrink-0 place-items-center rounded-lg text-secondary hover:bg-surface-container hover:text-primary"
       aria-label="Copy"
     >

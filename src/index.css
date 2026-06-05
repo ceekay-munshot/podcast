@@ -83,6 +83,21 @@
   }
 }
 
+/* Brief highlight when jumping to a transcript segment (from a takeaway, moment,
+   or search result). Color-only — a gentle cue that survives reduced-motion. */
+@keyframes seg-flash {
+  0%,
+  18% {
+    background-color: rgba(37, 99, 235, 0.16);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.seg-flash {
+  animation: seg-flash 1.9s var(--ease-out);
+}
+
 /* Minimal scrollbar to keep the editorial calm. */
 ::-webkit-scrollbar {
   width: 8px;

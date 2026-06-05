@@ -47,7 +47,7 @@ const SCHEMA = {
     synthesis: {
       type: 'array',
       items: { type: 'string' },
-      description: '2-3 tight plain-text paragraphs capturing the core argument and why it matters. Wrap the few most important phrases in **double asterisks** for emphasis.',
+      description: '2-3 tight plain-text paragraphs capturing the core argument and why it matters. Emphasise at most ~3 SHORT key phrases (2-5 words each) by wrapping each in matched **double asterisks** — never bold whole sentences or clauses, and always pair every ** you open with a closing **.',
     },
     takeaways: {
       type: 'array',
@@ -75,7 +75,7 @@ const SCHEMA = {
 }
 
 const SYSTEM_BASE =
-  'You are Munshot, an AI that writes sharp one-page intelligence summaries of podcast episodes for busy operators and investors. Produce the summary by calling the emit_summary tool/function. Rules:\n- Base everything ONLY on the provided material. Do NOT invent facts, quotes, names, or numbers.\n- synthesis: lead with the core argument; bold the few most important phrases with **double asterisks**.\n- Be concrete and non-obvious in takeaways.\n- qa: anticipate what a sharp operator would actually want to ask. Make every question specific and self-contained (it should read clearly on its own), and every answer thorough, concrete, and fully understandable without the audio — 2-4 real sentences that explain the "why" and the specifics, never one terse line, but never padded or invented either.'
+  'You are Munshot, an AI that writes sharp one-page intelligence summaries of podcast episodes for busy operators and investors. Produce the summary by calling the emit_summary tool/function. Rules:\n- Base everything ONLY on the provided material. Do NOT invent facts, quotes, names, or numbers.\n- synthesis: lead with the core argument. Emphasise only a FEW short key phrases (2-5 words each, at most ~3 per summary) by wrapping each in matched **double asterisks** — never bold whole sentences or clauses, and always close every ** you open.\n- Be concrete and non-obvious in takeaways.\n- qa: anticipate what a sharp operator would actually want to ask. Make every question specific and self-contained (it should read clearly on its own), and every answer thorough, concrete, and fully understandable without the audio — 2-4 real sentences that explain the "why" and the specifics, never one terse line, but never padded or invented either.'
 
 const SYSTEM_TRANSCRIPT = `${SYSTEM_BASE}\n- You have the FULL transcript, annotated with [mm:ss] markers. Ground everything in what was actually said.\n- For "moments", pick ones from DIFFERENT parts of the episode — early, middle, and late, not all from the opening — and set each timestamp to the real [mm:ss] of the nearest marker. Never use 0:00.`
 const SYSTEM_NOTES = `${SYSTEM_BASE}\n- You only have the publisher's show-notes (not the audio). If they are thin or promotional, keep the summary brief and high-level rather than fabricating. Use "—" for moment timestamps.`

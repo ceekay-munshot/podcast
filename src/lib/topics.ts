@@ -81,6 +81,31 @@ export function findExcerpts(episodes: Episode[], query: string, limit = 30): Ex
   return out.slice(0, limit)
 }
 
+/**
+ * Best transcript segment to anchor a summary point (e.g. a takeaway) to, by
+ * distinct significant-term overlap. Returns null when nothing matches well
+ * enough, so a takeaway only becomes clickable when there's a genuinely
+ * relevant passage to jump to — never a misleading dead-end.
+ */
+export function anchorSegment(text: string, segments: TranscriptSegment[] | undefined): string | null {
+  if (!segments?.length) return null
+  const tokens = tokenizeQuery(text)
+  if (tokens.length < 2) return null
+  let bestId: string | null = null
+  let best = 0
+  for (const seg of segments) {
+    const t = seg.text.toLowerCase()
+    let score = 0
+    for (const tok of tokens) if (t.includes(tok)) score++
+    if (score > best) {
+      best = score
+      bestId = seg.id
+    }
+  }
+  // Require at least two distinct shared terms so the jump lands somewhere real.
+  return best >= 2 ? bestId : null
+}
+
 /** Trim a long passage to a readable window centred on the first matched term. */
 export function excerptWindow(text: string, terms: string[], radius = 160): string {
   if (text.length <= radius * 2) return text
