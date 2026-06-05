@@ -17,7 +17,7 @@ const THEME_STYLES = [
 ]
 
 export default function Weekly() {
-  const { episodes, podcasts, episodeById, podcastById } = useAppData()
+  const { episodes, podcasts, episodeById, podcastById, loading } = useAppData()
   const [weekly, setWeekly] = useState<WeeklySummary | null | undefined>(undefined) // undefined = generating
 
   const ready = useMemo(() => episodes.filter((e) => e.status === 'ready' && e.summary), [episodes])
@@ -42,7 +42,11 @@ export default function Weekly() {
         <div>
           <h1 className="text-display-lg tracking-tight text-on-surface">Weekly Summary</h1>
           <p className="mt-1 text-body-md text-secondary">
-            {weekly ? weekly.rangeLabel : weekly === undefined ? 'Synthesising across your analysed episodes…' : 'No episodes analysed yet'}
+            {loading || weekly === undefined
+              ? 'Synthesising across your analysed episodes…'
+              : weekly
+                ? weekly.rangeLabel
+                : 'No episodes analysed yet'}
           </p>
         </div>
         {weekly && (
@@ -56,9 +60,11 @@ export default function Weekly() {
         )}
       </div>
 
-      {weekly === undefined && <GeneratingState count={ready.length} />}
-      {weekly === null && <EmptyState />}
-      {weekly && (
+      {loading || weekly === undefined ? (
+        <GeneratingState count={ready.length} />
+      ) : weekly === null ? (
+        <EmptyState />
+      ) : (
         <WeeklyDoc
           weekly={weekly}
           ready={ready}
