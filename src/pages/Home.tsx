@@ -8,6 +8,7 @@ import { Icon } from '../components/Icon'
 import { RichText, entityTerms } from '../components/RichText'
 import { SourceLink } from '../components/SourceLink'
 import { StatusBadge } from '../components/StatusBadge'
+import { topTopics } from '../lib/topics'
 
 export default function Home() {
   const { episodes, podcasts, podcastById, weekly } = useAppData()
@@ -35,6 +36,8 @@ export default function Home() {
     takeaways: ready.reduce((n, e) => n + (e.summary?.takeaways.length ?? 0), 0),
     moments: ready.reduce((n, e) => n + (e.summary?.moments.length ?? 0), 0),
   }
+  // Real topics drawn from analysed episodes — every chip is backed by data.
+  const topics = topTopics(inWindow)
 
   if (!featured) {
     return (
@@ -222,14 +225,15 @@ export default function Home() {
               <Stat label="Key Takeaways" value={stats.takeaways} />
               <Stat label="Interesting Moments" value={stats.moments} />
             </div>
-            {weekly && (
+            {topics.length > 0 && (
               <>
-                <p className="mb-2 mt-md text-metadata font-medium text-on-surface">Top topics this week</p>
+                <p className="mb-2 mt-md text-metadata font-medium text-on-surface">Top topics</p>
                 <div className="flex flex-wrap gap-1.5">
-                  {weekly.topThemes.slice(0, 5).map((t) => (
+                  {topics.map((t) => (
                     <Link
                       key={t.label}
                       to={`/search?q=${encodeURIComponent(t.label)}`}
+                      title={`${t.count} mention${t.count === 1 ? '' : 's'} across your episodes`}
                       className="rounded-full chip-signal px-2.5 py-1 text-[12px] font-medium transition-opacity hover:opacity-80"
                     >
                       {t.label}

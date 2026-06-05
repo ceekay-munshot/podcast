@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom'
+import { Link, NavLink } from 'react-router-dom'
 import { Icon } from './Icon'
 import { WeeklySubscribe } from './WeeklySubscribe'
 
@@ -11,13 +11,16 @@ const NAV = [
 export function Sidebar() {
   return (
     <nav className="fixed left-0 top-0 z-50 flex h-screen w-64 flex-col border-r border-outline-variant bg-surface px-3 py-5">
-      {/* Brand */}
-      <div className="mb-7 flex items-center gap-2.5 px-2">
-        <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-on-primary shadow-sm">
-          <span className="text-[16px] font-extrabold leading-none">M</span>
+      {/* Brand — links to Home */}
+      <Link to="/" aria-label="Munshot — go to Home" className="mb-7 flex items-center gap-2.5 rounded-lg px-2 py-1 transition-opacity hover:opacity-90">
+        <span
+          className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-[10px] shadow-sm"
+          style={{ background: 'linear-gradient(150deg, #2a2e38 0%, #0c0e13 100%)' }}
+        >
+          <img src="/munshot-logo.png" alt="Munshot" className="h-7 w-7 object-contain" />
         </span>
         <span className="text-[19px] font-bold tracking-tight text-on-surface">Munshot</span>
-      </div>
+      </Link>
 
       {/* Primary nav */}
       <ul className="flex flex-col gap-1">
