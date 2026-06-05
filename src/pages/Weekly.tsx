@@ -1,19 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
 import { downloadWeekly } from '../lib/exportWeekly'
+import { generateWeekly } from '../lib/weeklyApi'
+import type { WeeklySummary } from '../lib/types'
 import { Icon } from '../components/Icon'
 import { RichText, entityTerms } from '../components/RichText'
-
-const NAV = [
-  { id: 'overview', label: 'Overview', icon: 'play_circle' },
-  { id: 'themes', label: 'Top Themes', icon: 'sell' },
-  { id: 'takeaways', label: 'Key Takeaways', icon: 'format_list_bulleted' },
-  { id: 'interesting', label: 'Interesting Ideas', icon: 'lightbulb' },
-  { id: 'contradictions', label: 'Contradictions', icon: 'balance' },
-  { id: 'mentions', label: 'Mentions', icon: 'alternate_email' },
-  { id: 'questions', label: 'Questions', icon: 'help' },
-]
 
 const THEME_STYLES = [
   { tile: 'bg-[#eff5ff] text-[#2563eb] border-[#dbeafe]', icon: 'cloud' },
@@ -24,24 +17,23 @@ const THEME_STYLES = [
 ]
 
 export default function Weekly() {
-  const { weekly, episodes, podcasts, episodeById, podcastById } = useAppData()
-  const [active, setActive] = useState('overview')
-  if (!weekly) return null
+  const { episodes, podcasts, episodeById, podcastById } = useAppData()
+  const [weekly, setWeekly] = useState<WeeklySummary | null | undefined>(undefined) // undefined = generating
 
-  const interestingEpisode = episodeById(weekly.interesting.episodeId)
-  const terms = entityTerms(weekly.mentions)
-  const ready = episodes.filter((e) => e.status === 'ready')
-  const stats = [
-    { icon: 'play_circle', label: 'Episodes Processed', value: weekly.episodeCount, style: THEME_STYLES[0] },
-    { icon: 'format_list_bulleted', label: 'Key Takeaways', value: ready.reduce((n, e) => n + (e.summary?.takeaways.length ?? 0), 0), style: THEME_STYLES[1] },
-    { icon: 'lightbulb', label: 'Interesting Moments', value: ready.reduce((n, e) => n + (e.summary?.moments.length ?? 0), 0), style: THEME_STYLES[2] },
-    { icon: 'podcasts', label: 'Podcasts', value: podcasts.filter((p) => p.tracked).length, style: THEME_STYLES[3] },
-  ]
+  const ready = useMemo(() => episodes.filter((e) => e.status === 'ready' && e.summary), [episodes])
+  const readyKey = useMemo(() => ready.map((e) => e.id).sort().join(','), [ready])
 
-  function go(id: string) {
-    setActive(id)
-    document.getElementById(`wk-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
+  useEffect(() => {
+    let alive = true
+    setWeekly(undefined)
+    generateWeekly(episodes, podcastById)
+      .then((w) => alive && setWeekly(w))
+      .catch(() => alive && setWeekly(null))
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readyKey])
 
   return (
     <div className="animate-fade-up">
@@ -49,42 +41,104 @@ export default function Weekly() {
       <div className="mb-lg flex flex-wrap items-start justify-between gap-md">
         <div>
           <h1 className="text-display-lg tracking-tight text-on-surface">Weekly Summary</h1>
-          <p className="mt-1 text-body-md text-secondary">{weekly.rangeLabel}</p>
+          <p className="mt-1 text-body-md text-secondary">
+            {weekly ? weekly.rangeLabel : weekly === undefined ? 'Synthesising across your analysed episodes…' : 'No episodes analysed yet'}
+          </p>
         </div>
-        <button
-          onClick={() => downloadWeekly(weekly, episodeById, podcastById)}
-          title="Download a formatted Word document (.doc)"
-          className="inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container"
-        >
-          <Icon name="download" size={18} /> Download
-        </button>
+        {weekly && (
+          <button
+            onClick={() => downloadWeekly(weekly, episodeById, podcastById)}
+            title="Download a formatted Word document (.doc)"
+            className="inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container"
+          >
+            <Icon name="download" size={18} /> Download
+          </button>
+        )}
       </div>
 
-      <div className="grid grid-cols-12 gap-gutter">
-        {/* In-page sub-nav */}
-        <nav className="col-span-12 md:col-span-3">
-          <ul className="sticky top-20 flex flex-col gap-0.5">
-            {NAV.map((n) => (
-              <li key={n.id}>
-                <button
-                  onClick={() => go(n.id)}
-                  className={`flex w-full items-center gap-2.5 rounded-lg border-l-2 px-3 py-2 text-left text-[14px] transition-colors ${
-                    active === n.id
-                      ? 'border-primary bg-primary-fixed/50 font-semibold text-primary'
-                      : 'border-transparent text-secondary hover:bg-surface-container-low hover:text-on-surface'
-                  }`}
-                >
-                  <Icon name={n.icon} size={18} /> {n.label}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </nav>
+      {weekly === undefined && <GeneratingState count={ready.length} />}
+      {weekly === null && <EmptyState />}
+      {weekly && (
+        <WeeklyDoc
+          weekly={weekly}
+          ready={ready}
+          trackedCount={podcasts.filter((p) => p.tracked).length}
+          episodeById={episodeById}
+          podcastById={podcastById}
+        />
+      )}
+    </div>
+  )
+}
 
-        {/* Content */}
-        <div className="col-span-12 md:col-span-9">
-          <div className="rounded-2xl border border-outline-variant bg-surface-container-lowest p-lg shadow-card">
-            {/* Overview */}
+// ── The rendered document ────────────────────────────────────────────────────
+function WeeklyDoc({
+  weekly,
+  ready,
+  trackedCount,
+  episodeById,
+  podcastById,
+}: {
+  weekly: WeeklySummary
+  ready: ReturnType<typeof useAppData>['episodes']
+  trackedCount: number
+  episodeById: ReturnType<typeof useAppData>['episodeById']
+  podcastById: ReturnType<typeof useAppData>['podcastById']
+}) {
+  const [active, setActive] = useState('overview')
+  const terms = entityTerms(weekly.mentions)
+  const interestingEpisode = episodeById(weekly.interesting.episodeId)
+  const hasMentions = weekly.mentions.people.length > 0 || weekly.mentions.companies.length > 0
+
+  const stats = [
+    { icon: 'play_circle', label: 'Episodes Processed', value: weekly.episodeCount, style: THEME_STYLES[0] },
+    { icon: 'format_list_bulleted', label: 'Key Takeaways', value: ready.reduce((n, e) => n + (e.summary?.takeaways.length ?? 0), 0), style: THEME_STYLES[1] },
+    { icon: 'lightbulb', label: 'Interesting Moments', value: ready.reduce((n, e) => n + (e.summary?.moments.length ?? 0), 0), style: THEME_STYLES[2] },
+    { icon: 'podcasts', label: 'Podcasts', value: trackedCount, style: THEME_STYLES[3] },
+  ]
+
+  // Only nav to sections that actually have content (zero empty/fake sections).
+  const nav = [
+    { id: 'overview', label: 'Overview', icon: 'play_circle', show: weekly.overview.length > 0 },
+    { id: 'themes', label: 'Top Themes', icon: 'sell', show: weekly.topThemes.length > 0 },
+    { id: 'takeaways', label: 'Key Takeaways', icon: 'format_list_bulleted', show: weekly.takeaways.length > 0 },
+    { id: 'interesting', label: 'Interesting Ideas', icon: 'lightbulb', show: !!weekly.interesting.quote },
+    { id: 'mentions', label: 'Mentions', icon: 'alternate_email', show: hasMentions },
+    { id: 'questions', label: 'Questions', icon: 'help', show: weekly.questions.length > 0 },
+  ].filter((n) => n.show)
+
+  function go(id: string) {
+    setActive(id)
+    document.getElementById(`wk-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  return (
+    <div className="grid grid-cols-12 gap-gutter">
+      {/* In-page sub-nav */}
+      <nav className="col-span-12 md:col-span-3">
+        <ul className="sticky top-20 flex flex-col gap-0.5">
+          {nav.map((n) => (
+            <li key={n.id}>
+              <button
+                onClick={() => go(n.id)}
+                className={`flex w-full items-center gap-2.5 rounded-lg border-l-2 px-3 py-2 text-left text-[14px] transition-colors ${
+                  active === n.id
+                    ? 'border-primary bg-primary-fixed/50 font-semibold text-primary'
+                    : 'border-transparent text-secondary hover:bg-surface-container-low hover:text-on-surface'
+                }`}
+              >
+                <Icon name={n.icon} size={18} /> {n.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </nav>
+
+      {/* Content */}
+      <div className="col-span-12 md:col-span-9">
+        <div className="rounded-2xl border border-outline-variant bg-surface-container-lowest p-lg shadow-card">
+          {/* Overview */}
+          {weekly.overview.length > 0 && (
             <section id="wk-overview" className="scroll-mt-20">
               <h2 className="mb-md text-[22px] font-bold tracking-tight text-on-surface">This Week in Summary</h2>
               <div className="space-y-md text-body-md leading-relaxed text-on-surface-variant">
@@ -95,10 +149,11 @@ export default function Weekly() {
                 ))}
               </div>
             </section>
+          )}
 
-            {/* Themes */}
-            <section id="wk-themes" className="mt-lg scroll-mt-20 border-t border-outline-variant pt-lg">
-              <h3 className="mb-md text-[17px] font-semibold text-on-surface">Top Themes</h3>
+          {/* Themes */}
+          {weekly.topThemes.length > 0 && (
+            <Block id="wk-themes" first={weekly.overview.length === 0} title="Top Themes">
               <div className="flex flex-wrap gap-2.5">
                 {weekly.topThemes.map((t, i) => {
                   const s = THEME_STYLES[i % THEME_STYLES.length]
@@ -113,11 +168,12 @@ export default function Weekly() {
                   )
                 })}
               </div>
-            </section>
+            </Block>
+          )}
 
-            {/* Key takeaways */}
-            <section id="wk-takeaways" className="mt-lg scroll-mt-20 border-t border-outline-variant pt-lg">
-              <h3 className="mb-md text-[17px] font-semibold text-on-surface">Key Takeaways Across All Podcasts</h3>
+          {/* Key takeaways + stat tiles */}
+          {weekly.takeaways.length > 0 && (
+            <Block id="wk-takeaways" title="Key Takeaways Across All Podcasts">
               <ul className="space-y-2.5">
                 {weekly.takeaways.map((t, i) => (
                   <li key={i} className="flex gap-2.5 text-body-md text-on-surface-variant">
@@ -129,8 +185,6 @@ export default function Weekly() {
                   </li>
                 ))}
               </ul>
-
-              {/* Stat tiles */}
               <div className="mt-lg grid grid-cols-2 gap-2.5 sm:grid-cols-4">
                 {stats.map((s) => (
                   <div key={s.label} className="rounded-xl border border-outline-variant bg-surface-container-low p-3">
@@ -142,11 +196,12 @@ export default function Weekly() {
                   </div>
                 ))}
               </div>
-            </section>
+            </Block>
+          )}
 
-            {/* Interesting ideas */}
-            <section id="wk-interesting" className="mt-lg scroll-mt-20 border-t border-outline-variant pt-lg">
-              <h3 className="mb-md text-[17px] font-semibold text-on-surface">What Was Actually Interesting</h3>
+          {/* Interesting */}
+          {weekly.interesting.quote && (
+            <Block id="wk-interesting" title="What Was Actually Interesting">
               <div className="relative overflow-hidden rounded-xl p-md text-white" style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}>
                 <Icon name="lightbulb" className="absolute -right-5 -top-5 text-[130px] text-white/10" />
                 <p className="relative text-body-lg italic text-white/95">“{weekly.interesting.quote}”</p>
@@ -165,35 +220,22 @@ export default function Weekly() {
                   )}
                 </div>
               </div>
-            </section>
+            </Block>
+          )}
 
-            {/* Contradictions */}
-            <section id="wk-contradictions" className="mt-lg scroll-mt-20 border-t border-outline-variant pt-lg">
-              <h3 className="mb-md text-[17px] font-semibold text-on-surface">Contradictions & Disagreements</h3>
-              <div className="space-y-2.5">
-                {weekly.contradictions.map((c, i) => (
-                  <div key={i} className="flex gap-2.5 rounded-xl border border-outline-variant bg-surface-container-low p-md">
-                    <Icon name="balance" size={20} className="shrink-0 text-tertiary" />
-                    <p className="text-body-md text-on-surface-variant">
-                      <RichText text={c} terms={terms} />
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            {/* Mentions */}
-            <section id="wk-mentions" className="mt-lg scroll-mt-20 border-t border-outline-variant pt-lg">
-              <h3 className="mb-md text-[17px] font-semibold text-on-surface">Mentions</h3>
+          {/* Mentions */}
+          {hasMentions && (
+            <Block id="wk-mentions" title="Mentions">
               <div className="grid grid-cols-1 gap-md sm:grid-cols-2">
-                <MentionGroup title="People" icon="person" items={weekly.mentions.people} />
-                <MentionGroup title="Companies" icon="domain" items={weekly.mentions.companies} />
+                {weekly.mentions.people.length > 0 && <MentionGroup title="People" icon="person" items={weekly.mentions.people} />}
+                {weekly.mentions.companies.length > 0 && <MentionGroup title="Companies" icon="domain" items={weekly.mentions.companies} />}
               </div>
-            </section>
+            </Block>
+          )}
 
-            {/* Questions */}
-            <section id="wk-questions" className="mt-lg scroll-mt-20 border-t border-outline-variant pt-lg">
-              <h3 className="mb-md text-[17px] font-semibold text-on-surface">Questions Worth Investigating</h3>
+          {/* Questions */}
+          {weekly.questions.length > 0 && (
+            <Block id="wk-questions" title="Questions Worth Investigating">
               <ul className="space-y-2.5">
                 {weekly.questions.map((q, i) => (
                   <li key={i} className="flex items-start gap-2.5 rounded-xl border border-outline-variant bg-surface-container-low p-md">
@@ -204,37 +246,74 @@ export default function Weekly() {
                   </li>
                 ))}
               </ul>
-            </section>
+            </Block>
+          )}
 
-            {/* Source citations */}
-            <footer className="mt-lg border-t border-outline-variant pt-lg">
-              <h3 className="mb-md text-[17px] font-semibold text-on-surface">Source Episodes</h3>
-              <div className="space-y-1">
-                {weekly.sourceEpisodeIds.map(episodeById).map((ep) => {
-                  if (!ep) return null
-                  const podcast = podcastById(ep.podcastId)
-                  return (
-                    <Link
-                      key={ep.id}
-                      to={`/episodes/${ep.id}`}
-                      className="group flex items-center justify-between gap-md rounded-lg p-2 transition-colors hover:bg-surface-container-low"
-                    >
-                      <div className="flex min-w-0 items-center gap-3">
-                        <Icon name="play_circle" className="shrink-0 text-primary" />
-                        <div className="min-w-0">
-                          <p className="truncate text-body-md font-medium text-on-surface">{ep.title}</p>
-                          <p className="truncate text-metadata text-secondary">{podcast?.title}</p>
-                        </div>
+          {/* Source citations */}
+          <footer className="mt-lg border-t border-outline-variant pt-lg">
+            <h3 className="mb-md text-[17px] font-semibold text-on-surface">Source Episodes</h3>
+            <div className="space-y-1">
+              {weekly.sourceEpisodeIds.map(episodeById).map((ep) => {
+                if (!ep) return null
+                const podcast = podcastById(ep.podcastId)
+                return (
+                  <Link
+                    key={ep.id}
+                    to={`/episodes/${ep.id}`}
+                    className="group flex items-center justify-between gap-md rounded-lg p-2 transition-colors hover:bg-surface-container-low"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Icon name="play_circle" className="shrink-0 text-primary" />
+                      <div className="min-w-0">
+                        <p className="truncate text-body-md font-medium text-on-surface">{ep.title}</p>
+                        <p className="truncate text-metadata text-secondary">{podcast?.title}</p>
                       </div>
-                      <Icon name="arrow_forward" size={18} className="shrink-0 text-secondary opacity-0 transition-opacity group-hover:opacity-100" />
-                    </Link>
-                  )
-                })}
-              </div>
-            </footer>
-          </div>
+                    </div>
+                    <Icon name="arrow_forward" size={18} className="shrink-0 text-secondary opacity-0 transition-opacity group-hover:opacity-100" />
+                  </Link>
+                )
+              })}
+            </div>
+          </footer>
         </div>
       </div>
+    </div>
+  )
+}
+
+function Block({ id, title, first, children }: { id: string; title: string; first?: boolean; children: ReactNode }) {
+  return (
+    <section id={id} className={`scroll-mt-20 ${first ? '' : 'mt-lg border-t border-outline-variant pt-lg'}`}>
+      <h3 className="mb-md text-[17px] font-semibold text-on-surface">{title}</h3>
+      {children}
+    </section>
+  )
+}
+
+function GeneratingState({ count }: { count: number }) {
+  return (
+    <div className="grid place-items-center gap-sm rounded-2xl border border-outline-variant bg-surface-container-lowest py-[14vh] text-center shadow-card">
+      <Icon name="auto_awesome" size={30} className="text-primary motion-safe:animate-pulse" fill />
+      <p className="text-body-md font-semibold text-on-surface">Synthesising your weekly summary…</p>
+      <p className="max-w-sm text-metadata text-secondary">
+        Reading across {count} analysed episode{count === 1 ? '' : 's'} to find the through-line, themes, and what actually mattered.
+      </p>
+    </div>
+  )
+}
+
+function EmptyState() {
+  return (
+    <div className="grid place-items-center gap-sm rounded-2xl border border-dashed border-outline-variant bg-surface-container-low py-[14vh] text-center">
+      <Icon name="summarize" size={32} className="text-outline" />
+      <h3 className="text-display-sm text-on-surface-variant">No weekly summary yet</h3>
+      <p className="max-w-md text-body-md text-secondary">
+        Your weekly master summary is built from analysed episodes. Once a few episodes are summarised, the cross-episode
+        synthesis appears here — drawn entirely from real content.
+      </p>
+      <Link to="/episodes" className="mt-1 inline-flex items-center gap-2 rounded-lg bg-primary px-lg py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container">
+        <Icon name="play_circle" size={18} /> Go to Episodes
+      </Link>
     </div>
   )
 }
