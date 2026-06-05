@@ -1,4 +1,4 @@
-import type { Episode, Podcast, WeeklySummary } from './types'
+import type { Episode, Podcast, Summary, WeeklySummary } from './types'
 import { EPISODES, PODCASTS, WEEKLY } from './mock-data'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,7 +30,13 @@ export function listPodcasts(): Promise<Podcast[]> {
 }
 
 export function listEpisodes(): Promise<Episode[]> {
-  return delay(clone(EPISODES))
+  // Live: real episodes from the shows' feeds via /api/episodes (Vite middleware
+  // in dev, Cloudflare Pages Function in prod). Falls back to the seeded episodes
+  // if the endpoint is unreachable or returns nothing.
+  return fetch('/api/episodes')
+    .then((r) => (r.ok ? (r.json() as Promise<Episode[]>) : Promise.reject(new Error('feed endpoint unavailable'))))
+    .then((eps) => (Array.isArray(eps) && eps.length > 0 ? eps : clone(EPISODES)))
+    .catch(() => clone(EPISODES))
 }
 
 export function getEpisode(id: string): Promise<Episode | undefined> {
@@ -46,6 +52,22 @@ export function getWeekly(): Promise<WeeklySummary> {
 export function setPodcastTracked(id: string, tracked: boolean): Promise<{ id: string; tracked: boolean }> {
   // SEAM: POST /api/podcasts/:id/track
   return delay({ id, tracked })
+}
+
+export class NoApiKeyError extends Error {}
+
+// Generate a real AI summary from an episode's show-notes via /api/summary
+// (Claude). Throws NoApiKeyError when the server has no ANTHROPIC_API_KEY set,
+// so the UI can show a "connect a key" hint instead of a generic failure.
+export async function generateSummary(input: { title: string; show: string; notes: string }): Promise<Summary> {
+  const r = await fetch('/api/summary', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (r.status === 503) throw new NoApiKeyError('no_api_key')
+  if (!r.ok) throw new Error(`summary failed: ${r.status}`)
+  return (await r.json()) as Summary
 }
 
 // SEAM: weekly-digest email subscription. Wire your email-sending mechanism in

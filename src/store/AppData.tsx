@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Episode, Podcast, ProcessingStatus, WeeklySummary } from '../lib/types'
 import * as api from '../lib/api'
@@ -11,12 +11,16 @@ interface AppData {
   podcasts: Podcast[]
   episodes: Episode[]
   weekly: WeeklySummary | null
+  /** True once a summary request came back "no API key configured". */
+  needsApiKey: boolean
   // selectors
   podcastById: (id: string) => Podcast | undefined
   episodeById: (id: string) => Episode | undefined
   episodesByPodcast: (podcastId: string) => Episode[]
   // mutations
   toggleTracked: (id: string) => void
+  /** Generate a real AI summary for an episode from its show-notes (idempotent). */
+  summarizeEpisode: (episode: Episode, podcast?: Podcast) => void
 }
 
 const Ctx = createContext<AppData | null>(null)
@@ -35,6 +39,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [podcasts, setPodcasts] = useState<Podcast[]>([])
   const [episodes, setEpisodes] = useState<Episode[]>([])
   const [weekly, setWeekly] = useState<WeeklySummary | null>(null)
+  const [needsApiKey, setNeedsApiKey] = useState(false)
+  const summarizing = useRef<Set<string>>(new Set()) // episode ids with an in-flight summary request
 
   useEffect(() => {
     let alive = true
@@ -58,8 +64,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     if (loading) return
     const timer = setInterval(() => {
       setEpisodes((prev) => {
-        if (!prev.some((e) => nextStatus(e.status))) return prev // nothing in flight
+        // Only advance episodes that have a summary to land on — real feed
+        // episodes have none yet, so they stay put (no fake "processing" churn).
+        if (!prev.some((e) => e.summary && nextStatus(e.status))) return prev
         return prev.map((e) => {
+          if (!e.summary) return e
           const next = nextStatus(e.status)
           return next ? { ...e, status: next } : e
         })
@@ -84,18 +93,42 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  const summarizeEpisode = useCallback(async (episode: Episode, podcast?: Podcast) => {
+    if (episode.summary || !episode.notes || summarizing.current.has(episode.id)) return
+    summarizing.current.add(episode.id)
+    const setStatus = (status: Episode['status'], summary?: Episode['summary']) =>
+      setEpisodes((prev) => prev.map((e) => (e.id === episode.id ? { ...e, status, ...(summary ? { summary } : {}) } : e)))
+    setStatus('summarizing')
+    try {
+      const summary = await api.generateSummary({ title: episode.title, show: podcast?.title ?? '', notes: episode.notes })
+      setStatus('ready', summary)
+      setNeedsApiKey(false)
+    } catch (err) {
+      if (err instanceof api.NoApiKeyError) {
+        setNeedsApiKey(true)
+        setStatus('detected') // not a real failure — just no key configured yet
+      } else {
+        setStatus('failed')
+      }
+    } finally {
+      summarizing.current.delete(episode.id)
+    }
+  }, [])
+
   const value = useMemo<AppData>(
     () => ({
       loading,
       podcasts,
       episodes,
       weekly,
+      needsApiKey,
       podcastById,
       episodeById,
       episodesByPodcast,
       toggleTracked,
+      summarizeEpisode,
     }),
-    [loading, podcasts, episodes, weekly, podcastById, episodeById, episodesByPodcast, toggleTracked],
+    [loading, podcasts, episodes, weekly, needsApiKey, podcastById, episodeById, episodesByPodcast, toggleTracked, summarizeEpisode],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

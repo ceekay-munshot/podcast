@@ -44,7 +44,9 @@ interface DateRangeValue {
 const Ctx = createContext<DateRangeValue | null>(null)
 
 export function DateRangeProvider({ children }: { children: ReactNode }) {
-  const [presetId, setPresetId] = useState('week')
+  // Default to "All time" so freshly pulled feed episodes always show, whatever
+  // their publish dates — the user can narrow from the top-bar pill.
+  const [presetId, setPresetId] = useState('all')
   const preset = PRESETS.find((p) => p.id === presetId) ?? PRESETS[1]
 
   const setPreset = useCallback((id: string) => setPresetId(id), [])

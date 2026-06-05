@@ -29,6 +29,8 @@ export interface Podcast {
   /** Brand color + monogram drive the generated cover tile (no external images). */
   color: string
   monogram: string
+  /** Real cover art (square). When absent, the UI falls back to color + monogram. */
+  artworkUrl?: string
   tracked: boolean
 }
 
@@ -95,6 +97,8 @@ export interface Episode {
   blurb: string
   /** Deep link to the episode at its origin (Apple Podcasts, YouTube, RSS). When absent, the UI falls back to a source search. */
   sourceUrl?: string
+  /** Publisher show-notes (trimmed) — the raw material the AI summary is generated from. */
+  notes?: string
   entities: EpisodeEntities
   /** Present once status === 'ready'. */
   summary?: Summary

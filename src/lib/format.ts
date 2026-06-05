@@ -40,8 +40,8 @@ function startOfDay(ms: number): number {
   return d.getTime()
 }
 
-// Fixed "now" so the prototype reads consistently regardless of the real clock.
-export const NOW = new Date('2026-06-05T09:00:00Z').getTime()
+// Real wall-clock now, so live feed dates filter and read correctly.
+export const NOW = Date.now()
 
 export interface StatusMeta {
   label: string

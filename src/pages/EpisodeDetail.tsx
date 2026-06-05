@@ -24,7 +24,7 @@ export default function EpisodeDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [params] = useSearchParams()
-  const { episodeById, podcastById } = useAppData()
+  const { episodeById, podcastById, summarizeEpisode, needsApiKey } = useAppData()
 
   const paramTab = params.get('tab') as Tab | null
   const [tab, setTab] = useState<Tab>(paramTab ?? 'summary')
@@ -45,6 +45,15 @@ export default function EpisodeDetail() {
       return () => clearTimeout(t)
     }
   }, [tab, jumpTo])
+
+  // When a real (un-summarized) episode is opened, generate its AI summary from
+  // the show-notes. Idempotent — AppData dedupes in-flight requests per id.
+  useEffect(() => {
+    if (episode && !episode.summary && episode.notes && episode.status !== 'failed') {
+      summarizeEpisode(episode, podcast)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [episode?.id])
 
   if (!episode || !podcast) {
     return (
@@ -119,7 +128,7 @@ export default function EpisodeDetail() {
       </div>
 
       {episode.status !== 'ready' || !episode.summary ? (
-        <ProcessingPanel episode={episode} />
+        <ProcessingPanel episode={episode} needsApiKey={needsApiKey} onRetry={() => summarizeEpisode(episode, podcast)} />
       ) : (
         <>
           <div className="mb-lg flex gap-lg overflow-x-auto border-b border-outline-variant">
@@ -475,7 +484,7 @@ const PIPELINE: { status: ProcessingStatus; label: string; icon: string }[] = [
   { status: 'ready', label: 'Summary ready', icon: 'check_circle' },
 ]
 
-function ProcessingPanel({ episode }: { episode: Episode }) {
+function ProcessingPanel({ episode, onRetry, needsApiKey }: { episode: Episode; onRetry?: () => void; needsApiKey?: boolean }) {
   const failed = episode.status === 'failed'
   const currentIndex = failed ? 1 : PIPELINE.findIndex((p) => p.status === episode.status)
 
@@ -486,11 +495,15 @@ function ProcessingPanel({ episode }: { episode: Episode }) {
           <Icon name={failed ? 'error' : statusMeta(episode.status).icon} className={failed ? 'text-error' : ''} />
         </span>
         <div>
-          <h2 className="text-[19px] font-semibold text-on-surface">{failed ? 'Processing failed' : 'Working on this episode…'}</h2>
+          <h2 className="text-[19px] font-semibold text-on-surface">
+            {failed ? 'Processing failed' : needsApiKey ? 'Summary pending' : 'Working on this episode…'}
+          </h2>
           <p className="text-metadata text-secondary">
             {failed
               ? 'Something went wrong during processing. You can retry the pipeline.'
-              : 'Munshot is moving this episode through the pipeline. The summary will appear here when ready.'}
+              : needsApiKey
+                ? 'Add an OpenAI or Anthropic API key (in your local .env, or the Pages env vars) to generate the AI summary from this episode’s show-notes.'
+                : 'Munshot is reading the show-notes and writing the AI summary. It will appear here when ready.'}
           </p>
         </div>
       </div>
@@ -525,8 +538,11 @@ function ProcessingPanel({ episode }: { episode: Episode }) {
         })}
       </ol>
 
-      {failed && (
-        <button className="mt-md inline-flex items-center gap-2 rounded-lg bg-primary px-lg py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container">
+      {failed && onRetry && (
+        <button
+          onClick={onRetry}
+          className="mt-md inline-flex items-center gap-2 rounded-lg bg-primary px-lg py-2.5 text-metadata font-semibold text-on-primary transition-colors hover:bg-primary-container"
+        >
           <Icon name="refresh" size={18} /> Retry processing
         </button>
       )}

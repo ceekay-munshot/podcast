@@ -1,0 +1,167 @@
+import type { Episode } from '../src/lib/types'
+import { EPISODES } from '../src/lib/mock-data'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live feed fetching — runtime-agnostic (runs in the Vite dev middleware AND in
+// the Cloudflare Pages Function). Pulls each show's real podcast RSS, parses the
+// latest episodes, and maps them to the app's Episode shape. Keyless.
+//
+// Shows with no clean public feed (Stratechery is members-only; "Access" has no
+// resolvable feed) fall back to that show's seeded episodes, so the dashboard is
+// always populated. A feed that errors or times out also falls back per-source.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface Source {
+  id: string // matches a Podcast.id in mock-data
+  feedUrl: string | null // verified real RSS feed; null → seed fallback
+}
+
+// Feed URLs resolved + verified via the iTunes Search API.
+const SOURCES: Source[] = [
+  { id: 'stratechery', feedUrl: null }, // members-only, no public feed
+  { id: 'iltb', feedUrl: 'https://feeds.megaphone.fm/CLS2859450455' },
+  { id: 'allin', feedUrl: 'https://rss.libsyn.com/shows/254861/destinations/1928300.xml' },
+  { id: 'oddlots', feedUrl: 'https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/8a94442e-5a74-4fa2-8b8d-ae27003a8d6b/982f5071-765c-403d-969d-ae27003a8d83/podcast.rss' },
+  { id: 'aidaily', feedUrl: 'https://anchor.fm/s/f7cac464/podcast/rss' },
+  { id: 'ingoodcompany', feedUrl: 'https://feeds.acast.com/public/shows/622618c7057f3400120d15db' },
+  { id: 'acquired', feedUrl: 'https://feeds.transistor.fm/acquired' },
+  { id: 'cheekypint', feedUrl: 'https://feeds.transistor.fm/cheeky-pint-with-john-collison' },
+  { id: 'access', feedUrl: null }, // no resolvable public feed
+  { id: 'bg2', feedUrl: 'https://anchor.fm/s/f06c2370/podcast/rss' },
+  { id: 'lennys', feedUrl: 'https://api.substack.com/feed/podcast/10845.rss' },
+  { id: 'benmarc', feedUrl: 'https://feeds.simplecast.com/mAT9rqvu' },
+]
+
+const PER_SOURCE = 4 // recent episodes to surface per show
+
+// Stream only the head of a feed — items are newest-first, so the first ~800 KB
+// (or first 8 closed <item>s) covers the recent episodes without downloading
+// multi-megabyte archives.
+async function fetchFeedHead(url: string, maxBytes = 800_000, timeoutMs = 9000): Promise<string> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'user-agent': 'MunshotPodcasts/1.0 (+https://munshot.io)',
+        accept: 'application/rss+xml, application/xml, text/xml, */*',
+      },
+    })
+    if (!res.ok || !res.body) return ''
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    let text = ''
+    let received = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      received += value.byteLength
+      text += decoder.decode(value, { stream: true })
+      if (received >= maxBytes || (text.match(/<\/item>/gi)?.length ?? 0) >= 8) {
+        await reader.cancel().catch(() => {})
+        break
+      }
+    }
+    return text
+  } catch {
+    return ''
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function innerTag(block: string, name: string): string {
+  const m = block.match(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, 'i'))
+  return m ? m[1] : ''
+}
+
+function attrOf(block: string, tag: string, attr: string): string {
+  const m = block.match(new RegExp(`<${tag}\\b[^>]*\\b${attr}\\s*=\\s*["']([^"']*)["']`, 'i'))
+  return m ? m[1] : ''
+}
+
+function unwrapCdata(s: string): string {
+  return s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').trim()
+}
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;|&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&nbsp;/g, ' ')
+}
+
+function plainText(s: string): string {
+  return decodeEntities(unwrapCdata(s).replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim()
+}
+
+function truncate(s: string, n: number): string {
+  if (s.length <= n) return s
+  const cut = s.slice(0, n)
+  const lastSpace = cut.lastIndexOf(' ')
+  return (lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trimEnd() + '…'
+}
+
+function parseDuration(raw: string): number {
+  const s = unwrapCdata(raw).trim()
+  if (!s) return 0
+  if (s.includes(':')) {
+    return s.split(':').reduce((acc, part) => acc * 60 + (Number(part) || 0), 0)
+  }
+  const n = Number(s)
+  return Number.isFinite(n) ? Math.round(n) : 0
+}
+
+function mockFor(podcastId: string): Episode[] {
+  return EPISODES.filter((e) => e.podcastId === podcastId)
+}
+
+function parseEpisodes(xml: string, podcastId: string): Episode[] {
+  const blocks = [...xml.matchAll(/<item\b[\s\S]*?<\/item>/gi)].slice(0, PER_SOURCE).map((m) => m[0])
+  const out: Episode[] = []
+  blocks.forEach((block, i) => {
+    const title = decodeEntities(unwrapCdata(innerTag(block, 'title'))).trim()
+    if (!title) return
+    const pub = unwrapCdata(innerTag(block, 'pubDate')).trim()
+    const parsed = pub ? new Date(pub) : null
+    const publishedAt = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString()
+    const link = unwrapCdata(innerTag(block, 'link')).trim() || attrOf(block, 'enclosure', 'url')
+    const description = innerTag(block, 'description') || innerTag(block, 'content:encoded')
+    const notes = plainText(description)
+    out.push({
+      id: `live-${podcastId}-${i}`,
+      podcastId,
+      title,
+      publishedAt,
+      durationSec: parseDuration(innerTag(block, 'itunes:duration')),
+      status: 'detected', // real episode found on the feed; AI summary not yet generated
+      signal: 'normal',
+      blurb: truncate(notes, 200) || 'New episode — open the source to listen.',
+      sourceUrl: link || undefined,
+      notes: notes ? notes.slice(0, 2500) : undefined, // material for the AI summary
+      entities: { people: [], companies: [], themes: [] },
+    })
+  })
+  return out
+}
+
+async function episodesForSource(src: Source): Promise<Episode[]> {
+  if (!src.feedUrl) return mockFor(src.id)
+  const xml = await fetchFeedHead(src.feedUrl)
+  const episodes = parseEpisodes(xml, src.id)
+  return episodes.length ? episodes : mockFor(src.id)
+}
+
+// All shows' recent episodes, newest first. Never throws — each source degrades
+// to its seeded episodes independently.
+export async function getLiveEpisodes(): Promise<Episode[]> {
+  const settled = await Promise.allSettled(SOURCES.map(episodesForSource))
+  const episodes = settled.flatMap((r, i) => (r.status === 'fulfilled' ? r.value : mockFor(SOURCES[i].id)))
+  return episodes.sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt))
+}
