@@ -5,7 +5,7 @@ import type { Episode, ProcessingStatus } from '../lib/types'
 import { useAppData } from '../store/AppData'
 import { useSentiment } from '../store/Sentiment'
 import { formatDuration, longDate } from '../lib/format'
-import { episodeTone } from '../lib/tone'
+import { episodeToneView } from '../lib/tone'
 import { CoverTile } from './CoverTile'
 import { Icon } from './Icon'
 import { RichText, entityTerms } from './RichText'
@@ -167,7 +167,7 @@ function EpisodeHoverCard({ episode, anchor, point }: Active) {
   const { podcastById } = useAppData()
   const { on: sentimentOn } = useSentiment()
   const podcast = podcastById(episode.podcastId)
-  const tone = useMemo(() => episodeTone(episode), [episode])
+  const tone = useMemo(() => episodeToneView(episode), [episode])
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
 

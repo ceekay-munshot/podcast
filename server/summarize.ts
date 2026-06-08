@@ -1,4 +1,4 @@
-import type { InterestingMoment, Summary, TranscriptSegment } from '../src/lib/types'
+import type { EpisodeTone, InterestingMoment, Summary, TranscriptSegment } from '../src/lib/types'
 import { transcribeEpisode } from './transcribe'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,12 +70,44 @@ const SCHEMA = {
       },
       description: 'COMPREHENSIVE coverage of the genuinely interesting moments — the "double-click" beats a sharp listener would revisit: bold claims, specific predictions or numbers, sharp disagreements, surprising data, memorable anecdotes, or pivotal turns in the conversation. Capture EVERY such moment, not a fixed number; a dense 40-60 minute episode typically yields 5-10, spread across the whole episode (early, middle, AND late) rather than clustered at the opening. Each title names the specific moment; each whyItMatters is 1-2 concrete sentences stating what was actually said (the specific claim, number, or exchange, naming who said it when notable) and why it is worth attention — never generic filler like "this highlights a key shift".',
     },
+    tone: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        overall: {
+          type: 'string',
+          enum: ['positive', 'cautious', 'mixed', 'neutral'],
+          description: 'The NET tone of the episode, judged from what is actually said: positive (the conversation leans optimistic/bullish), cautious (it leans wary/bearish/concerned), mixed (real sentiment on both sides with no clear net lean), neutral (largely descriptive, little evaluative charge).',
+        },
+        rationale: {
+          type: 'string',
+          description: 'ONE sentence (~140-220 chars) explaining the net read, grounded in specifics the episode actually discusses — not a generic gloss.',
+        },
+        aspects: {
+          type: 'array',
+          minItems: 3,
+          maxItems: 6,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              subject: { type: 'string', description: 'A real company / person / topic the episode genuinely discusses, as a short display name of ~1-4 words (e.g. "SpaceX", "secondary markets", "retail investors").' },
+              sentiment: { type: 'string', enum: ['positive', 'negative', 'neutral'], description: 'The sentiment the episode expresses TOWARD this subject.' },
+              note: { type: 'string', description: 'One short clause/sentence giving the specific reason for that sentiment, drawn from the material.' },
+            },
+            required: ['subject', 'sentiment', 'note'],
+          },
+          description: '3-6 entries naming the specific subjects the episode is positive/negative/neutral ABOUT — the "about what" behind the net read. Subjects must be things the episode genuinely discusses; never invent sentiment that was not expressed.',
+        },
+      },
+      required: ['overall', 'rationale', 'aspects'],
+    },
   },
-  required: ['synthesis', 'takeaways', 'qa', 'moments'],
+  required: ['synthesis', 'takeaways', 'qa', 'moments', 'tone'],
 }
 
 const SYSTEM_BASE =
-  'You are Munshot, an AI that writes sharp one-page intelligence summaries of podcast episodes for busy operators and investors. Produce the summary by calling the emit_summary tool/function. Rules:\n- Base everything ONLY on the provided material. Do NOT invent facts, quotes, names, or numbers.\n- synthesis: go deeper than the headline. Lead with the central argument, then develop it with the specifics that make it credible — concrete claims, real numbers, named companies/people, and the mechanism or causal chain behind each point. Capture the genuine tension or disagreement between speakers (the bull case vs the bear case, what is contested, what is still uncertain), and surface the non-obvious, second-order insight a sharp listener takes away — not a generic recap anyone could write from the title. Every sentence must carry specific, episode-grounded content; cut filler like "the market is maturing" or "X is seeing significant growth". Emphasise only a FEW short key phrases (2-5 words each, at most ~3 per summary) by wrapping each in matched **double asterisks** — never bold whole sentences or clauses, and always close every ** you open.\n- Be concrete and non-obvious in takeaways, each anchored to a specific detail from the material.\n- qa: be EXHAUSTIVE — capture every substantive question the episode actually raises and answers, in the order it addresses them, not a curated handful. Exclude only trivial banter, logistics, and ad reads. Make every question specific and self-contained (it should read clearly on its own), and every answer thorough, concrete, and fully understandable without the audio — 2-4 real sentences that explain the "why" and the specifics, never one terse line, but never padded or invented either.\n- moments: be thorough — surface every genuinely interesting beat the episode delivers (bold claims, specific predictions or numbers, sharp disagreements, surprising data, memorable anecdotes), not just one or two, with each whyItMatters concrete about what was actually said — never a generic gloss.'
+  'You are Munshot, an AI that writes sharp one-page intelligence summaries of podcast episodes for busy operators and investors. Produce the summary by calling the emit_summary tool/function. Rules:\n- Base everything ONLY on the provided material. Do NOT invent facts, quotes, names, or numbers.\n- synthesis: go deeper than the headline. Lead with the central argument, then develop it with the specifics that make it credible — concrete claims, real numbers, named companies/people, and the mechanism or causal chain behind each point. Capture the genuine tension or disagreement between speakers (the bull case vs the bear case, what is contested, what is still uncertain), and surface the non-obvious, second-order insight a sharp listener takes away — not a generic recap anyone could write from the title. Every sentence must carry specific, episode-grounded content; cut filler like "the market is maturing" or "X is seeing significant growth". Emphasise only a FEW short key phrases (2-5 words each, at most ~3 per summary) by wrapping each in matched **double asterisks** — never bold whole sentences or clauses, and always close every ** you open.\n- Be concrete and non-obvious in takeaways, each anchored to a specific detail from the material.\n- qa: be EXHAUSTIVE — capture every substantive question the episode actually raises and answers, in the order it addresses them, not a curated handful. Exclude only trivial banter, logistics, and ad reads. Make every question specific and self-contained (it should read clearly on its own), and every answer thorough, concrete, and fully understandable without the audio — 2-4 real sentences that explain the "why" and the specifics, never one terse line, but never padded or invented either.\n- moments: be thorough — surface every genuinely interesting beat the episode delivers (bold claims, specific predictions or numbers, sharp disagreements, surprising data, memorable anecdotes), not just one or two, with each whyItMatters concrete about what was actually said — never a generic gloss.\n- tone: read the episode\'s sentiment from what is ACTUALLY said — never invent a feeling that was not expressed. Set "overall" to the net lean, write "rationale" as ONE grounded sentence, and list 3-6 "aspects": the specific companies/people/topics the episode is positive, negative, or neutral ABOUT, each with a short subject (1-4 words) and a one-clause "note" giving the real reason. Only include subjects the episode genuinely discusses.'
 
 const SYSTEM_TRANSCRIPT = `${SYSTEM_BASE}\n- You have the FULL transcript, annotated with [mm:ss] markers. Ground everything in what was actually said.\n- For "moments", draw them from DIFFERENT parts of the episode — early, middle, and late, not all from the opening — and set each timestamp to the real [mm:ss] of the nearest marker. Never use 0:00.`
 const SYSTEM_NOTES = `${SYSTEM_BASE}\n- You only have the publisher's show-notes (not the audio). If they are thin or promotional, keep the summary brief and high-level rather than fabricating. Use "—" for moment timestamps.`
@@ -88,13 +120,33 @@ function buildPrompt(input: SummarizeInput, transcript: string | null): { system
   return { system: SYSTEM_NOTES, user: `Show: ${input.show}\nEpisode: ${input.title}\n\nShow notes:\n${input.notes || '(no show-notes provided)'}` }
 }
 
+// server/ is NOT type-checked by `npm run build` (tsconfig includes only src/), and
+// the LLM output is untrusted, so validate tone at runtime: drop the whole object if
+// the shape is off, and silently discard any malformed aspect rather than crashing.
+const TONE_OVERALLS = new Set(['positive', 'cautious', 'mixed', 'neutral'])
+const TONE_SENTIMENTS = new Set(['positive', 'negative', 'neutral'])
+
+function normalizeTone(raw: Partial<Summary> | undefined): EpisodeTone | undefined {
+  const t = raw?.tone as unknown as { overall?: unknown; rationale?: unknown; aspects?: unknown } | undefined
+  if (!t || typeof t !== 'object') return undefined
+  if (typeof t.overall !== 'string' || !TONE_OVERALLS.has(t.overall)) return undefined
+  if (typeof t.rationale !== 'string' || !Array.isArray(t.aspects)) return undefined
+  const aspects = (t.aspects as Array<{ subject?: unknown; sentiment?: unknown; note?: unknown }>)
+    .filter((a) => a && typeof a.subject === 'string' && typeof a.sentiment === 'string' && TONE_SENTIMENTS.has(a.sentiment) && typeof a.note === 'string')
+    .slice(0, 6)
+    .map((a) => ({ subject: a.subject as string, sentiment: a.sentiment as EpisodeTone['aspects'][number]['sentiment'], note: a.note as string }))
+  return { overall: t.overall as EpisodeTone['overall'], rationale: t.rationale, aspects }
+}
+
 function normalize(raw: Partial<Summary> | undefined): Summary {
   const r = raw ?? {}
+  const tone = normalizeTone(raw)
   return {
     synthesis: r.synthesis ?? [],
     takeaways: r.takeaways ?? [],
     qa: r.qa ?? [],
     moments: (r.moments ?? []).map((m, i) => ({ ...m, id: `gen-${i}` })),
+    ...(tone ? { tone } : {}),
   }
 }
 
@@ -192,7 +244,7 @@ function buildTranscript(raw: RawSeg[], moments: InterestingMoment[]): { segment
 
 // Bump when the summary prompt/schema changes, so a warm worker (whose in-memory
 // cache can outlive a deploy) never serves a summary written by the previous prompt.
-const SUMMARY_REVISION = 3
+const SUMMARY_REVISION = 4
 const cache = new Map<string, SummarizeResult>()
 
 export async function summarizeEpisode(input: SummarizeInput, config: SummarizeConfig): Promise<SummarizeResult> {

@@ -5,7 +5,7 @@ import { useDateRange } from '../store/DateRange'
 import { useChannelFilter } from '../store/ChannelFilter'
 import { useSentiment } from '../store/Sentiment'
 import { formatDuration, longDate } from '../lib/format'
-import { episodeTone } from '../lib/tone'
+import { episodeToneView } from '../lib/tone'
 import type { Episode } from '../lib/types'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
@@ -147,7 +147,7 @@ function EpisodeRow({
 }) {
   const { podcastById } = useAppData()
   const podcast = podcastById(episode.podcastId)
-  const tone = useMemo(() => episodeTone(episode), [episode])
+  const tone = useMemo(() => episodeToneView(episode), [episode])
   return (
     <div
       role="button"

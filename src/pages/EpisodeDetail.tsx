@@ -10,7 +10,7 @@ import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
 import { RichText, entityTerms } from '../components/RichText'
 import { analyzeSentiment, findSentimentSpans, sentimentClass, sentimentTitle } from '../lib/sentiment'
-import { episodeTone } from '../lib/tone'
+import { episodeToneView } from '../lib/tone'
 import { ToneMeter } from '../components/ToneMeter'
 import { SourceLink } from '../components/SourceLink'
 import { StatusBadge } from '../components/StatusBadge'
@@ -125,8 +125,8 @@ export default function EpisodeDetail() {
               <Icon name="schedule" size={15} /> {formatDuration(episode.durationSec)}
             </span>
             <StatusBadge status={episode.status} />
-            {episode.summary && sentimentOn && <ToneMeter tone={episodeTone(episode)} />}
           </div>
+          {episode.summary && sentimentOn && <ToneMeter tone={episodeToneView(episode)} detailed className="mt-3" />}
         </div>
         <div className="flex items-center gap-2.5">
           <SourceLink episode={episode} podcast={podcast} />

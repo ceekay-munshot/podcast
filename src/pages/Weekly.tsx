@@ -5,7 +5,7 @@ import { useAppData } from '../store/AppData'
 import { useSentiment } from '../store/Sentiment'
 import { downloadWeekly } from '../lib/exportWeekly'
 import { generateWeekly } from '../lib/weeklyApi'
-import { weeklyTone } from '../lib/tone'
+import { weeklyToneView } from '../lib/tone'
 import type { WeeklySummary } from '../lib/types'
 import { Icon } from '../components/Icon'
 import { RichText, entityTerms } from '../components/RichText'
@@ -55,7 +55,7 @@ export default function Weekly() {
           {weekly && sentimentOn && (
             <div className="mt-2 flex items-center gap-2 text-metadata text-secondary">
               <span className="font-medium">This week's tone</span>
-              <ToneMeter tone={weeklyTone(weekly)} />
+              <ToneMeter tone={weeklyToneView(weekly, episodeById)} />
             </div>
           )}
         </div>
