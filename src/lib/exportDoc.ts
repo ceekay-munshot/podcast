@@ -97,6 +97,7 @@ const DOC_CSS = `
   .subhead { margin: 0 0 6pt; font-size: 8.5pt; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: #64748b; }
 
   .quote { border-left: 3px solid #2563eb; background: #eff5ff; padding: 13pt 15pt; }
+  .quote .qt { margin: 0 0 5pt; font-size: 12.5pt; font-weight: 700; color: #0f172a; }
   .quote .ql { margin: 0 0 7pt; font-size: 12pt; font-style: italic; color: #1e293b; }
   .quote .who { margin: 0; font-size: 10pt; font-weight: 700; color: #0f172a; }
   .quote .role { font-weight: 400; color: #64748b; }

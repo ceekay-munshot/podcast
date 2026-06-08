@@ -220,7 +220,10 @@ function WeeklyDoc({
             <Block id="wk-interesting" title="What Was Actually Interesting">
               <div className="relative overflow-hidden rounded-xl p-md text-white" style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}>
                 <Icon name="lightbulb" className="absolute -right-5 -top-5 text-[130px] text-white/10" />
-                <p className="relative text-body-lg italic text-white/95">“{weekly.interesting.quote}”</p>
+                {weekly.interesting.title && (
+                  <p className="relative text-[19px] font-semibold leading-snug text-white">{weekly.interesting.title}</p>
+                )}
+                <p className="relative mt-1.5 text-body-lg italic text-white/90">{weekly.interesting.quote}</p>
                 <div className="relative mt-md flex items-center justify-between">
                   <div>
                     <p className="text-metadata font-bold">{weekly.interesting.speaker}</p>
