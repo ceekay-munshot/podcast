@@ -5,7 +5,7 @@ import { useAppData } from '../store/AppData'
 import { useSentiment } from '../store/Sentiment'
 import { downloadSummary } from '../lib/exportSummary'
 import { formatDuration, longDate, statusMeta } from '../lib/format'
-import type { Episode, InterestingMoment, ProcessingStatus, TranscriptSegment } from '../lib/types'
+import type { Episode, InterestingMoment, ProcessingStatus, Takeaway, TranscriptSegment } from '../lib/types'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
 import { RichText, entityTerms } from '../components/RichText'
@@ -176,10 +176,29 @@ export default function EpisodeDetail() {
   )
 }
 
-// ── Summary tab — AI Summary + At a Glance ───────────────────────────────────
+// ── Summary tab — an institution-grade brief ─────────────────────────────────
 function SummaryTab({ episode }: { episode: Episode }) {
+  const { on: sentimentOn } = useSentiment()
   const s = episode.summary!
   const terms = entityTerms(episode.entities)
+
+  // Split the takeaways into a bull / bear / neutral read by their net sentiment,
+  // so the brief leads with what's working and what to watch — not a flat wall.
+  const groups = useMemo(() => {
+    const pos: Takeaway[] = []
+    const neg: Takeaway[] = []
+    const neutral: Takeaway[] = []
+    for (const t of s.takeaways) {
+      const score = analyzeSentiment(`${t.title}. ${t.detail}`).score
+      ;(score > 0 ? pos : score < 0 ? neg : neutral).push(t)
+    }
+    return { pos, neg, neutral }
+  }, [s.takeaways])
+
+  // Show the bull/bear split only when there's a real lean on either side;
+  // otherwise fall back to a clean bulleted read (also when coloring is off).
+  const split = sentimentOn && (groups.pos.length > 0 || groups.neg.length > 0)
+
   const glance = [
     { icon: 'star', label: 'Key Takeaways', value: s.takeaways.length },
     { icon: 'schedule', label: 'Interesting Moments', value: s.moments.length },
@@ -193,8 +212,8 @@ function SummaryTab({ episode }: { episode: Episode }) {
           <Icon name="auto_awesome" fill />
           <h2 className="text-[19px] font-semibold text-on-surface">AI Summary</h2>
         </div>
-        {/* Lead paragraph reads larger + darker for editorial hierarchy; the rest
-            settle into calm body text. */}
+        {/* Overview — lead paragraph reads larger + darker for editorial
+            hierarchy; the rest settle into calm body text. */}
         <div className="space-y-4">
           {s.synthesis.map((p, i) => (
             <p
@@ -209,6 +228,26 @@ function SummaryTab({ episode }: { episode: Episode }) {
             </p>
           ))}
         </div>
+
+        {/* Structured breakdown — bull / bear when there's signal, else a clean
+            bulleted read of the key points. Surfaces the takeaways the summary
+            already has instead of leaving them buried in another tab. */}
+        {split ? (
+          <div className="mt-lg border-t border-outline-variant pt-lg">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <SignalPanel kind="pos" items={groups.pos} terms={terms} />
+              <SignalPanel kind="neg" items={groups.neg} terms={terms} />
+            </div>
+            <KeyPoints items={groups.neutral} terms={terms} heading="Other key points" className="mt-md" />
+          </div>
+        ) : (
+          <KeyPoints
+            items={s.takeaways}
+            terms={terms}
+            heading="Key points"
+            className="mt-lg border-t border-outline-variant pt-lg"
+          />
+        )}
       </section>
 
       <aside className="col-span-12 md:col-span-4">
@@ -232,6 +271,73 @@ function SummaryTab({ episode }: { episode: Episode }) {
           </ul>
         </div>
       </aside>
+    </div>
+  )
+}
+
+// Bull / bear panel built from the takeaways that lean that way. Honest empty
+// states so a one-sided episode still reads as a considered call, not a gap.
+function SignalPanel({ kind, items, terms }: { kind: 'pos' | 'neg'; items: Takeaway[]; terms: string[] }) {
+  const pos = kind === 'pos'
+  return (
+    <div className={`rounded-xl border p-md ${pos ? 'border-[#d6efdf] bg-[#f5fbf7]' : 'border-[#f3d8d8] bg-[#fdf6f6]'}`}>
+      <div className="mb-2.5 flex items-center gap-1.5">
+        <Icon name={pos ? 'trending_up' : 'trending_down'} size={18} className={pos ? 'text-[#15803d]' : 'text-[#b91c1c]'} />
+        <h3 className={`text-[14px] font-semibold ${pos ? 'text-[#15803d]' : 'text-[#b91c1c]'}`}>
+          {pos ? 'Positives' : 'Risks & watch-outs'}
+        </h3>
+      </div>
+      {items.length ? (
+        <ul className="space-y-2.5">
+          {items.map((t, i) => (
+            <li key={i} className="flex gap-2">
+              <span className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${pos ? 'bg-[#16a34a]' : 'bg-[#dc2626]'}`} />
+              <div className="min-w-0">
+                <p className="text-[14px] font-semibold text-on-surface">{t.title}</p>
+                <p className="mt-0.5 text-[13px] leading-snug text-on-surface-variant">
+                  <RichText text={t.detail} terms={terms} />
+                </p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-[13px] text-secondary">
+          {pos ? 'No clear positives flagged in this analysis.' : 'No notable risks flagged in this analysis.'}
+        </p>
+      )}
+    </div>
+  )
+}
+
+// Neutral key points — takeaways that don't lean either way (or all of them when
+// sentiment coloring is off). Matches the Home/Weekly bullet style.
+function KeyPoints({
+  items,
+  terms,
+  heading,
+  className = '',
+}: {
+  items: Takeaway[]
+  terms: string[]
+  heading: string
+  className?: string
+}) {
+  if (!items.length) return null
+  return (
+    <div className={className}>
+      <h3 className="mb-2.5 text-[15px] font-semibold text-on-surface">{heading}</h3>
+      <ul className="space-y-2">
+        {items.map((t, i) => (
+          <li key={i} className="flex gap-2.5 text-body-md text-on-surface-variant">
+            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+            <span>
+              <span className="font-semibold text-on-surface">{t.title}.</span>{' '}
+              <RichText text={t.detail} terms={terms} />
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
