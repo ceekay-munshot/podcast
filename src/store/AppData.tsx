@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from 'react'
 import type { Episode, Podcast, ProcessingStatus, WeeklySummary } from '../lib/types'
 import * as api from '../lib/api'
+import { loadProcessed, saveProcessed } from '../lib/processedStore'
 
 // One provider loads everything through the api seam on mount and hands it to
 // the app via context, so individual pages stay synchronous and snappy.
@@ -50,8 +51,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       // fabricated summary/transcript can never reach the UI. Single chokepoint:
       // Home, Episodes, Search, Weekly, and the channel selector all derive from this.
       const locked = new Set(p.filter((x) => x.locked).map((x) => x.id))
+      // Re-hydrate the episodes this browser has already processed (persisted in
+      // localStorage), so a reload — or a code-push redeploy — never drops that
+      // history. Persisted (ready) versions overlay the freshly-fetched feed by id;
+      // any that have since rolled off the feed are added back at the end.
+      const byId = new Map<string, Episode>()
+      for (const ep of e) byId.set(ep.id, ep)
+      for (const ep of loadProcessed()) byId.set(ep.id, ep)
       setPodcasts(p)
-      setEpisodes(e.filter((ep) => !locked.has(ep.podcastId)))
+      setEpisodes([...byId.values()].filter((ep) => !locked.has(ep.podcastId)))
       setWeekly(w)
       setLoading(false)
     })
@@ -113,7 +121,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         transcriptUrl: episode.transcriptUrl,
         audioUrl: episode.audioUrl,
       })
-      setStatus('ready', { summary, ...(transcript?.length ? { transcript } : {}) })
+      const ready: Partial<Episode> = { summary, ...(transcript?.length ? { transcript } : {}) }
+      setStatus('ready', ready)
+      // Remember it so this work survives a reload / redeploy (see processedStore).
+      saveProcessed({ ...episode, status: 'ready', ...ready })
       setNeedsApiKey(false)
     } catch (err) {
       if (err instanceof api.NoApiKeyError) {

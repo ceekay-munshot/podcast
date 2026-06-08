@@ -132,20 +132,33 @@ function mockFor(podcastId: string): Episode[] {
   return EPISODES.filter((e) => e.podcastId === podcastId)
 }
 
+// Tiny, dependency-free, stable string hash → short base36 token. Used to build a
+// stable episode id from the feed's own identifiers, so it survives reordering.
+function hashKey(s: string): string {
+  let h = 5381
+  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 33) + s.charCodeAt(i)) | 0
+  return (h >>> 0).toString(36)
+}
+
 function parseEpisodes(xml: string, podcastId: string): Episode[] {
   const blocks = [...xml.matchAll(/<item\b[\s\S]*?<\/item>/gi)].slice(0, PER_SOURCE).map((m) => m[0])
   const out: Episode[] = []
-  blocks.forEach((block, i) => {
+  blocks.forEach((block) => {
     const title = decodeEntities(unwrapCdata(innerTag(block, 'title'))).trim()
     if (!title) return
     const pub = unwrapCdata(innerTag(block, 'pubDate')).trim()
     const parsed = pub ? new Date(pub) : null
     const publishedAt = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString()
     const link = unwrapCdata(innerTag(block, 'link')).trim() || attrOf(block, 'enclosure', 'url')
+    const guid = plainText(innerTag(block, 'guid'))
     const description = innerTag(block, 'description') || innerTag(block, 'content:encoded')
     const notes = plainText(description)
+    // Stable id from the feed's own identifiers (guid → link → title+date) rather
+    // than the item's position. The old positional index shifted every time a new
+    // episode published, which would re-point a saved summary at the wrong episode.
+    const identity = guid || link || `${title}|${publishedAt}`
     out.push({
-      id: `live-${podcastId}-${i}`,
+      id: `live-${podcastId}-${hashKey(identity)}`,
       podcastId,
       title,
       publishedAt,
