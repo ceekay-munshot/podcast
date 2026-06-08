@@ -47,7 +47,7 @@ const SCHEMA = {
     synthesis: {
       type: 'array',
       items: { type: 'string' },
-      description: '2-3 tight plain-text paragraphs capturing the core argument and why it matters. Emphasise at most ~3 SHORT key phrases (2-5 words each) by wrapping each in matched **double asterisks** — never bold whole sentences or clauses, and always pair every ** you open with a closing **.',
+      description: '3-4 substantive plain-text paragraphs that go beyond the headline. Lead with the central argument, then develop it with the SPECIFICS that make it credible — the concrete claims, real numbers, named companies/people, and the actual mechanism or causal chain behind each point. Capture the genuine tension or disagreement where speakers diverge (the bull case vs the bear case, what is contested, what is uncertain), and surface the non-obvious, second-order insight a sharp listener takes away — not the obvious summary anyone could write from the title. Avoid generic filler ("the market is maturing", "X is seeing significant growth"); every sentence must carry specific, episode-grounded content. Emphasise at most ~3 SHORT key phrases (2-5 words each) by wrapping each in matched **double asterisks** — never bold whole sentences or clauses, and always pair every ** you open with a closing **.',
     },
     takeaways: {
       type: 'array',
@@ -58,7 +58,7 @@ const SCHEMA = {
       type: 'array',
       items: { type: 'object', additionalProperties: false, properties: { q: { type: 'string' }, a: { type: 'string' } }, required: ['q', 'a'] },
       description:
-        'The 3-5 most useful questions this episode actually answers (as many as the material genuinely supports). Phrase each question as a complete, self-contained sentence that names its specific subject — someone who never heard the episode should understand exactly what is being asked (avoid vague stems like "What is the main focus?"). Each answer is a dense, self-explanatory paragraph of 2-4 full sentences that completely answers the question using the concrete specifics from the material — names, numbers, mechanisms, and the reasoning behind them — so it stands on its own without the audio. Draw every detail from the source; never pad or speculate to fill space.',
+        'COMPREHENSIVE coverage of the substantive questions this episode raises and answers — capture EVERY distinct one, not a fixed number. A dense 40-60 minute episode typically yields 6-12; include as many as the material genuinely supports, roughly in the order the episode addresses them, and never drop a real question to hit a target. Exclude only trivial banter, logistics, and ad reads. Phrase each question as a complete, self-contained sentence that names its specific subject — someone who never heard the episode should understand exactly what is being asked (avoid vague stems like "What is the main focus?"). Each answer is a dense, self-explanatory paragraph of 2-4 full sentences that completely answers the question using the concrete specifics from the material — names, numbers, mechanisms, and the reasoning behind them — so it stands on its own without the audio. Draw every detail from the source; never pad or speculate to fill space.',
     },
     moments: {
       type: 'array',
@@ -75,7 +75,7 @@ const SCHEMA = {
 }
 
 const SYSTEM_BASE =
-  'You are Munshot, an AI that writes sharp one-page intelligence summaries of podcast episodes for busy operators and investors. Produce the summary by calling the emit_summary tool/function. Rules:\n- Base everything ONLY on the provided material. Do NOT invent facts, quotes, names, or numbers.\n- synthesis: lead with the core argument. Emphasise only a FEW short key phrases (2-5 words each, at most ~3 per summary) by wrapping each in matched **double asterisks** — never bold whole sentences or clauses, and always close every ** you open.\n- Be concrete and non-obvious in takeaways.\n- qa: anticipate what a sharp operator would actually want to ask. Make every question specific and self-contained (it should read clearly on its own), and every answer thorough, concrete, and fully understandable without the audio — 2-4 real sentences that explain the "why" and the specifics, never one terse line, but never padded or invented either.'
+  'You are Munshot, an AI that writes sharp one-page intelligence summaries of podcast episodes for busy operators and investors. Produce the summary by calling the emit_summary tool/function. Rules:\n- Base everything ONLY on the provided material. Do NOT invent facts, quotes, names, or numbers.\n- synthesis: go deeper than the headline. Lead with the central argument, then develop it with the specifics that make it credible — concrete claims, real numbers, named companies/people, and the mechanism or causal chain behind each point. Capture the genuine tension or disagreement between speakers (the bull case vs the bear case, what is contested, what is still uncertain), and surface the non-obvious, second-order insight a sharp listener takes away — not a generic recap anyone could write from the title. Every sentence must carry specific, episode-grounded content; cut filler like "the market is maturing" or "X is seeing significant growth". Emphasise only a FEW short key phrases (2-5 words each, at most ~3 per summary) by wrapping each in matched **double asterisks** — never bold whole sentences or clauses, and always close every ** you open.\n- Be concrete and non-obvious in takeaways, each anchored to a specific detail from the material.\n- qa: be EXHAUSTIVE — capture every substantive question the episode actually raises and answers, in the order it addresses them, not a curated handful. Exclude only trivial banter, logistics, and ad reads. Make every question specific and self-contained (it should read clearly on its own), and every answer thorough, concrete, and fully understandable without the audio — 2-4 real sentences that explain the "why" and the specifics, never one terse line, but never padded or invented either.'
 
 const SYSTEM_TRANSCRIPT = `${SYSTEM_BASE}\n- You have the FULL transcript, annotated with [mm:ss] markers. Ground everything in what was actually said.\n- For "moments", pick ones from DIFFERENT parts of the episode — early, middle, and late, not all from the opening — and set each timestamp to the real [mm:ss] of the nearest marker. Never use 0:00.`
 const SYSTEM_NOTES = `${SYSTEM_BASE}\n- You only have the publisher's show-notes (not the audio). If they are thin or promotional, keep the summary brief and high-level rather than fabricating. Use "—" for moment timestamps.`
@@ -190,6 +190,9 @@ function buildTranscript(raw: RawSeg[], moments: InterestingMoment[]): { segment
   return { segments, moments: linked }
 }
 
+// Bump when the summary prompt/schema changes, so a warm worker (whose in-memory
+// cache can outlive a deploy) never serves a summary written by the previous prompt.
+const SUMMARY_REVISION = 2
 const cache = new Map<string, SummarizeResult>()
 
 export async function summarizeEpisode(input: SummarizeInput, config: SummarizeConfig): Promise<SummarizeResult> {
@@ -204,7 +207,7 @@ export async function summarizeEpisode(input: SummarizeInput, config: SummarizeC
   )
   const prompt = buildPrompt(input, transcript?.text ?? null)
 
-  const cacheKey = `${provider}:${model}:${transcript ? 't' : 'n'}::${input.title}`
+  const cacheKey = `${provider}:${model}:${transcript ? 't' : 'n'}:r${SUMMARY_REVISION}::${input.title}`
   const hit = cache.get(cacheKey)
   if (hit) return hit
 
@@ -235,7 +238,9 @@ async function viaOpenAI(prompt: { system: string; user: string }, apiKey: strin
     headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
       model,
-      max_completion_tokens: 4096,
+      // 8192 leaves room for richer synthesis + comprehensive Q&A. Keep it under
+      // ~16K: this is a non-streaming raw fetch, and larger outputs risk HTTP timeouts.
+      max_completion_tokens: 8192,
       messages: [
         { role: 'system', content: prompt.system },
         { role: 'user', content: prompt.user },
@@ -261,7 +266,8 @@ async function viaAnthropic(prompt: { system: string; user: string }, apiKey: st
     headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
     body: JSON.stringify({
       model,
-      max_tokens: 4096,
+      // Room for comprehensive Q&A; <~16K keeps this non-streaming request under HTTP timeouts.
+      max_tokens: 8192,
       system: prompt.system,
       tools: [{ name: 'emit_summary', description: 'Emit the structured one-page summary.', input_schema: SCHEMA }],
       tool_choice: { type: 'tool', name: 'emit_summary' },
