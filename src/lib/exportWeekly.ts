@@ -29,7 +29,8 @@ export function weeklyToWord(weekly: WeeklySummary, episodeById: ById<Episode>, 
         .join('')
     : ''
 
-  const interesting = `<div class="quote"><p class="ql">&ldquo;${esc(weekly.interesting.quote)}&rdquo;</p><p class="who">${esc(
+  const interestingTitle = weekly.interesting.title ? `<p class="qt">${esc(weekly.interesting.title)}</p>` : ''
+  const interesting = `<div class="quote">${interestingTitle}<p class="ql">${esc(weekly.interesting.quote)}</p><p class="who">${esc(
     weekly.interesting.speaker,
   )} <span class="role">${esc(weekly.interesting.role)}</span></p></div>`
 

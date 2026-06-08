@@ -728,6 +728,7 @@ export const WEEKLY: WeeklySummary = {
     { label: 'Semiconductors', momentum: 12 },
   ],
   interesting: {
+    title: 'Power, not chips, is the binding constraint',
     quote: `Forget the chips — you cannot pay your way to the front of an interconnection queue. The electrons don't care how much capital you've raised.`,
     speaker: 'Brian Janous',
     role: 'on Odd Lots',

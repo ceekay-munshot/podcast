@@ -120,8 +120,8 @@ export interface WeeklySummary {
   /** "This week in summary" prose. */
   overview: string[]
   topThemes: { label: string; momentum: number }[]
-  /** "What was actually interesting" pull-quote. */
-  interesting: { quote: string; speaker: string; role: string; episodeId: string }
+  /** "What was actually interesting" — a curated moment: a headline + the insight. */
+  interesting: { title: string; quote: string; speaker: string; role: string; episodeId: string }
   takeaways: Takeaway[]
   contradictions: string[]
   mentions: { people: string[]; companies: string[] }
