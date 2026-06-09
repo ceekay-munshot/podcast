@@ -166,13 +166,6 @@ export function TopBar() {
             )}
           </div>
 
-          {/* Account */}
-          <button className="press flex items-center gap-1.5 rounded-full pl-0.5 hover:opacity-80" aria-label="Account">
-            <span className="grid h-9 w-9 place-items-center rounded-full bg-primary-fixed text-[12px] font-bold text-on-primary-container">
-              CK
-            </span>
-            <Icon name="expand_more" size={18} className="text-outline" />
-          </button>
         </div>
       </div>
     </header>
