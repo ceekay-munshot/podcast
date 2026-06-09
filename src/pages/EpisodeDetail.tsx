@@ -791,14 +791,23 @@ function usePipelineProgress(idx: number, mode: PipeMode): number {
     if (mode === 'pending') return setP(0)
     if (reduce) return setP(Math.min(base + PIPELINE_SEG * 0.5, 0.985))
 
-    const start = performance.now()
     const id = setInterval(() => {
-      const t = (performance.now() - start) / 1000
-      // Trickle climbs asymptotically through ~90% of the current segment.
-      const target = Math.min(base + PIPELINE_SEG * (1 - Math.exp(-t / 5)) * 0.9, 0.985)
       setP((prev) => {
-        const next = prev + (target - prev) * 0.3
-        return next > target - 0.0005 ? target : next
+        // Ceiling sits just below the next node so the % never rounds to 100 while
+        // working, and the connector keeps its leading-edge glow (fill < 0.99).
+        const cap = Math.min(base + PIPELINE_SEG * 0.96, 0.99)
+        if (prev >= cap) return cap
+        // Quick sweep up to the stage we're on, snapping on at the end so we cross
+        // into the creep band (also re-runs when a step advances and `base` jumps).
+        if (prev < base) {
+          const next = prev + (base - prev) * 0.3
+          return next >= base - 0.004 ? base : next
+        }
+        // Within-stage creep: a shrinking-but-floored step toward the ceiling, so it
+        // slows as it climbs but never stops — a long stage keeps inching forward
+        // instead of parking at one number.
+        const step = Math.max((cap - prev) * 0.018, 0.0006) // ~0.3%/s floor near the top
+        return Math.min(prev + step, cap)
       })
     }, 200)
     return () => clearInterval(id)
