@@ -1,5 +1,6 @@
 import type { Episode } from '../src/lib/types'
 import { EPISODES } from '../src/lib/mock-data'
+import { isPublicHttpUrl, safeFetch } from './safeUrl'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Live feed fetching — runtime-agnostic (runs in the Vite dev middleware AND in
@@ -35,20 +36,21 @@ const SOURCES: Source[] = [
 const PER_SOURCE = 4 // recent episodes to surface per show
 
 // Stream only the head of a feed — items are newest-first, so the first ~800 KB
-// (or first 8 closed <item>s) covers the recent episodes without downloading
-// multi-megabyte archives.
-async function fetchFeedHead(url: string, maxBytes = 800_000, timeoutMs = 9000): Promise<string> {
+// (or first 8 closed <item>/<entry>s) covers the recent episodes without
+// downloading multi-megabyte archives. Goes through safeFetch so redirects are
+// followed manually and every hop is re-validated against the SSRF guard.
+export async function fetchFeedHead(url: string, maxBytes = 800_000, timeoutMs = 9000): Promise<string> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const res = await fetch(url, {
+    const res = await safeFetch(url, {
       signal: controller.signal,
       headers: {
         'user-agent': 'MunshotPodcasts/1.0 (+https://munshot.io)',
         accept: 'application/rss+xml, application/xml, text/xml, */*',
       },
     })
-    if (!res.ok || !res.body) return ''
+    if (!res || !res.ok || !res.body) return ''
     const reader = res.body.getReader()
     const decoder = new TextDecoder('utf-8')
     let text = ''
@@ -58,7 +60,7 @@ async function fetchFeedHead(url: string, maxBytes = 800_000, timeoutMs = 9000):
       if (done) break
       received += value.byteLength
       text += decoder.decode(value, { stream: true })
-      if (received >= maxBytes || (text.match(/<\/item>/gi)?.length ?? 0) >= 8) {
+      if (received >= maxBytes || (text.match(/<\/(?:item|entry)>/gi)?.length ?? 0) >= 8) {
         await reader.cancel().catch(() => {})
         break
       }
@@ -71,12 +73,12 @@ async function fetchFeedHead(url: string, maxBytes = 800_000, timeoutMs = 9000):
   }
 }
 
-function innerTag(block: string, name: string): string {
+export function innerTag(block: string, name: string): string {
   const m = block.match(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, 'i'))
   return m ? m[1] : ''
 }
 
-function attrOf(block: string, tag: string, attr: string): string {
+export function attrOf(block: string, tag: string, attr: string): string {
   const m = block.match(new RegExp(`<${tag}\\b[^>]*\\b${attr}\\s*=\\s*["']([^"']*)["']`, 'i'))
   return m ? m[1] : ''
 }
@@ -88,14 +90,14 @@ function transcriptUrlFrom(block: string): string {
   const urlOf = (tag: string) => (tag.match(/\burl\s*=\s*["']([^"']+)["']/i)?.[1] || '').replace(/&amp;/g, '&')
   const srt = tags.find((t) => /application\/srt|format=SubRip/i.test(t))
   const vtt = tags.find((t) => /text\/vtt|format=WebVTT/i.test(t))
-  return urlOf(srt || vtt || tags[0])
+  return urlOf(srt || vtt || tags[0] || '')
 }
 
-function unwrapCdata(s: string): string {
+export function unwrapCdata(s: string): string {
   return s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').trim()
 }
 
-function decodeEntities(s: string): string {
+export function decodeEntities(s: string): string {
   return s
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
@@ -107,7 +109,7 @@ function decodeEntities(s: string): string {
     .replace(/&nbsp;/g, ' ')
 }
 
-function plainText(s: string): string {
+export function plainText(s: string): string {
   return decodeEntities(unwrapCdata(s).replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim()
 }
 
@@ -134,7 +136,7 @@ function mockFor(podcastId: string): Episode[] {
 
 // Tiny, dependency-free, stable string hash → short base36 token. Used to build a
 // stable episode id from the feed's own identifiers, so it survives reordering.
-function hashKey(s: string): string {
+export function hashKey(s: string): string {
   let h = 5381
   for (let i = 0; i < s.length; i++) h = (Math.imul(h, 33) + s.charCodeAt(i)) | 0
   return (h >>> 0).toString(36)
@@ -176,12 +178,59 @@ function parseEpisodes(xml: string, podcastId: string): Episode[] {
   return out
 }
 
+// YouTube channel feeds are Atom (<entry>), not RSS (<item>). Map each entry to
+// the app's Episode shape. No audio enclosure / transcript / duration exists in
+// a YouTube feed, so those stay undefined and durationSec is 0.
+export function parseAtomEntries(xml: string, podcastId: string): Episode[] {
+  const blocks = [...xml.matchAll(/<entry\b[\s\S]*?<\/entry>/gi)].slice(0, PER_SOURCE).map((m) => m[0])
+  const out: Episode[] = []
+  blocks.forEach((block) => {
+    const title = decodeEntities(unwrapCdata(innerTag(block, 'title'))).trim()
+    if (!title) return
+    const pub = unwrapCdata(innerTag(block, 'published')).trim() || unwrapCdata(innerTag(block, 'updated')).trim()
+    const parsed = pub ? new Date(pub) : null
+    const publishedAt = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString()
+    const link = (block.match(/<link\b[^>]*\brel=["']alternate["'][^>]*\bhref=["']([^"']+)["']/i)?.[1] || attrOf(block, 'link', 'href')).trim()
+    const videoId = plainText(innerTag(block, 'yt:videoId')) || plainText(innerTag(block, 'id'))
+    const notes = plainText(innerTag(block, 'media:description'))
+    const identity = videoId || link || `${title}|${publishedAt}`
+    out.push({
+      id: `live-${podcastId}-${hashKey(identity)}`,
+      podcastId,
+      title,
+      publishedAt,
+      durationSec: 0,
+      status: 'detected',
+      signal: 'normal',
+      blurb: truncate(notes, 200) || 'New video — open the source to watch.',
+      sourceUrl: link || undefined,
+      notes: notes ? notes.slice(0, 2500) : undefined,
+      entities: { people: [], companies: [], themes: [] },
+    })
+  })
+  return out
+}
+
+// Recent episodes for a SINGLE feed URL — the dynamic path used by user-added
+// podcasts (and reused by the seed shows below). Validates the URL against the
+// SSRF guard, picks the parser by sniffing RSS (<item>) vs Atom (<entry>), and
+// returns the parsed episodes or []. NEVER falls back to mock data: a user feed
+// that errors must show an empty list, not someone else's seeded content.
+export async function episodesForFeed(feedUrl: string, podcastId: string): Promise<Episode[]> {
+  if (!isPublicHttpUrl(feedUrl)) return []
+  const xml = await fetchFeedHead(feedUrl)
+  if (!xml) return []
+  const isAtom = /<entry[\s>]/i.test(xml) && !/<item[\s>]/i.test(xml)
+  return isAtom ? parseAtomEntries(xml, podcastId) : parseEpisodes(xml, podcastId)
+}
+
 async function episodesForSource(src: Source): Promise<Episode[]> {
   // No public feed → locked show. Never serve its seed episodes: a fabricated
   // summary/transcript must not reach users. The UI renders it as a locked show.
   if (!src.feedUrl) return []
-  const xml = await fetchFeedHead(src.feedUrl)
-  const episodes = parseEpisodes(xml, src.id)
+  const episodes = await episodesForFeed(src.feedUrl, src.id)
+  // Seed shows may fall back to their seeded episodes if a live fetch comes back
+  // empty (transient feed error) — this is the ONLY place that fallback lives.
   return episodes.length ? episodes : mockFor(src.id)
 }
 

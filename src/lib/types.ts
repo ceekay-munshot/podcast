@@ -31,10 +31,27 @@ export interface Podcast {
   monogram: string
   /** Real cover art (square). When absent, the UI falls back to color + monogram. */
   artworkUrl?: string
+  /** Canonical RSS/Atom feed. Set for user-added shows (carried from search so
+   *  their episodes can be detected); seed shows keep their feeds server-side. */
+  feedUrl?: string
   tracked: boolean
   /** No public feed → episodes can't be ingested or transcribed. Rendered as a
    *  locked show; its episodes are suppressed so users never see fabricated data. */
   locked?: boolean
+}
+
+/** A directory search hit (Apple Podcasts / resolved RSS / YouTube channel).
+ *  Mirrors the server's `PodcastSearchResult` (server/search.ts) — the wire shape
+ *  the /api/search-podcasts endpoint returns. */
+export interface PodcastSearchResult {
+  id: string
+  title: string
+  author: string
+  category: string
+  description: string
+  artworkUrl?: string
+  feedUrl: string
+  source: SourceKind
 }
 
 export interface Takeaway {
