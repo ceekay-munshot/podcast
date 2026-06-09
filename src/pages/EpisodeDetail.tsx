@@ -59,12 +59,16 @@ export default function EpisodeDetail() {
     return () => clearTimeout(t)
   }, [tab, jumpTo, jumpTick])
 
-  // When a real (un-summarized) episode is opened, generate its AI summary from
-  // the show-notes. Idempotent — AppData dedupes in-flight requests per id.
+  // When an episode is opened, kick AppData's summarizeEpisode, which either
+  // generates the summary (a new episode) or hydrates the transcript (a SHARED
+  // episode whose summary arrived via the feed overlay without its transcript —
+  // the store hit costs no LLM/transcription). Idempotent — AppData dedupes per id.
   useEffect(() => {
-    if (episode && !episode.summary && episode.notes && episode.status !== 'failed') {
-      summarizeEpisode(episode, podcast)
-    }
+    if (!episode || episode.status === 'failed') return
+    const needsWork =
+      (!episode.summary && !!episode.notes) ||
+      (!!episode.summary && !episode.transcript?.length && !!(episode.transcriptUrl || episode.audioUrl))
+    if (needsWork) summarizeEpisode(episode, podcast)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [episode?.id])
 

@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react'
 import path from 'node:path'
 import { getLiveEpisodes } from './server/feeds'
 import { summarizeEpisode } from './server/summarize'
+import { fileSummaryStore } from './server/summaryStore.node'
 
 function json(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status
@@ -24,13 +25,24 @@ function readBody(req: Connect.IncomingMessage): Promise<string> {
 // Serves the live-feed + summary API during `vite dev` / preview, mirroring the
 // Cloudflare Pages Functions (functions/api/*) used in production. Both call the
 // same shared server/* modules, so local and prod behave identically.
-function liveApiPlugin(config: { openaiKey?: string; anthropicKey?: string; model?: string }): Plugin {
+function liveApiPlugin(config: {
+  openaiKey?: string
+  anthropicKey?: string
+  model?: string
+  deepgramKey?: string
+  deepgramModel?: string
+  groqKey?: string
+}): Plugin {
+  // Shared summary store for dev: a filesystem mirror of the prod KV namespace, so
+  // a summary generated once is reused across reloads and across every browser that
+  // hits this dev server — exactly like the deployed app.
+  const store = fileSummaryStore(path.resolve(process.cwd(), '.cache/summaries'))
   return {
     name: 'munshot-live-api',
     configureServer(server) {
       server.middlewares.use('/api/episodes', async (_req, res) => {
         try {
-          json(res, 200, await getLiveEpisodes())
+          json(res, 200, await getLiveEpisodes(store))
         } catch {
           json(res, 200, [])
         }
@@ -41,7 +53,7 @@ function liveApiPlugin(config: { openaiKey?: string; anthropicKey?: string; mode
         if (!config.openaiKey && !config.anthropicKey) return json(res, 503, { error: 'no_api_key' })
         try {
           const input = JSON.parse((await readBody(req)) || '{}')
-          json(res, 200, await summarizeEpisode(input, config))
+          json(res, 200, await summarizeEpisode(input, { ...config, store }))
         } catch (e) {
           json(res, 502, { error: 'summarize_failed', detail: String(e).slice(0, 200) })
         }

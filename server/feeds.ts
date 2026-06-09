@@ -1,5 +1,6 @@
 import type { Episode } from '../src/lib/types'
 import { EPISODES } from '../src/lib/mock-data'
+import { sharedSummaryKey, type SummaryStore } from './summaryStore'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Live feed fetching — runtime-agnostic (runs in the Vite dev middleware AND in
@@ -186,9 +187,27 @@ async function episodesForSource(src: Source): Promise<Episode[]> {
 }
 
 // All shows' recent episodes, newest first. Never throws — each source degrades
-// to its seeded episodes independently.
-export async function getLiveEpisodes(): Promise<Episode[]> {
+// to its seeded episodes independently. When a shared summary store is provided,
+// episodes already processed by ANY user are overlaid as READY (with their tone),
+// so the dashboard reflects shared state for everyone.
+export async function getLiveEpisodes(store?: SummaryStore): Promise<Episode[]> {
   const settled = await Promise.allSettled(SOURCES.map(episodesForSource))
   const episodes = settled.flatMap((r, i) => (r.status === 'fulfilled' ? r.value : mockFor(SOURCES[i].id)))
+
+  // Overlay summaries already in the shared store. Summary only — the bulky
+  // transcript is lazy-loaded on the detail page from the same store (a store hit
+  // there costs no LLM/transcription), keeping this hot list response lean.
+  if (store) {
+    await Promise.all(
+      episodes.map(async (e) => {
+        const hit = await store.get(sharedSummaryKey(e.id)).catch(() => null)
+        if (hit?.summary) {
+          e.status = 'ready'
+          e.summary = hit.summary
+        }
+      }),
+    )
+  }
+
   return episodes.sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt))
 }

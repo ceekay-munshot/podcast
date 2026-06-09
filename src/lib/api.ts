@@ -61,6 +61,7 @@ export class NoApiKeyError extends Error {}
 // Transcript tab can render the real thing. Throws NoApiKeyError when the server
 // has no LLM key set, so the UI can show a "connect a key" hint.
 export async function generateSummary(input: {
+  id?: string // stable episode id → the shared cache key (so all users reuse the result)
   title: string
   show: string
   notes?: string

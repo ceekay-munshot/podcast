@@ -1,5 +1,6 @@
 import type { EpisodeTone, InterestingMoment, Summary, TranscriptSegment } from '../src/lib/types'
 import { transcribeEpisode } from './transcribe'
+import { SUMMARY_REVISION, sharedSummaryKey, type SummaryStore } from './summaryStore'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AI summarization — runtime-agnostic (Vite dev middleware + Cloudflare Pages
@@ -11,6 +12,9 @@ import { transcribeEpisode } from './transcribe'
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface SummarizeInput {
+  /** Stable episode id — the shared cache key. When present, the result is reused
+   *  across all users; when absent (e.g. the weekly roundup) the work is not shared. */
+  id?: string
   title: string
   show: string
   notes?: string
@@ -27,6 +31,9 @@ export interface SummarizeConfig {
   deepgramKey?: string // URL-based, handles long episodes
   deepgramModel?: string
   groqKey?: string // free-tier Whisper (short episodes)
+  /** Shared, persistent summary store (KV in prod, filesystem in dev). When set,
+   *  a processed summary is reused across all users instead of recomputed. */
+  store?: SummaryStore
 }
 
 /** What /api/summary returns: the one-page summary PLUS the full transcript it was
@@ -242,15 +249,26 @@ function buildTranscript(raw: RawSeg[], moments: InterestingMoment[]): { segment
   return { segments, moments: linked }
 }
 
-// Bump when the summary prompt/schema changes, so a warm worker (whose in-memory
-// cache can outlive a deploy) never serves a summary written by the previous prompt.
-const SUMMARY_REVISION = 4
+// In-memory L1 cache: a within-process fast path (warm worker / dev server). The
+// shared store below is the cross-user, cross-instance L2. SUMMARY_REVISION lives
+// in summaryStore.ts now (it keys both caches).
 const cache = new Map<string, SummarizeResult>()
 
 export async function summarizeEpisode(input: SummarizeInput, config: SummarizeConfig): Promise<SummarizeResult> {
   const provider = config.openaiKey ? 'openai' : config.anthropicKey ? 'anthropic' : null
   if (!provider) throw new Error('no_api_key')
   const model = config.model || (provider === 'openai' ? DEFAULT_OPENAI_MODEL : DEFAULT_ANTHROPIC_MODEL)
+
+  // Shared, persistent cache (KV in prod, filesystem in dev), keyed by the stable
+  // episode id: the FIRST user to open an episode pays the transcription + LLM
+  // cost, and every user after — across browsers and worker instances — reuses
+  // it. Checked before transcription so a hit skips that cost too. Only engaged
+  // when an id is supplied; the weekly roundup posts no id and is never shared.
+  const sharedKey = input.id ? sharedSummaryKey(input.id) : null
+  if (sharedKey && config.store) {
+    const shared = await config.store.get(sharedKey)
+    if (shared) return shared
+  }
 
   // Best available source: real transcript (provider chain) > show-notes.
   const transcript = await transcribeEpisode(
@@ -280,6 +298,9 @@ export async function summarizeEpisode(input: SummarizeInput, config: SummarizeC
 
   if (cache.size > 300) cache.clear()
   cache.set(cacheKey, result)
+  // Persist to the shared store so other users / worker instances reuse this work
+  // instead of paying for it again (best-effort; never blocks the response).
+  if (sharedKey && config.store) await config.store.put(sharedKey, result)
   return result
 }
 
