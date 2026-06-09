@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Local dev summary cache (filesystem mirror of the prod KV namespace)
+.cache
+
 # Local env / secrets — never commit API keys
 .env
 .env.*

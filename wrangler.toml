@@ -1,0 +1,22 @@
+# Cloudflare Pages configuration.
+#
+# The SUMMARIES KV namespace is the shared, persistent summary cache: once any
+# user processes an episode, the result is stored here and reused by every other
+# user (no repeat transcription / LLM calls). The /api/summary and /api/episodes
+# Functions read it as `env.SUMMARIES`.
+#
+# One-time setup (creates the namespace and prints its id):
+#   npx wrangler kv namespace create SUMMARIES
+# Paste the printed id below, then deploy. If you deploy via the Pages dashboard
+# (Git integration) instead of `wrangler pages deploy`, you can alternatively bind
+# it under: Settings → Functions → KV namespace bindings → variable `SUMMARIES`.
+#
+# Local `vite dev` does NOT use KV — it uses a filesystem store under .cache/ —
+# so no binding is needed for local development.
+
+name = "munshot-podcasts"
+pages_build_output_dir = "dist"
+
+[[kv_namespaces]]
+binding = "SUMMARIES"
+id = "" # ← paste the id from `wrangler kv namespace create SUMMARIES`

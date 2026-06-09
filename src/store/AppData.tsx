@@ -106,15 +106,29 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const summarizeEpisode = useCallback(async (episode: Episode, podcast?: Podcast) => {
-    // Skip only if already summarized/in-flight, or there's nothing to work from.
+    // Two jobs, one path — both reuse /api/summary (on a shared-store hit the
+    // server returns the full result with no LLM/transcription cost):
+    //  • generate — a new episode with no summary yet, or
+    //  • hydrate  — a SHARED episode whose summary arrived via the feed overlay but
+    //    whose (bulky) transcript wasn't included; fetch it now from the store.
+    const needsSummary = !episode.summary
+    const needsTranscript = !!episode.summary && !episode.transcript?.length && !!(episode.transcriptUrl || episode.audioUrl)
     // audioUrl counts: Groq/Deepgram can transcribe it even with no notes or feed transcript.
-    if (episode.summary || (!episode.notes && !episode.transcriptUrl && !episode.audioUrl) || summarizing.current.has(episode.id)) return
+    if (
+      (!needsSummary && !needsTranscript) ||
+      (!episode.notes && !episode.transcriptUrl && !episode.audioUrl) ||
+      summarizing.current.has(episode.id)
+    )
+      return
     summarizing.current.add(episode.id)
     const setStatus = (status: Episode['status'], patch?: Partial<Episode>) =>
       setEpisodes((prev) => prev.map((e) => (e.id === episode.id ? { ...e, status, ...(patch ?? {}) } : e)))
-    setStatus('summarizing')
+    // Only show the processing pipeline when actually generating; a transcript
+    // hydrate happens quietly so an already-READY shared episode never flickers.
+    if (needsSummary) setStatus('summarizing')
     try {
       const { summary, transcript } = await api.generateSummary({
+        id: episode.id, // the shared cache key — lets every user reuse this work
         title: episode.title,
         show: podcast?.title ?? '',
         notes: episode.notes,
@@ -129,10 +143,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       if (err instanceof api.NoApiKeyError) {
         setNeedsApiKey(true)
-        setStatus('detected') // not a real failure — just no key configured yet
-      } else {
+        if (needsSummary) setStatus('detected') // not a real failure — just no key configured yet
+      } else if (needsSummary) {
         setStatus('failed')
       }
+      // A hydrate failure leaves the existing summary intact (status stays 'ready').
     } finally {
       summarizing.current.delete(episode.id)
     }
