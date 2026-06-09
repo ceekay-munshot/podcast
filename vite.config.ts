@@ -3,7 +3,8 @@ import type { Connect, Plugin } from 'vite'
 import type { ServerResponse } from 'node:http'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
-import { getLiveEpisodes } from './server/feeds'
+import { episodesForFeed, getLiveEpisodes } from './server/feeds'
+import { searchPodcasts } from './server/search'
 import { summarizeEpisode } from './server/summarize'
 import { fileSummaryStore } from './server/summaryStore.node'
 
@@ -40,9 +41,22 @@ function liveApiPlugin(config: {
   return {
     name: 'munshot-live-api',
     configureServer(server) {
-      server.middlewares.use('/api/episodes', async (_req, res) => {
+      server.middlewares.use('/api/episodes', async (req, res) => {
         try {
-          json(res, 200, await getLiveEpisodes(store))
+          // req.url is the remainder after the mount prefix; base it to read query params.
+          const params = new URL(req.url ?? '', 'http://localhost').searchParams
+          const feed = params.get('feed')
+          const id = params.get('id')
+          json(res, 200, feed && id ? await episodesForFeed(feed, id) : await getLiveEpisodes(store))
+        } catch {
+          json(res, 200, [])
+        }
+      })
+
+      server.middlewares.use('/api/search-podcasts', async (req, res) => {
+        try {
+          const q = new URL(req.url ?? '', 'http://localhost').searchParams.get('q') ?? ''
+          json(res, 200, await searchPodcasts(q))
         } catch {
           json(res, 200, [])
         }

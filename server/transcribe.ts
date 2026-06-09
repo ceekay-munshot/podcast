@@ -127,7 +127,7 @@ async function fetchCaptions(url: string, maxBytes = 1_500_000, timeoutMs = 12_0
 // (long-episode chunking comes with the background-job upgrade).
 const MAX_AUDIO_BYTES = 24 * 1024 * 1024
 
-async function fetchAudioCapped(url: string, maxBytes: number, timeoutMs = 25_000): Promise<Uint8Array | null> {
+async function fetchAudioCapped(url: string, maxBytes: number, timeoutMs = 25_000): Promise<Uint8Array<ArrayBuffer> | null> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -148,7 +148,7 @@ async function fetchAudioCapped(url: string, maxBytes: number, timeoutMs = 25_00
       }
       chunks.push(value)
     }
-    const out = new Uint8Array(total)
+    const out: Uint8Array<ArrayBuffer> = new Uint8Array(total)
     let offset = 0
     for (const c of chunks) {
       out.set(c, offset)

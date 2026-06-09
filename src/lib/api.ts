@@ -1,4 +1,4 @@
-import type { Episode, Podcast, Summary, TranscriptSegment, WeeklySummary } from './types'
+import type { Episode, Podcast, PodcastSearchResult, Summary, TranscriptSegment, WeeklySummary } from './types'
 import { EPISODES, PODCASTS, WEEKLY } from './mock-data'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -90,11 +90,26 @@ export function unsubscribeWeekly(email: string): Promise<{ subscribed: boolean;
   return delay({ subscribed: false, email })
 }
 
-export interface TrackSourceInput {
-  query: string // podcast name, RSS, or YouTube URL
+// Search a real podcast directory (Apple/iTunes — keyless), or resolve a pasted
+// RSS / Apple-show / YouTube-channel URL, via /api/search-podcasts (Vite
+// middleware in dev, Cloudflare Pages Function in prod). Returns [] for an empty
+// query or any failure. Pass an AbortSignal to cancel a superseded keystroke —
+// AbortError is re-thrown so the caller can ignore it rather than clobber state.
+export function searchPodcasts(query: string, signal?: AbortSignal): Promise<PodcastSearchResult[]> {
+  const q = query.trim()
+  if (!q) return Promise.resolve([])
+  return fetch(`/api/search-podcasts?q=${encodeURIComponent(q)}`, { signal })
+    .then((r) => (r.ok ? (r.json() as Promise<PodcastSearchResult[]>) : []))
+    .catch((err) => {
+      if ((err as { name?: string })?.name === 'AbortError') throw err
+      return []
+    })
 }
 
-export function addSource(input: TrackSourceInput): Promise<{ accepted: boolean; query: string }> {
-  // SEAM: POST /api/sources  → server resolves the feed and starts detection
-  return delay({ accepted: true, query: input.query })
+// Recent episodes for a single user-added feed. The server validates the URL
+// (SSRF guard) and parses RSS or YouTube/Atom. Returns [] on any failure.
+export function fetchFeedEpisodes(feedUrl: string, podcastId: string): Promise<Episode[]> {
+  return fetch(`/api/episodes?feed=${encodeURIComponent(feedUrl)}&id=${encodeURIComponent(podcastId)}`)
+    .then((r) => (r.ok ? (r.json() as Promise<Episode[]>) : []))
+    .catch(() => [])
 }
