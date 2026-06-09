@@ -67,10 +67,15 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react(), liveApiPlugin(summaryConfig)],
-    // Honor the PORT assigned by the preview harness (falls back to Vite default).
+    // Bind on all interfaces and honor the PORT assigned by the preview harness so
+    // the hosted preview can reach the dev server (it proxies in from beyond
+    // loopback). allowedHosts lets the proxied preview hostname through Vite's
+    // host-header check instead of being rejected as a "blocked request".
     server: {
+      host: true,
       port: Number(process.env.PORT) || 5173,
       strictPort: false,
+      allowedHosts: true,
     },
     resolve: {
       alias: {
