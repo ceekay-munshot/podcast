@@ -55,8 +55,8 @@ function liveApiPlugin(config: {
 
       server.middlewares.use('/api/search-podcasts', async (req, res) => {
         try {
-          const q = new URL(req.url ?? '', 'http://localhost').searchParams.get('q') ?? ''
-          json(res, 200, await searchPodcasts(q))
+          const params = new URL(req.url ?? '', 'http://localhost').searchParams
+          json(res, 200, await searchPodcasts(params.get('q') ?? '', Number(params.get('limit')) || undefined))
         } catch {
           json(res, 200, [])
         }

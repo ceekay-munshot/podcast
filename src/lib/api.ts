@@ -95,10 +95,10 @@ export function unsubscribeWeekly(email: string): Promise<{ subscribed: boolean;
 // middleware in dev, Cloudflare Pages Function in prod). Returns [] for an empty
 // query or any failure. Pass an AbortSignal to cancel a superseded keystroke —
 // AbortError is re-thrown so the caller can ignore it rather than clobber state.
-export function searchPodcasts(query: string, signal?: AbortSignal): Promise<PodcastSearchResult[]> {
+export function searchPodcasts(query: string, signal?: AbortSignal, limit?: number): Promise<PodcastSearchResult[]> {
   const q = query.trim()
   if (!q) return Promise.resolve([])
-  return fetch(`/api/search-podcasts?q=${encodeURIComponent(q)}`, { signal })
+  return fetch(`/api/search-podcasts?q=${encodeURIComponent(q)}${limit ? `&limit=${limit}` : ''}`, { signal })
     .then((r) => (r.ok ? (r.json() as Promise<PodcastSearchResult[]>) : []))
     .catch((err) => {
       if ((err as { name?: string })?.name === 'AbortError') throw err

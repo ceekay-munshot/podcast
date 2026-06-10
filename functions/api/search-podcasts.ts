@@ -5,9 +5,10 @@ import { searchPodcasts } from '../../server/search'
 // Plain-text searches are edge-cacheable; a URL query is per-user → no-store.
 export const onRequestGet = async (context: { request: Request }): Promise<Response> => {
   try {
-    const q = (new URL(context.request.url).searchParams.get('q') ?? '').trim()
+    const params = new URL(context.request.url).searchParams
+    const q = (params.get('q') ?? '').trim()
     const isUrl = /^https?:\/\//i.test(q)
-    return new Response(JSON.stringify(await searchPodcasts(q)), {
+    return new Response(JSON.stringify(await searchPodcasts(q, Number(params.get('limit')) || undefined)), {
       headers: {
         'content-type': 'application/json',
         'cache-control': isUrl ? 'no-store' : 'public, max-age=300, s-maxage=900',

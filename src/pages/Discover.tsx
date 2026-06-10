@@ -91,32 +91,34 @@ export default function Discover() {
     setJustAdded(r.title)
   }
 
-  // ── Related suggestions — directory shows in the categories the user picked ──
-  // The two dominant categories across the selection drive one directory query
-  // each (cached per category, so toggling shows never refetches); results are
-  // interleaved, then deduped at render time against the catalog and the
-  // selection so a pick instantly drops out of "More like your picks".
-  const catKey = useMemo(() => {
+  // ── Suggestions — one pool the user can page through "infinitely" ───────────
+  // Untracked catalog shows first (category-overlap ranked), then directory
+  // results for the categories the user picked. "See more" pages through the
+  // pool and, once it runs dry, queries the next categories (cached per
+  // category, so toggling shows never refetches). Everything dedupes at render
+  // time against the catalog + selection, so a pick instantly drops out.
+  const allCats = useMemo(() => {
     const counts = new Map<string, number>()
     for (const p of tracked)
       for (const c of p.category.split('·').map((s) => s.trim()).filter(Boolean)) counts.set(c, (counts.get(c) ?? 0) + 1)
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 2)
-      .map(([c]) => c)
-      .join('|')
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c)
   }, [tracked.map((p) => p.id).join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [catCount, setCatCount] = useState(2) // categories queried so far
+  const [visible, setVisible] = useState(6) // suggestion cards shown
+  const queryCats = allCats.slice(0, catCount)
+  const queryKey = queryCats.join('|')
 
   const relCache = useRef(new Map<string, PodcastSearchResult[]>())
   const [relatedRaw, setRelatedRaw] = useState<PodcastSearchResult[]>([])
   const [relatedLoading, setRelatedLoading] = useState(false)
 
   useEffect(() => {
-    if (!catKey) {
+    if (!queryKey) {
       setRelatedRaw([])
       return
     }
-    const cats = catKey.split('|')
+    const cats = queryKey.split('|')
     const controller = new AbortController()
     const allCached = cats.every((c) => relCache.current.has(c))
     if (!allCached) setRelatedLoading(true)
@@ -124,7 +126,7 @@ export default function Discover() {
       cats.map(
         (c) =>
           relCache.current.get(c) ??
-          searchPodcasts(c, controller.signal)
+          searchPodcasts(c, controller.signal, 50)
             .then((r) => {
               relCache.current.set(c, r)
               return r
@@ -134,30 +136,44 @@ export default function Discover() {
     ).then((lists) => {
       // Round-robin interleave so every picked category is represented up top.
       const merged: PodcastSearchResult[] = []
-      for (let i = 0; merged.length < 24 && lists.some((l) => i < l.length); i++)
-        for (const l of lists) if (l[i]) merged.push(l[i])
+      for (let i = 0; lists.some((l) => i < l.length); i++) for (const l of lists) if (l[i]) merged.push(l[i])
       setRelatedRaw(merged)
       setRelatedLoading(false)
     })
     return () => controller.abort()
-  }, [catKey])
+  }, [queryKey])
 
-  const related = useMemo(() => {
-    const seen = new Set<string>()
-    const catalogIds = new Set(podcasts.map((p) => p.id))
-    const catalogFeeds = new Set(podcasts.map((p) => trimFeed(p.feedUrl)).filter(Boolean))
-    return relatedRaw
-      .filter((r) => {
-        const feed = trimFeed(r.feedUrl)
-        if (catalogIds.has(r.id) || (feed && catalogFeeds.has(feed)) || isTracked(r)) return false
-        const key = feed || r.id
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
-      .slice(0, 6)
+  type Suggestion = { key: string; podcast: Podcast; add: () => void }
+  const suggestions = useMemo<Suggestion[]>(() => {
+    const pickCats = new Set(allCats)
+    const overlap = (p: Podcast) => p.category.split('·').map((s) => s.trim()).filter((c) => pickCats.has(c)).length
+    // Curated catalog shows the user hasn't picked (locked ones can't be tracked).
+    const seeds: Suggestion[] = podcasts
+      .filter((p) => !p.tracked && !p.locked)
+      .sort((a, b) => overlap(b) - overlap(a))
+      .map((p) => ({ key: p.id, podcast: p, add: () => toggleTracked(p.id) }))
+    const seenIds = new Set(podcasts.map((p) => p.id))
+    const seenFeeds = new Set(podcasts.map((p) => trimFeed(p.feedUrl)).filter(Boolean))
+    const dir: Suggestion[] = []
+    for (const r of relatedRaw) {
+      const feed = trimFeed(r.feedUrl)
+      if (seenIds.has(r.id) || (feed && seenFeeds.has(feed)) || isTracked(r)) continue
+      seenIds.add(r.id)
+      if (feed) seenFeeds.add(feed)
+      dir.push({ key: r.id, podcast: { ...toPodcast(r), tracked: false }, add: () => onAdd(r) })
+    }
+    return [...seeds, ...dir]
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [relatedRaw, podcasts])
+  }, [podcasts, relatedRaw, allCats])
+
+  // Page through the pool; when it runs dry, pull the next categories from the
+  // directory so there's always more to choose from.
+  const morePoolLeft = suggestions.length > visible
+  const moreCatsLeft = catCount < allCats.length
+  function onSeeMore() {
+    setVisible((v) => v + 8)
+    if (visible + 8 >= suggestions.length && moreCatsLeft) setCatCount((c) => c + 2)
+  }
 
   return (
     // The fixed dock must NOT live inside the entrance animation: `fade-up`'s
@@ -234,32 +250,43 @@ export default function Discover() {
             </div>
           )}
 
-          {/* Related to the current selection */}
-          {tracked.length > 0 && (relatedLoading || related.length > 0) && (
+          {/* Suggestions — already-picked shows never appear here; remove them
+              from the rail on the right instead. */}
+          {(suggestions.length > 0 || relatedLoading) && (
             <div className="mt-xl">
-              <h3 className="text-[19px] font-semibold text-on-surface">More like your picks</h3>
+              <h3 className="text-[19px] font-semibold text-on-surface">
+                {tracked.length ? 'More like your picks' : 'Suggested shows'}
+              </h3>
               <p className="mb-md mt-0.5 text-metadata text-secondary">
-                From the directory, based on the categories you follow{catKey ? ` — ${catKey.split('|').join(', ')}` : ''}.
+                {tracked.length && queryCats.length
+                  ? `From the directory, based on the categories you follow — ${queryCats.join(', ')}.`
+                  : 'A few strong starting points — or search above.'}
               </p>
-              {relatedLoading && related.length === 0 ? (
+              {relatedLoading && suggestions.length === 0 ? (
                 <CardSkeletons />
               ) : (
                 <div className="grid grid-cols-1 gap-gutter md:grid-cols-2">
-                  {related.map((r) => (
-                    <PodcastCard key={r.id} podcast={{ ...toPodcast(r), tracked: false }} onToggle={() => onAdd(r)} />
+                  {suggestions.slice(0, visible).map((s) => (
+                    <PodcastCard key={s.key} podcast={s.podcast} onToggle={s.add} />
                   ))}
                 </div>
               )}
+              {(morePoolLeft || moreCatsLeft || relatedLoading) && (
+                <button
+                  onClick={onSeeMore}
+                  disabled={relatedLoading && !morePoolLeft}
+                  className="press mx-auto mt-md flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-lg py-2.5 text-metadata font-semibold text-on-surface hover:bg-surface-container-low disabled:opacity-60"
+                >
+                  {relatedLoading && !morePoolLeft ? (
+                    <Icon name="progress_activity" size={17} className="animate-spin" />
+                  ) : (
+                    <Icon name="expand_more" size={18} />
+                  )}
+                  See more
+                </button>
+              )}
             </div>
           )}
-
-          {/* Popular */}
-          <h3 className="mb-md mt-xl text-[19px] font-semibold text-on-surface">Popular Right Now</h3>
-          <div className="grid grid-cols-1 gap-gutter md:grid-cols-2">
-            {podcasts.map((p) => (
-              <PodcastCard key={p.id} podcast={p} onToggle={() => toggleTracked(p.id)} />
-            ))}
-          </div>
         </div>
 
         {/* ── Selection rail (desktop) ──────────────────────────────────────── */}

@@ -30,6 +30,7 @@ export interface PodcastSearchResult {
 
 const UA = 'MunshotPodcasts/1.0 (+https://munshot.io)'
 const LIMIT = 12
+const LIMIT_MAX = 50
 
 // Server-local — do NOT import the UI helper from src/lib/source.ts.
 function isYouTubeHost(hostname: string): boolean {
@@ -89,8 +90,8 @@ async function itunesResults(url: string): Promise<PodcastSearchResult[]> {
   }
 }
 
-const searchItunes = (term: string) =>
-  itunesResults(`https://itunes.apple.com/search?media=podcast&entity=podcast&limit=${LIMIT}&term=${encodeURIComponent(term)}`)
+const searchItunes = (term: string, limit = LIMIT) =>
+  itunesResults(`https://itunes.apple.com/search?media=podcast&entity=podcast&limit=${limit}&term=${encodeURIComponent(term)}`)
 
 const resolveAppleId = (id: string) =>
   itunesResults(`https://itunes.apple.com/lookup?id=${encodeURIComponent(id)}&entity=podcast`)
@@ -201,8 +202,12 @@ async function resolveYouTubeChannelId(rawUrl: string): Promise<string | null> {
   if (direct) return direct[1]
   const param = u.searchParams.get('channel_id')
   if (param && /^UC[\w-]+$/.test(param)) return param
-  // /@handle, /c/Name, /user/Name → scrape the channel page for the id.
-  const res = await safeFetch(rawUrl, { headers: { 'user-agent': UA, accept: 'text/html,*/*' } })
+  // /@handle, /c/Name, /user/Name → scrape the channel page for the id. The
+  // consent cookies matter: without them YouTube often serves a consent
+  // interstitial (especially to datacenter IPs) that carries no channelId.
+  const res = await safeFetch(rawUrl, {
+    headers: { 'user-agent': UA, accept: 'text/html,*/*', 'accept-language': 'en', cookie: 'CONSENT=YES+1; SOCS=CAI' },
+  })
   if (!res || !res.ok) return null
   const html = await readCapped(res, 300_000)
   const m =
@@ -236,8 +241,19 @@ async function resolveYouTubeFeed(rawUrl: string): Promise<PodcastSearchResult[]
 
 // ── Entry point ────────────────────────────────────────────────────────────────
 
-export async function searchPodcasts(rawQuery: string): Promise<PodcastSearchResult[]> {
+// The searchable text hiding in a YouTube channel URL ("/@nikhil.kamath" →
+// "nikhil kamath") — the directory-search fallback when the channel itself
+// can't be resolved (consent/bot wall on the channel page).
+function youtubeHandleQuery(u: URL): string {
+  const seg = u.pathname.split('/').filter(Boolean)
+  const first = decodeURIComponent(seg[0] || '')
+  const name = first.startsWith('@') ? first.slice(1) : (first === 'c' || first === 'user') && seg[1] ? decodeURIComponent(seg[1]) : ''
+  return name.replace(/[._-]+/g, ' ').trim()
+}
+
+export async function searchPodcasts(rawQuery: string, limit = LIMIT): Promise<PodcastSearchResult[]> {
   const q = (rawQuery || '').trim()
+  const cap = Math.min(Math.max(1, Math.floor(limit) || LIMIT), LIMIT_MAX)
   if (!q) return []
   if (/^https?:\/\//i.test(q)) {
     if (!isPublicHttpUrl(q)) return []
@@ -252,8 +268,15 @@ export async function searchPodcasts(rawQuery: string): Promise<PodcastSearchRes
       const id = u.pathname.match(/\/id(\d+)/)?.[1]
       return id ? resolveAppleId(id) : []
     }
-    if (isYouTubeHost(host)) return resolveYouTubeFeed(q)
+    if (isYouTubeHost(host)) {
+      const yt = await resolveYouTubeFeed(q)
+      if (yt.length) return yt
+      // Channel page unreachable (bot wall) → most YouTube podcasts also live in
+      // the directory, so search the handle text rather than returning nothing.
+      const handle = youtubeHandleQuery(u)
+      return handle ? searchItunes(handle, cap) : []
+    }
     return resolveRssFeed(q)
   }
-  return searchItunes(q)
+  return searchItunes(q, cap)
 }
