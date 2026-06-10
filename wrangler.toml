@@ -14,9 +14,12 @@
 # Local `vite dev` does NOT use KV — it uses a filesystem store under .cache/ —
 # so no binding is needed for local development.
 
-name = "munshot-podcasts"
+# NOTE: `name` must match the Pages project name exactly — the Git-integrated
+# build validates this file and fails the whole deploy on a mismatch (or on a
+# missing KV id), leaving production stuck on the last good build.
+name = "podcast"
 pages_build_output_dir = "dist"
 
 [[kv_namespaces]]
 binding = "SUMMARIES"
-id = "" # ← paste the id from `wrangler kv namespace create SUMMARIES`
+id = "5e446d710ca84cb5a60da815c7827cf9"
