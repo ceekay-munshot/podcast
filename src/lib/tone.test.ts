@@ -5,7 +5,7 @@ import type {
   Summary,
   Takeaway,
   QAItem,
-  InterestingMoment,
+  Highlight,
   TranscriptSegment,
   WeeklySummary,
 } from './types'
@@ -25,14 +25,14 @@ function episodeWith(summary: Partial<Summary> | null, transcript?: TranscriptSe
     signal: 'normal',
     blurb: '',
     entities: { people: [], companies: [], themes: [] },
-    summary: summary === null ? undefined : { synthesis: [], takeaways: [], qa: [], moments: [], ...summary },
+    summary: summary === null ? undefined : { synthesis: [], highlights: [], qa: [], ...summary },
     transcript,
   } as Episode
 }
 
 const tk = (title: string, detail = ''): Takeaway => ({ title, detail })
 const qa = (a: string, q = ''): QAItem => ({ q, a })
-const mo = (whyItMatters: string): InterestingMoment => ({ id: 'm', title: '', timestamp: '0:00', whyItMatters })
+const hl = (title: string, detail = ''): Highlight => ({ id: 'h', title, detail, timestamp: '0:00' })
 const seg = (text: string): TranscriptSegment => ({ id: 's', speaker: '', role: 'host', timestamp: '0:00', text })
 
 describe('episodeTone — net read', () => {
@@ -71,25 +71,24 @@ describe('episodeTone — net read', () => {
 
   it('computes posRatio from the underlying counts', () => {
     const t = episodeTone(
-      episodeWith({ synthesis: ['durable moat and steady growth'], takeaways: [tk('key risk')] }),
+      episodeWith({ synthesis: ['durable moat and steady growth'], highlights: [hl('key risk')] }),
     )
     expect(t).toMatchObject({ label: 'positive', posHits: 3, negHits: 1, posRatio: 0.75 })
   })
 
-  it('aggregates across every summary field (synthesis, takeaways, q&a, moments)', () => {
+  it('aggregates across every summary field (synthesis, highlights, q&a)', () => {
     const t = episodeTone(
       episodeWith({
         synthesis: ['growth'],
-        takeaways: [tk('moat')],
+        highlights: [hl('moat'), hl('', 'a clear bottleneck')],
         qa: [qa('a real risk')],
-        moments: [mo('a clear bottleneck')],
       }),
     )
     expect(t).toMatchObject({ posHits: 2, negHits: 2, label: 'mixed' })
   })
 
-  it('reads both the title and detail of a takeaway', () => {
-    const t = episodeTone(episodeWith({ takeaways: [tk('moat', 'risk')] }))
+  it('reads both the title and detail of a highlight', () => {
+    const t = episodeTone(episodeWith({ highlights: [hl('moat', 'risk')] }))
     expect(t).toMatchObject({ posHits: 1, negHits: 1 })
   })
 

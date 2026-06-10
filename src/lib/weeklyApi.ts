@@ -1,4 +1,5 @@
 import type { Episode, Podcast, Takeaway, WeeklySummary } from './types'
+import { keyHighlights } from './highlights'
 import { topTopics } from './topics'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -76,7 +77,7 @@ async function aiSynthesize(
       const s = e.summary!
       const show = podcastById(e.podcastId)?.title ?? 'Unknown show'
       const syn = s.synthesis.join(' ').replace(/\*\*/g, '')
-      const tk = s.takeaways.map((t) => `- ${t.title}: ${t.detail}`).join('\n')
+      const tk = keyHighlights(s).map((h) => `- ${h.title}: ${h.detail}`).join('\n')
       return `### ${show} — ${e.title}\n${syn}\nKey points:\n${tk}`
     })
     .join('\n\n')
@@ -94,12 +95,18 @@ async function aiSynthesize(
       body: JSON.stringify({ title: `Munshot Weekly Roundup — ${range}`, show: 'Munshot Weekly', notes }),
     })
     if (!res.ok) return null
-    const data = (await res.json()) as { summary?: { synthesis?: string[]; takeaways?: Takeaway[]; qa?: { q: string; a: string }[] } }
+    const data = (await res.json()) as {
+      summary?: { synthesis?: string[]; highlights?: { title?: string; detail?: string; key?: boolean }[]; qa?: { q: string; a: string }[] }
+    }
     const sum = data.summary
     if (!sum) return null
+    // The endpoint returns episode-shaped highlights; the weekly digest keeps the
+    // key ones (all, when none are flagged) as its plain cross-episode takeaways.
+    const hl = (sum.highlights ?? []).filter((h) => h?.title)
+    const keyed = hl.filter((h) => h.key)
     return {
       overview: (sum.synthesis ?? []).filter(Boolean),
-      takeaways: (sum.takeaways ?? []).filter((t) => t?.title),
+      takeaways: (keyed.length ? keyed : hl).map((h) => ({ title: h.title!, detail: h.detail ?? '' })),
       questions: (sum.qa ?? []).map((x) => x.q).filter(Boolean),
     }
   } catch {
@@ -128,8 +135,8 @@ function derivedTakeaways(ready: Episode[]): Takeaway[] {
   const sorted = [...ready].sort((a, b) => (b.signal === 'high' ? 1 : 0) - (a.signal === 'high' ? 1 : 0))
   const out: Takeaway[] = []
   for (const e of sorted) {
-    const t = e.summary?.takeaways?.[0]
-    if (t) out.push({ title: t.title, detail: t.detail })
+    const h = e.summary ? keyHighlights(e.summary)[0] : undefined
+    if (h) out.push({ title: h.title, detail: h.detail })
     if (out.length >= 5) break
   }
   return out
@@ -152,15 +159,15 @@ function aggregateMentions(ready: Episode[]): { people: string[]; companies: str
 
 function pickInteresting(ready: Episode[], podcastById: ById): WeeklySummary['interesting'] {
   const ep =
-    ready.find((e) => e.signal === 'high' && e.summary?.moments?.length) ??
-    ready.find((e) => e.summary?.moments?.length) ??
+    ready.find((e) => e.signal === 'high' && e.summary?.highlights?.length) ??
+    ready.find((e) => e.summary?.highlights?.length) ??
     ready[0]
-  const m = ep.summary?.moments?.[0]
+  const h = ep.summary?.highlights?.[0]
   const pod = podcastById(ep.podcastId)
-  // Prefer a real spoken line when the moment links to a transcript segment.
-  let quote = m?.whyItMatters ?? ep.blurb ?? ''
-  if (m?.segmentId && ep.transcript?.length) {
-    const seg = ep.transcript.find((s) => s.id === m!.segmentId)
+  // Prefer a real spoken line when the highlight links to a transcript segment.
+  let quote = h?.detail ?? ep.blurb ?? ''
+  if (h?.segmentId && ep.transcript?.length) {
+    const seg = ep.transcript.find((s) => s.id === h!.segmentId)
     if (seg?.text) quote = seg.text
   }
   return {
@@ -195,7 +202,7 @@ function trim(s: string, n: number): string {
 
 function hashKey(ready: Episode[]): string {
   const sig = ready
-    .map((e) => `${e.id}:${e.summary?.synthesis?.join('').length ?? 0}:${e.summary?.takeaways?.length ?? 0}`)
+    .map((e) => `${e.id}:${e.summary?.synthesis?.join('').length ?? 0}:${e.summary?.highlights?.length ?? 0}`)
     .join('|')
   let h = 5381
   for (let i = 0; i < sig.length; i++) h = ((h << 5) + h + sig.charCodeAt(i)) >>> 0

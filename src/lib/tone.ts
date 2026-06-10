@@ -3,7 +3,7 @@
 // whole episode (or the week). The inline coloring shows you *where*; this shows
 // you the net *lean*, with the underlying counts so it's never a black box.
 //
-// Aggregation is per-text (paragraph / takeaway / moment), summed — not one giant
+// Aggregation is per-text (paragraph / highlight / answer), summed — not one giant
 // concatenation — so the inline span cap in `findSentimentSpans` can never
 // undercount a long body, and the score reflects every signal.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -53,9 +53,8 @@ export function episodeTone(ep: Episode): Tone {
   if (!s) return NEUTRAL
   return combine([
     ...s.synthesis,
-    ...s.takeaways.flatMap((t) => [t.title, t.detail]),
+    ...s.highlights.flatMap((h) => [h.title, h.detail]),
     ...s.qa.map((q) => q.a),
-    ...s.moments.map((m) => m.whyItMatters),
   ])
 }
 

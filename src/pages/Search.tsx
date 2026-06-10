@@ -53,17 +53,17 @@ export default function Search() {
     const companies = entitySet((e) => e.entities.companies)
     const themes = entitySet((e) => e.entities.themes)
 
-    const moments = episodes.flatMap((e) =>
-      (e.summary?.moments ?? [])
-        .filter((m) => match(m.title) || match(m.whyItMatters))
-        .map((m) => ({ episode: e, moment: m })),
+    const highlights = episodes.flatMap((e) =>
+      (e.summary?.highlights ?? [])
+        .filter((h) => match(h.title) || match(h.detail))
+        .map((h) => ({ episode: e, highlight: h })),
     )
 
-    return { excerpts, excerptEpisodeIds, eps, pods, people, companies, themes, moments }
+    return { excerpts, excerptEpisodeIds, eps, pods, people, companies, themes, highlights }
   }, [needle, tokens, episodes, podcasts, q])
 
   const suggestions = useMemo(() => topTopics(episodes, 8), [episodes])
-  const anything = results && (results.excerpts.length || results.eps.length || results.pods.length || results.moments.length || results.people.length || results.companies.length || results.themes.length)
+  const anything = results && (results.excerpts.length || results.eps.length || results.pods.length || results.highlights.length || results.people.length || results.companies.length || results.themes.length)
 
   return (
     <div className="mx-auto max-w-reading animate-fade-up">
@@ -226,24 +226,24 @@ export default function Search() {
             </section>
           )}
 
-          {/* Interesting moments */}
-          {results.moments.length > 0 && (
+          {/* Highlights */}
+          {results.highlights.length > 0 && (
             <section className="mb-xl">
-              <SectionLabel className="mb-sm">Interesting moments · {results.moments.length}</SectionLabel>
+              <SectionLabel className="mb-sm">Highlights · {results.highlights.length}</SectionLabel>
               <div className="space-y-sm">
-                {results.moments.map(({ episode, moment }) => (
+                {results.highlights.map(({ episode, highlight }) => (
                   <Link
-                    key={moment.id}
-                    to={`/episodes/${episode.id}`}
+                    key={highlight.id}
+                    to={`/episodes/${episode.id}?tab=highlights`}
                     className="lift block rounded-xl border border-outline-variant bg-surface-container-lowest p-md hover:shadow-card"
                   >
                     <div className="mb-1 flex items-center justify-between gap-sm">
-                      <p className="text-metadata font-bold text-on-surface">{moment.title}</p>
+                      <p className="text-metadata font-bold text-on-surface">{highlight.title}</p>
                       <span className="shrink-0 rounded bg-surface-container-high px-2 py-0.5 text-label-caps text-on-surface-variant">
-                        {moment.timestamp}
+                        {highlight.timestamp}
                       </span>
                     </div>
-                    <p className="text-[14px] leading-relaxed text-on-surface-variant">{moment.whyItMatters}</p>
+                    <p className="text-[14px] leading-relaxed text-on-surface-variant">{highlight.detail}</p>
                     <p className="mt-1.5 text-[12px] text-secondary">{podcastById(episode.podcastId)?.title}</p>
                   </Link>
                 ))}

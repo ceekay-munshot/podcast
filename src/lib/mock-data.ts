@@ -201,22 +201,52 @@ export const EPISODES: Episode[] = [
         `The episode draws a sharp line between **"AI as a feature"** and **"AI as a business"**. Companies with an existing aggregation surface (Search, Feed, Office, iOS) can fold AI in at **near-zero marginal customer-acquisition cost**. Pure-play model providers, by contrast, **must buy distribution at brutal prices** — which is exactly why they keep partnering with the very incumbents they hoped to disrupt.`,
         `Ben closes on the attention economy: if generation cost collapses to zero, **scarcity migrates from content to attention and trust**. The platforms that already arbitrate attention inherit the surplus. The provocative implication for founders is that the best AI businesses may look less like "an LLM wrapper" and more like **a wedge into someone's distribution**.`,
       ],
-      takeaways: [
+      highlights: [
         {
+          id: 'h-st-1',
+          title: 'Arguing against the most popular trade in tech',
+          timestamp: '00:42',
+          detail: `Ben opens by inverting the consensus: everyone believes whoever owns the best model owns the future, and he argues that is exactly backwards.`,
+          segmentId: 'st-seg-1',
+        },
+        {
+          id: 'h-st-2',
           title: 'Models are a cost center, not a moat',
-          detail: `Capability is converging and inference prices are in freefall. Owning a frontier model is increasingly table stakes, not a durable edge.`,
+          timestamp: '12:40',
+          detail: `Capability is converging and inference gets ~10x cheaper every 18 months — supply commoditizes, so owning a frontier model is table stakes, not a durable edge.`,
+          segmentId: 'st-seg-3',
+          key: true,
         },
         {
+          id: 'h-st-3',
           title: 'Distribution is the only scarce asset',
-          detail: `Whoever owns the demand surface folds AI in at zero CAC. Everyone else has to rent that surface at a punishing price.`,
+          timestamp: '18:30',
+          detail: `Whoever owns the demand surface — Search, the feed, the OS, the inbox — folds AI in at zero customer-acquisition cost. Everyone else rents that surface at a punishing price.`,
+          segmentId: 'st-seg-4',
+          key: true,
         },
         {
+          id: 'h-st-4',
           title: 'The disruptors are renting the incumbents',
-          detail: `Labs partnering with Microsoft, Apple, and the hyperscalers is the tell: they need distribution more than the incumbents need their models.`,
+          timestamp: '24:05',
+          detail: `Every lab has signed a distribution deal with Microsoft, Apple, or the hyperscalers — the tell that they need distribution more than the incumbents need their models.`,
+          segmentId: 'st-seg-5',
+          key: true,
         },
         {
+          id: 'h-st-5',
+          title: 'Nvidia is the genuine exception',
+          timestamp: '31:50',
+          detail: `Picks and shovels to every army in the war, insulated from the distribution fight — until custom silicon and supply normalization erode the premium.`,
+          segmentId: 'st-seg-6',
+        },
+        {
+          id: 'h-st-6',
           title: 'Scarcity moves from content to trust',
-          detail: `When generation is free, the premium accrues to whoever curates attention and vouches for quality — a re-bundling, not an unbundling.`,
+          timestamp: '38:18',
+          detail: `If generation cost goes to zero, attention and trust become the scarce resources — a re-bundling around whoever curates and vouches for quality, not an unbundling.`,
+          segmentId: 'st-seg-7',
+          key: true,
         },
       ],
       qa: [
@@ -233,29 +263,6 @@ export const EPISODES: Episode[] = [
           a: `Nvidia is the picks-and-shovels exception: it sells to everyone in the war and is insulated from the distribution fight — until custom silicon and supply normalization erode the premium.`,
         },
       ],
-      moments: [
-        {
-          id: 'm-st-1',
-          title: 'The "models are a cost center" reframe',
-          timestamp: '12:40',
-          whyItMatters: `Inverts the dominant narrative that owning a frontier model is the prize. If true, it re-rates the entire AI cap table toward the distribution owners.`,
-          segmentId: 'st-seg-3',
-        },
-        {
-          id: 'm-st-2',
-          title: 'Why OpenAI keeps partnering with its "victims"',
-          timestamp: '24:05',
-          whyItMatters: `A concrete tell that distribution beats models — the disruptors are quietly renting the incumbents' reach to survive.`,
-          segmentId: 'st-seg-5',
-        },
-        {
-          id: 'm-st-3',
-          title: 'Attention as the last scarce resource',
-          timestamp: '38:18',
-          whyItMatters: `Reframes "content is free" into "trust is priceless" — a useful lens for anyone building a media or curation product in the AI era.`,
-          segmentId: 'st-seg-7',
-        },
-      ],
     },
     transcript: [
       {
@@ -264,6 +271,11 @@ export const EPISODES: Episode[] = [
         role: 'host',
         timestamp: '00:42',
         text: `Welcome back. I want to do something a little uncomfortable today, which is to argue against the most popular trade in the entire industry. Everyone believes that whoever owns the best model owns the future. I think that's exactly backwards.`,
+        highlight: {
+          refId: 'h-st-1',
+          quote: `whoever owns the best model owns the future. I think that's exactly backwards`,
+          label: 'Against the popular trade',
+        },
       },
       {
         id: 'st-seg-2',
@@ -279,7 +291,7 @@ export const EPISODES: Episode[] = [
         timestamp: '12:40',
         text: `Here's the thing nobody wants to say out loud. The model is supply. And supply gets commoditized. Capability is converging, inference prices are collapsing, and that means the model is a cost center, not a moat. You don't build a durable franchise on top of something that gets 10x cheaper every 18 months.`,
         highlight: {
-          refId: 'm-st-1',
+          refId: 'h-st-2',
           quote: `the model is a cost center, not a moat`,
           label: 'Models are a cost center',
         },
@@ -290,6 +302,11 @@ export const EPISODES: Episode[] = [
         role: 'host',
         timestamp: '18:30',
         text: `So where does the value accrue? It accrues to whoever owns the surface where AI is actually consumed. Search. The feed. The operating system. The inbox. If you already own demand, you can fold AI in at basically zero customer-acquisition cost.`,
+        highlight: {
+          refId: 'h-st-3',
+          quote: `fold AI in at basically zero customer-acquisition cost`,
+          label: 'Distribution is the scarce asset',
+        },
       },
       {
         id: 'st-seg-5',
@@ -298,7 +315,7 @@ export const EPISODES: Episode[] = [
         timestamp: '24:05',
         text: `And this is the tell. Watch what the labs actually do, not what they say. They say they're disrupting the incumbents. But every one of them has signed a distribution deal with Microsoft, with Apple, with the hyperscalers. They are renting the incumbents' distribution because they have to. That's not the behavior of a winner; that's the behavior of supply.`,
         highlight: {
-          refId: 'm-st-2',
+          refId: 'h-st-4',
           quote: `They are renting the incumbents' distribution because they have to`,
           label: 'Disruptors rent the incumbents',
         },
@@ -309,6 +326,11 @@ export const EPISODES: Episode[] = [
         role: 'host',
         timestamp: '31:50',
         text: `Now, the obvious objection is Nvidia. And Nvidia is the genuine exception — they sell picks and shovels to every army in the war, so they don't have to fight the distribution battle at all. The risk there isn't distribution; it's custom silicon and supply normalizing the margin away.`,
+        highlight: {
+          refId: 'h-st-5',
+          quote: `picks and shovels to every army in the war`,
+          label: 'The Nvidia exception',
+        },
       },
       {
         id: 'st-seg-7',
@@ -317,7 +339,7 @@ export const EPISODES: Episode[] = [
         timestamp: '38:18',
         text: `Let me end on the part that I find genuinely interesting. If generation cost goes to zero, then content is no longer scarce — attention is, and trust is. The platforms that already arbitrate attention inherit the surplus. So the future isn't an unbundling. It's a re-bundling around trust.`,
         highlight: {
-          refId: 'm-st-3',
+          refId: 'h-st-6',
           quote: `content is no longer scarce — attention is, and trust is`,
           label: 'Attention is the scarce resource',
         },
@@ -346,19 +368,45 @@ export const EPISODES: Episode[] = [
         `Much of the conversation is a clinic on incentives. The best decentralized compounders **push capital-allocation authority down to the operators** closest to the cash flows, then hold them to **a hard hurdle rate**. Centralized M&A teams, by contrast, optimize for deal volume because that's what they're paid for — the classic agency problem dressed up as "synergy."`,
         `The episode lands on temperament. Edge isn't a smarter spreadsheet; it's **the behavioral capacity to do nothing for long stretches** and then act decisively when price dislocates from value.`,
       ],
-      takeaways: [
-        { title: 'Permanent capital turns time into alpha', detail: `No redemptions means you can be the buyer when everyone else is a forced seller — the single biggest structural edge available.` },
-        { title: 'Push allocation to the cash flows', detail: `Decentralized operators with a hard hurdle rate beat a central M&A team paid on deal volume.` },
-        { title: 'Beware "diworsification"', detail: `Most acquisitions destroy value; the discipline is saying no until the hurdle is cleared with margin.` },
-        { title: 'Temperament is the edge', detail: `The hard part isn't the analysis, it's the patience to wait and the nerve to act when price dislocates.` },
+      highlights: [
+        {
+          id: 'h-ib-1',
+          title: 'The three questions before any investment',
+          timestamp: '12:05',
+          detail: `Can it compound for a decade-plus, are the operators' incentives aligned, and what's the downside if the moat thesis is wrong — he sizes the mistake, not the upside.`,
+        },
+        {
+          id: 'h-ib-2',
+          title: 'Permanent capital turns time into alpha',
+          timestamp: '41:20',
+          detail: `No redemptions means being the liquid buyer when everyone else is a forced seller — patience reframed from a virtue into a structural source of returns.`,
+          key: true,
+        },
+        {
+          id: 'h-ib-3',
+          title: 'Most M&A teams are mis-incentivized',
+          timestamp: '58:44',
+          detail: `Central deal teams optimize for volume because that's what they're paid for — the agency problem hiding inside "synergy". Decentralized operators held to a hard hurdle rate beat them.`,
+          key: true,
+        },
+        {
+          id: 'h-ib-4',
+          title: 'Beware "diworsification"',
+          timestamp: '1:07:30',
+          detail: `Most acquisitions destroy value; the discipline is saying no until the hurdle is cleared with margin.`,
+          key: true,
+        },
+        {
+          id: 'h-ib-5',
+          title: 'Temperament is the edge',
+          timestamp: '1:15:10',
+          detail: `The hard part isn't the analysis — it's the behavioral capacity to do nothing for long stretches, then act decisively when price dislocates from value.`,
+          key: true,
+        },
       ],
       qa: [
         { q: `What three questions does he ask before any investment?`, a: `Can it compound for a decade-plus? Are the operators' incentives aligned with mine? And what's the downside if I'm wrong about the moat — not the upside if I'm right.` },
         { q: `How does he think about valuation?`, a: `As a margin-of-safety problem, not a precision exercise. He'd rather be roughly right on durability than precisely right on next year's multiple.` },
-      ],
-      moments: [
-        { id: 'm-ib-1', title: 'The forced-seller insight', timestamp: '41:20', whyItMatters: `Reframes "patience" from a virtue into a structural source of returns — being liquid when others must sell.` },
-        { id: 'm-ib-2', title: 'Why most M&A teams are mis-incentivized', timestamp: '58:44', whyItMatters: `A clean articulation of the agency problem hiding inside "synergy" — useful for evaluating any acquisitive company.` },
       ],
     },
   },
@@ -384,39 +432,50 @@ export const EPISODES: Episode[] = [
         `A surprising amount of the bottleneck is mundane hardware: **large power transformers have multi-year lead times** and are largely built overseas. The conversation ranges, in classic Odd Lots fashion, from the exotic (behind-the-meter nuclear, talk of putting compute where the power is — even half-joking about data centers in space) all the way down to the deeply unglamorous choice of UPS and backup-power topology inside the building.`,
         `The takeaway for investors is that **the value is migrating to whoever controls firm generation and interconnection rights**. Utilities, independent power producers, and anyone sitting on a permitted site with a grid connection suddenly hold a far more valuable asset than the market priced a year ago.`,
       ],
-      takeaways: [
-        { title: 'Power, not chips, is the binding constraint', detail: `You can buy GPUs with money. You cannot buy a grid interconnection with money — you wait in a queue measured in years.` },
-        { title: 'The boring hardware is the bottleneck', detail: `Large power transformers have multi-year lead times and thin global supply. It's a supply-chain story dressed as an AI story.` },
-        { title: 'Firm power is the new beachfront', detail: `Permitted sites with interconnection rights and access to baseload are repricing fast. Whoever owns the electrons captures the rents.` },
-        { title: 'Behind-the-meter goes mainstream', detail: `Expect more direct deals with nuclear and gas plants to bypass the public queue entirely.` },
+      highlights: [
+        {
+          id: 'h-ol-1',
+          title: `You can't pay your way past the queue`,
+          timestamp: '02:35',
+          detail: `Chips are a supply chain that responds to price; power isn't. "The electrons don't care how much capital you've raised" reframes the AI buildout as an electricity story.`,
+          segmentId: 'ol-seg-2',
+        },
+        {
+          id: 'h-ol-2',
+          title: 'Power, not chips, is the binding constraint',
+          timestamp: '14:55',
+          detail: `Interconnection queues now run north of 2,000 days in parts of the US — a financed, chip-stocked data center can still sit dark for years waiting on a grid connection.`,
+          segmentId: 'ol-seg-3',
+          key: true,
+        },
+        {
+          id: 'h-ol-3',
+          title: 'The boring hardware is the bottleneck',
+          timestamp: '27:10',
+          detail: `The problem spans data-centers-in-space jokes down to the humble transformer: multi-year lead times out of a handful of factories on earth. A supply-chain story dressed as an AI story.`,
+          segmentId: 'ol-seg-5',
+          key: true,
+        },
+        {
+          id: 'h-ol-4',
+          title: 'Firm power is the new beachfront',
+          timestamp: '34:02',
+          detail: `If power is the constraint, the trade is whoever sits on a permitted site with firm baseload and a signed interconnection agreement — utilities and IPPs quietly re-rate.`,
+          segmentId: 'ol-seg-6',
+          key: true,
+        },
+        {
+          id: 'h-ol-5',
+          title: 'Behind-the-meter goes mainstream',
+          timestamp: '38:40',
+          detail: `Expect more direct deals with nuclear and gas plants — restarting shuttered capacity is faster than waiting in the public interconnection queue.`,
+          key: true,
+        },
       ],
       qa: [
         { q: `Why can't we just build more grid?`, a: `Permitting, transformer supply, and labor. The guest notes a transmission line can take a decade to permit and build — far slower than the 18-month AI capex cycle driving demand.` },
         { q: `Is nuclear actually back?`, a: `For data centers, yes — as a procurement strategy. Restarting shuttered plants and signing behind-the-meter deals is faster than waiting on the public interconnection queue.` },
         { q: `What's the most underpriced asset here?`, a: `An already-permitted site with a signed interconnection agreement. It's effectively an option on the entire AI buildout.` },
-      ],
-      moments: [
-        {
-          id: 'm-ol-1',
-          title: 'The 2,000-day interconnection queue',
-          timestamp: '14:55',
-          whyItMatters: `Quantifies the bottleneck in a way that reframes the whole AI capex debate — money can't shortcut a multi-year grid wait.`,
-          segmentId: 'ol-seg-3',
-        },
-        {
-          id: 'm-ol-2',
-          title: 'From data centers in space to the choice of UPS',
-          timestamp: '27:10',
-          whyItMatters: `A perfect example of the range of the problem — the same constraint shows up at the cosmic scale and at the literal power-supply level.`,
-          segmentId: 'ol-seg-5',
-        },
-        {
-          id: 'm-ol-3',
-          title: 'Why utilities are the surprise AI trade',
-          timestamp: '34:02',
-          whyItMatters: `Names the part of the market that quietly re-rates if power is the true constraint — the un-sexy regulated utility.`,
-          segmentId: 'ol-seg-6',
-        },
       ],
     },
     transcript: [
@@ -433,6 +492,11 @@ export const EPISODES: Episode[] = [
         role: 'guest',
         timestamp: '02:35',
         text: `Right. The chips are a solvable problem — it's money, it's fabs, it's a supply chain that responds to price. Power is different. You cannot pay your way to the front of an interconnection queue. The electrons don't care how much capital you've raised.`,
+        highlight: {
+          refId: 'h-ol-1',
+          quote: `You cannot pay your way to the front of an interconnection queue`,
+          label: `Can't pay past the queue`,
+        },
       },
       {
         id: 'ol-seg-3',
@@ -441,7 +505,7 @@ export const EPISODES: Episode[] = [
         timestamp: '14:55',
         text: `In some regions the interconnection queue is now north of 2,000 days. Think about that. You can have the site, the financing, the GPUs sitting in a warehouse, and you are still years away from turning the thing on because you're waiting for a grid connection.`,
         highlight: {
-          refId: 'm-ol-1',
+          refId: 'h-ol-2',
           quote: `the interconnection queue is now north of 2,000 days`,
           label: '2,000-day queue',
         },
@@ -460,7 +524,7 @@ export const EPISODES: Episode[] = [
         timestamp: '27:10',
         text: `Exactly. This problem spans an absurd range. On one end you've got people only half-joking about putting data centers in space to get the power and cooling for free. And on the other end, the thing actually holding up a project is something as mundane as the choice of UPS and the backup-power topology, or a large transformer with a three-year lead time built in one of two factories on earth.`,
         highlight: {
-          refId: 'm-ol-2',
+          refId: 'h-ol-3',
           quote: `data centers in space`,
           label: 'The full range of the problem',
         },
@@ -472,7 +536,7 @@ export const EPISODES: Episode[] = [
         timestamp: '34:02',
         text: `So if you believe power is the constraint, the trade is almost boring. It's the utilities. It's the independent power producers. It's whoever is sitting on a permitted site with firm baseload and an interconnection agreement already signed. That's the beachfront property of the AI era.`,
         highlight: {
-          refId: 'm-ol-3',
+          refId: 'h-ol-4',
           quote: `whoever is sitting on a permitted site with firm baseload`,
           label: 'Utilities are the surprise trade',
         },
@@ -500,18 +564,38 @@ export const EPISODES: Episode[] = [
         `The panel splits on the central question of the moment: **is hyperscaler AI capex a rational supercycle or a late-stage bubble?** The bull case leans on real revenue and the power-constraint thesis; the bear case points to **circular financing** and depreciation schedules that may be wildly optimistic.`,
         `There's consensus on one thing: **a reopening IPO window changes venture math**. Several late-stage names finally have a clearing price, which pulls forward distributions and resets the bar for what stays private. The group debates whether this is healthy price discovery or a liquidity-driven head-fake.`,
       ],
-      takeaways: [
-        { title: 'AI capex: supercycle vs. bubble', detail: `The disagreement hinges on depreciation. If GPUs are 6-year assets, the math works; if they're 3-year assets, much of the reported margin is fiction.` },
-        { title: 'The IPO window is genuinely open', detail: `A handful of clean listings reset comps and pull venture distributions forward for the first time in two years.` },
-        { title: 'Circular financing is the risk to watch', detail: `When the chip vendor funds the cloud that buys the chips, reported demand can flatter the real end-market.` },
+      highlights: [
+        {
+          id: 'h-al-1',
+          title: 'The depreciation argument',
+          timestamp: '22:15',
+          detail: `Whether AI infra margins are real comes down to one accounting assumption: if GPUs are 6-year assets the math works; if they're 3-year assets, much of the reported margin is fiction.`,
+          key: true,
+        },
+        {
+          id: 'h-al-2',
+          title: 'Circular financing is the risk to watch',
+          timestamp: '49:30',
+          detail: `When the chip vendor funds the cloud that buys the chips, reported demand can flatter the real end-market — Friedberg's red flag for separating real from vendor-funded demand.`,
+          key: true,
+        },
+        {
+          id: 'h-al-3',
+          title: 'The IPO window is genuinely open',
+          timestamp: '1:02:10',
+          detail: `A handful of clean listings reset comps and pull venture distributions forward for the first time in two years.`,
+          key: true,
+        },
+        {
+          id: 'h-al-4',
+          title: 'What reopening markets change for founders',
+          timestamp: '1:10:45',
+          detail: `Late-stage secondaries and a credible IPO path reset how long a company would rationally stay private.`,
+        },
       ],
       qa: [
         { q: `Is this a bubble?`, a: `Sacks says no — the revenue is real and power-constrained. Friedberg is more cautious, flagging depreciation and vendor financing as the tells to watch.` },
         { q: `What reopens for founders?`, a: `Late-stage secondary and a credible IPO path, which changes how long you'd rationally stay private.` },
-      ],
-      moments: [
-        { id: 'm-al-1', title: 'The depreciation argument', timestamp: '22:15', whyItMatters: `The single accounting assumption that decides whether AI infra margins are real — worth understanding before you have a view.` },
-        { id: 'm-al-2', title: 'Circular financing tell', timestamp: '49:30', whyItMatters: `A concrete red flag for distinguishing real end-demand from vendor-funded demand.` },
       ],
     },
   },
@@ -536,18 +620,32 @@ export const EPISODES: Episode[] = [
         `The brief's thesis is that 2026 is the year **agentic workflows cross from demo to deployment**. The unlock isn't a smarter model — it's the surrounding scaffolding: tool use, memory, and evaluation harnesses that make an agent reliable enough to hand a real task. **Reliability, not capability, is the gate.**`,
         `The unsolved problem is **governance**. Once an agent can take actions — move money, email customers, change records — enterprises need permissions, audit trails, and a human-in-the-loop story before they grant write access. Whoever ships the trust layer captures the deployment, not just the demo.`,
       ],
-      takeaways: [
-        { title: 'Reliability is the real unlock', detail: `Capability is sufficient; the bottleneck is making agents dependable enough to trust with a real workflow.` },
-        { title: 'Write access needs a trust layer', detail: `Permissions, audit logs, and human checkpoints are the prerequisites for agents that take consequential actions.` },
-        { title: 'Distribution favors incumbents', detail: `Salesforce and peers can drop agents onto existing data and permissions — a cold-start advantage pure-play agents lack.` },
+      highlights: [
+        {
+          id: 'h-ad-1',
+          title: 'Reliability, not capability, is the gate',
+          timestamp: '12:40',
+          detail: `The unlock for enterprise agents isn't a smarter model — it's the scaffolding (tool use, memory, evaluation harnesses) that makes one dependable enough to hand a real workflow.`,
+          key: true,
+        },
+        {
+          id: 'h-ad-2',
+          title: 'The governance gap nobody has closed',
+          timestamp: '18:05',
+          detail: `Once an agent can move money or email customers, enterprises need permissions, audit trails, and rollback before granting write access — whoever ships that trust layer captures the deployment.`,
+          key: true,
+        },
+        {
+          id: 'h-ad-3',
+          title: 'Distribution favors the incumbents again',
+          timestamp: '20:30',
+          detail: `Salesforce and peers can drop agents onto existing data and permissions — a cold-start advantage pure-play agent startups lack.`,
+          key: true,
+        },
       ],
       qa: [
         { q: `What's actually blocking enterprise agent rollouts?`, a: `Not model quality — it's governance: who approved the action, what it touched, and how to roll it back. Until that's legible, agents stay read-only.` },
         { q: `Is an "agent" a feature or a company?`, a: `Whittemore's take: the durable businesses own the trust-and-permissions layer, not the agent loop itself, which is commoditizing fast.` },
-      ],
-      moments: [
-        { id: 'm-ad-1', title: 'Reliability, not capability, is the gate', timestamp: '12:40', whyItMatters: `Reframes the agent race away from benchmarks toward the unglamorous engineering that actually ships deployments.` },
-        { id: 'm-ad-2', title: 'The governance gap nobody has closed', timestamp: '18:05', whyItMatters: `Names the specific blocker — write-access accountability — that decides which vendors win enterprise budgets.` },
       ],
     },
   },
@@ -572,17 +670,38 @@ export const EPISODES: Episode[] = [
         `Ben and David trace how Morris Chang's **pure-play foundry model inverted the chip industry**: by never designing its own chips, TSMC became the trusted manufacturing partner for everyone, accumulating a process lead that now compounds. The episode frames **TSMC as the keystone of the entire AI economy**.`,
         `The strategic punchline is **concentration risk**. A single company, on a single island, in a single geopolitical flashpoint, fabricates the overwhelming majority of leading-edge chips. The CHIPS-Act-era reshoring is real but slow, and the hosts are skeptical it meaningfully de-risks the next decade.`,
       ],
-      takeaways: [
-        { title: 'The foundry model was the masterstroke', detail: `By not competing with its customers, TSMC earned the trust to manufacture for all of them — and the volume to out-invest everyone.` },
-        { title: 'Process leadership compounds', detail: `Each node lead funds the next, creating a flywheel competitors can't easily enter.` },
-        { title: 'Concentration is the systemic risk', detail: `Leading-edge capacity is geographically concentrated in a way that has no quick fix.` },
+      highlights: [
+        {
+          id: 'h-aq-1',
+          title: 'The trust insight behind the foundry model',
+          timestamp: '1:12:30',
+          detail: `By never designing its own chips, TSMC earned the trust to manufacture for everyone — and the volume to out-invest them all. A manufacturing choice that became an unbreachable moat.`,
+          key: true,
+        },
+        {
+          id: 'h-aq-2',
+          title: 'Process leadership compounds',
+          timestamp: '1:58:45',
+          detail: `Each node lead funds the next, creating a capital and yield-learning flywheel Intel and Samsung struggle to enter.`,
+          key: true,
+        },
+        {
+          id: 'h-aq-3',
+          title: 'Concentration is the systemic risk',
+          timestamp: '2:47:20',
+          detail: `The overwhelming majority of leading-edge chips come from a single company, on a single island, in a geopolitical flashpoint — with no quick fix.`,
+          key: true,
+        },
+        {
+          id: 'h-aq-4',
+          title: `Why reshoring won't fix it quickly`,
+          timestamp: '3:05:10',
+          detail: `New fabs help at trailing edge but don't replicate the ecosystem or talent density — the hosts are skeptical the CHIPS-Act era meaningfully de-risks the next decade.`,
+        },
       ],
       qa: [
         { q: `Can Intel or Samsung catch up?`, a: `The hosts are doubtful on leading-edge in the near term — the capital and yield-learning gap is enormous and self-reinforcing.` },
         { q: `Does reshoring fix the risk?`, a: `Partially and slowly. New fabs help at trailing edge but don't replicate the ecosystem or the talent density quickly.` },
-      ],
-      moments: [
-        { id: 'm-aq-1', title: 'The "trust" insight behind the foundry model', timestamp: '1:12:30', whyItMatters: `Explains why a manufacturing choice became an unbreachable strategic moat.` },
       ],
     },
   },
@@ -607,18 +726,38 @@ export const EPISODES: Episode[] = [
         `Tangen frames the fund's edge as **structural patience**: owning roughly 1.5% of every listed company means you cannot trade your way out, so the only real lever is being a thoughtful long-term owner. Permanence changes the question from "will this pop" to **"will this compound for decades."**`,
         `Most of the conversation is about **active ownership through voting and engagement** rather than stock-picking. At that scale you can't beat the index by trading; you improve returns by improving governance across the companies you already own — board quality, executive pay, and long-horizon capital allocation.`,
       ],
-      takeaways: [
-        { title: 'Scale converts trading into ownership', detail: `Owning a slice of everything removes the exit option, so value comes from stewardship, not timing.` },
-        { title: 'Governance is the return lever', detail: `Voting, engagement, and pay discipline move the needle more than security selection at index scale.` },
-        { title: 'Patience is the moat', detail: `A mandate measured in decades lets the fund hold through drawdowns that force others to sell.` },
+      highlights: [
+        {
+          id: 'h-gc-1',
+          title: 'Permanence changes the question',
+          timestamp: '22:10',
+          detail: `Owning ~1.5% of every listed company removes the exit option — value comes from stewardship, not timing, and the question shifts from "will this pop" to "will this compound for decades."`,
+          key: true,
+        },
+        {
+          id: 'h-gc-2',
+          title: 'Governance is the return lever',
+          timestamp: '36:48',
+          detail: `At index scale you can't trade your way to returns — voting, engagement, and pay discipline across the companies you already own move the needle more than stock-picking.`,
+          key: true,
+        },
+        {
+          id: 'h-gc-3',
+          title: 'Patience is the moat',
+          timestamp: '44:15',
+          detail: `A mandate measured in decades lets the fund hold through drawdowns that force others to sell.`,
+          key: true,
+        },
+        {
+          id: 'h-gc-4',
+          title: 'Explaining a 30-year mandate to a quarterly public',
+          timestamp: '47:30',
+          detail: `Tangen calls temperament and communication the hardest parts of the job — staying calm through volatility while being judged on quarterly numbers.`,
+        },
       ],
       qa: [
         { q: `How do you add value if you basically own the index?`, a: `By being an active owner — voting thoughtfully, pushing on board quality and pay, setting long-term expectations — not by trading in and out.` },
         { q: `What's the hardest part of the job?`, a: `Tangen points to temperament and communication: staying calm through volatility and explaining a 30-year mandate to a public that judges quarterly.` },
-      ],
-      moments: [
-        { id: 'm-gc-1', title: 'Why permanence changes the question', timestamp: '22:10', whyItMatters: `A clean articulation of how an unsellable position reshapes every decision toward the long term.` },
-        { id: 'm-gc-2', title: 'Engagement beats stock-picking at scale', timestamp: '36:48', whyItMatters: `A useful mental model for any large, diversified owner thinking about where returns actually come from.` },
       ],
     },
   },
@@ -643,18 +782,32 @@ export const EPISODES: Episode[] = [
         `Collison's core claim is that in payments **a few hundred milliseconds is a competitive weapon**: latency shows up directly in authorization rates and checkout conversion, so shaving it compounds into real revenue for every business on the platform. Performance isn't a vanity metric — it's the product.`,
         `The deeper theme is that **developer experience compounds into a moat**. Clean APIs, great docs, and the small daily delights — "developer joy" — lower integration cost, which drives adoption, which funds more polish. It's a flywheel competitors struggle to copy because it's **a thousand small decisions, not one feature.**`,
       ],
-      takeaways: [
-        { title: 'Latency is a revenue feature', detail: `In payments, milliseconds move authorization and conversion rates — speed is a direct line to customers' top line.` },
-        { title: 'Developer joy is strategy', detail: `Docs, ergonomics, and polish lower integration cost and compound into adoption that's hard to dislodge.` },
-        { title: 'Good APIs compound', detail: `Each well-designed primitive makes the next integration easier, widening the moat over time.` },
+      highlights: [
+        {
+          id: 'h-cp-1',
+          title: 'Milliseconds as a competitive weapon',
+          timestamp: '14:25',
+          detail: `In payments, latency shows up directly in authorization rates and checkout conversion — speed is a straight line to customers' top line, not a vanity metric.`,
+          key: true,
+        },
+        {
+          id: 'h-cp-2',
+          title: 'Developer joy compounds into a moat',
+          timestamp: '29:50',
+          detail: `Clean APIs, great docs, and daily delights lower integration cost, which drives adoption, which funds more polish — a flywheel of a thousand small decisions competitors can't copy as one feature.`,
+          key: true,
+        },
+        {
+          id: 'h-cp-3',
+          title: 'Good APIs compound',
+          timestamp: '41:10',
+          detail: `Each well-designed primitive makes the next integration easier, widening the moat over time.`,
+          key: true,
+        },
       ],
       qa: [
         { q: `Why obsess over a few hundred milliseconds?`, a: `Because latency is measurable in authorization rates and checkout conversion — it's not polish, it's money for every business on Stripe.` },
         { q: `Is developer experience really defensible?`, a: `Collison argues yes: it's a thousand small decisions and sustained investment, far harder to clone than a single headline feature.` },
-      ],
-      moments: [
-        { id: 'm-cp-1', title: 'Milliseconds as a competitive weapon', timestamp: '14:25', whyItMatters: `Connects an engineering metric straight to customer revenue — a reframing any infrastructure company can borrow.` },
-        { id: 'm-cp-2', title: 'Why developer joy compounds', timestamp: '29:50', whyItMatters: `Explains how DX becomes a moat rather than a nicety, via a compounding adoption flywheel.` },
       ],
     },
   },
@@ -679,15 +832,30 @@ export const EPISODES: Episode[] = [
         `The group argues **humanoid robotics has crossed from science project to investable thesis**, driven by the same model advances powering language AI. The debate is on timelines and unit economics, not direction.`,
         `A recurring thread ties back to energy: **robots, like data centers, are ultimately a power story**. The "energy trade" is becoming the panel's most consensus position, which itself raises the contrarian question of whether it's now crowded.`,
       ],
-      takeaways: [
-        { title: 'Robotics is now investable', detail: `Foundation-model progress transfers to manipulation and planning, pulling humanoid timelines forward.` },
-        { title: 'Everything routes back to energy', detail: `Compute and robots are both demand on the grid — the energy trade is the meta-trade.` },
+      highlights: [
+        {
+          id: 'h-a3-1',
+          title: 'Robotics is now investable',
+          timestamp: '18:40',
+          detail: `Foundation-model progress transfers to manipulation and planning, pulling humanoid robotics from science project to investable thesis — the debate is timelines and unit economics, not direction.`,
+          key: true,
+        },
+        {
+          id: 'h-a3-2',
+          title: 'Everything routes back to energy',
+          timestamp: '42:15',
+          detail: `Compute and robots are both demand on the grid — the energy trade is the meta-trade, and its growing consensus raises the crowding question.`,
+          key: true,
+        },
+        {
+          id: 'h-a3-3',
+          title: 'Founder mode vs. professional management',
+          timestamp: '1:05:20',
+          detail: `A sharp, quotable framing of the debate every scaling company eventually has.`,
+        },
       ],
       qa: [
         { q: `Is the energy trade crowded?`, a: `Possibly — the panel notes that when a trade becomes a consensus on a popular podcast, the easy money is usually already made.` },
-      ],
-      moments: [
-        { id: 'm-al3-1', title: 'Founder mode vs. professional management', timestamp: '1:05:20', whyItMatters: `A sharp, quotable framing of a debate every scaling company eventually has.` },
       ],
     },
   },

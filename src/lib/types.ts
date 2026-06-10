@@ -37,24 +37,27 @@ export interface Podcast {
   locked?: boolean
 }
 
+/** A plain conclusion — title + supporting detail. Used by the weekly digest,
+ *  where points synthesise across episodes and have no single timestamp. */
 export interface Takeaway {
   title: string
   detail: string
 }
 
+/** An episode highlight — the merged "takeaway + interesting moment": one beat
+ *  worth revisiting, anchored to where in the episode it happens. */
+export interface Highlight extends Takeaway {
+  id: string
+  timestamp: string // "45:12", or "—" when unknown (show-notes-only summaries)
+  /** Links to a transcript segment so a click can jump straight to it. */
+  segmentId?: string
+  /** Flagged by the AI as one of the few most important — the key takeaways. */
+  key?: boolean
+}
+
 export interface QAItem {
   q: string
   a: string
-}
-
-/** A "double-click" moment the AI flagged as genuinely interesting. */
-export interface InterestingMoment {
-  id: string
-  title: string
-  timestamp: string // "45:12"
-  whyItMatters: string
-  /** Links to a transcript segment so "Open transcript" can jump to it. */
-  segmentId?: string
 }
 
 export interface TranscriptSegment {
@@ -65,7 +68,7 @@ export interface TranscriptSegment {
   text: string
   /** When set, this segment contains a highlighted span tied to a summary module. */
   highlight?: {
-    /** Matches an InterestingMoment.id or a takeaway anchor. */
+    /** Matches a Highlight.id. */
     refId: string
     /** The exact substring of `text` to wrap in a <mark>. */
     quote: string
@@ -77,9 +80,9 @@ export interface TranscriptSegment {
 export interface Summary {
   /** The readable one-page synthesis, as paragraphs. */
   synthesis: string[]
-  takeaways: Takeaway[]
+  /** Timestamped highlights in timeline order; the `key` ones are the headline takeaways. */
+  highlights: Highlight[]
   qa: QAItem[]
-  moments: InterestingMoment[]
 }
 
 export interface EpisodeEntities {

@@ -4,6 +4,7 @@ import { useDateRange } from '../store/DateRange'
 import { useChannelFilter } from '../store/ChannelFilter'
 import { useSentiment } from '../store/Sentiment'
 import { formatDuration, longDate, relativeDate } from '../lib/format'
+import { keyHighlights } from '../lib/highlights'
 import { episodeTone } from '../lib/tone'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
@@ -37,8 +38,8 @@ export default function Home() {
   const ready = inWindow.filter((e) => e.status === 'ready')
   const stats = {
     processed: ready.length,
-    takeaways: ready.reduce((n, e) => n + (e.summary?.takeaways.length ?? 0), 0),
-    moments: ready.reduce((n, e) => n + (e.summary?.moments.length ?? 0), 0),
+    highlights: ready.reduce((n, e) => n + (e.summary?.highlights.length ?? 0), 0),
+    questions: ready.reduce((n, e) => n + (e.summary?.qa.length ?? 0), 0),
   }
   // Real topics drawn from analysed episodes — every chip is backed by data.
   const topics = topTopics(inWindow)
@@ -109,7 +110,7 @@ export default function Home() {
               <div className="mt-md border-t border-outline-variant pt-md">
                 <h4 className="mb-2.5 text-[15px] font-semibold text-on-surface">Key Takeaways</h4>
                 <ul className="space-y-2">
-                  {featured.summary.takeaways.slice(0, 4).map((t, i) => (
+                  {keyHighlights(featured.summary).slice(0, 4).map((t, i) => (
                     <li key={i} className="flex gap-2.5 text-body-md text-on-surface-variant">
                       <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
                       <span>
@@ -227,8 +228,8 @@ export default function Home() {
             </h3>
             <div className="grid grid-cols-3 gap-2 text-center">
               <Stat label="Episodes Processed" value={stats.processed} />
-              <Stat label="Key Takeaways" value={stats.takeaways} />
-              <Stat label="Interesting Moments" value={stats.moments} />
+              <Stat label="Highlights" value={stats.highlights} />
+              <Stat label="Questions Answered" value={stats.questions} />
             </div>
             {topics.length > 0 && (
               <>

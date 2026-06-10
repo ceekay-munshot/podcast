@@ -5,20 +5,24 @@ import { useAppData } from '../store/AppData'
 import { useSentiment } from '../store/Sentiment'
 import { downloadSummary } from '../lib/exportSummary'
 import { formatDuration, longDate, statusMeta } from '../lib/format'
-import type { Episode, InterestingMoment, ProcessingStatus, Takeaway, TranscriptSegment } from '../lib/types'
+import type { Episode, ProcessingStatus, Takeaway, TranscriptSegment } from '../lib/types'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
 import { RichText, entityTerms } from '../components/RichText'
 import { analyzeSentiment, findSentimentSpans, sentimentClass, sentimentTitle } from '../lib/sentiment'
+import { keyHighlights } from '../lib/highlights'
 import { episodeTone } from '../lib/tone'
 import { ToneMeter } from '../components/ToneMeter'
 import { SourceLink } from '../components/SourceLink'
 import { StatusBadge } from '../components/StatusBadge'
 import { anchorSegment } from '../lib/topics'
 
-type Tab = 'summary' | 'takeaways' | 'qa' | 'moments' | 'transcript'
+type Tab = 'summary' | 'highlights' | 'qa' | 'transcript'
 
-// Colored styling for interesting-moment tiles, cycled by index.
+// Old deep links (the two tabs this one replaced) still land somewhere sensible.
+const LEGACY_TABS: Record<string, Tab> = { takeaways: 'highlights', moments: 'highlights' }
+
+// Colored styling for highlight tiles, cycled by index.
 const TILES = [
   { icon: 'hub', text: 'text-[#2563eb]', tile: 'bg-[#eff5ff]', pill: 'bg-[#eff5ff] text-[#2563eb]' },
   { icon: 'memory', text: 'text-[#16a34a]', tile: 'bg-[#ecfdf3]', pill: 'bg-[#ecfdf3] text-[#15803d]' },
@@ -34,11 +38,12 @@ export default function EpisodeDetail() {
   const { episodeById, podcastById, summarizeEpisode, needsApiKey } = useAppData()
   const { on: sentimentOn } = useSentiment()
 
-  const paramTab = params.get('tab') as Tab | null
+  const raw = params.get('tab')
+  const paramTab = raw ? (LEGACY_TABS[raw] ?? (raw as Tab)) : null
   const [tab, setTab] = useState<Tab>(paramTab ?? 'summary')
   const [jumpTo, setJumpTo] = useState<string | null>(null)
   const [jumpTick, setJumpTick] = useState(0) // re-fires the scroll even when re-jumping the same segment
-  const [jumpLabel, setJumpLabel] = useState<string | undefined>(undefined) // the takeaway/moment we jumped from
+  const [jumpLabel, setJumpLabel] = useState<string | undefined>(undefined) // the highlight we jumped from
   const [shared, setShared] = useState(false)
 
   const episode = id ? episodeById(id) : undefined
@@ -83,9 +88,8 @@ export default function EpisodeDetail() {
   const hasTranscript = !!episode.transcript?.length
   const TABS: { id: Tab; label: string; show: boolean }[] = [
     { id: 'summary', label: 'Summary', show: true },
-    { id: 'takeaways', label: 'Takeaways', show: !!episode.summary },
+    { id: 'highlights', label: 'Highlights', show: !!episode.summary?.highlights.length },
     { id: 'qa', label: 'Q&A', show: !!episode.summary?.qa.length },
-    { id: 'moments', label: 'Interesting Moments', show: !!episode.summary?.moments.length },
     { id: 'transcript', label: 'Transcript', show: true },
   ]
 
@@ -164,9 +168,8 @@ export default function EpisodeDetail() {
           </div>
 
           {tab === 'summary' && <SummaryTab episode={episode} />}
-          {tab === 'takeaways' && <TakeawaysTab episode={episode} onOpen={openTranscript} />}
+          {tab === 'highlights' && <HighlightsTab episode={episode} hasTranscript={hasTranscript} onOpen={openTranscript} />}
           {tab === 'qa' && <QATab episode={episode} />}
-          {tab === 'moments' && <MomentsTab episode={episode} hasTranscript={hasTranscript} onOpen={openTranscript} />}
           {tab === 'transcript' && (
             <TranscriptTab episode={episode} focusId={jumpTo} focusLabel={jumpLabel} focusTick={jumpTick} />
           )}
@@ -182,26 +185,27 @@ function SummaryTab({ episode }: { episode: Episode }) {
   const s = episode.summary!
   const terms = entityTerms(episode.entities)
 
-  // Split the takeaways into a bull / bear / neutral read by their net sentiment,
-  // so the brief leads with what's working and what to watch — not a flat wall.
+  // Split the key takeaways (the highlights the AI flagged) into a bull / bear /
+  // neutral read by net sentiment, so the brief leads with what's working and
+  // what to watch — not a flat wall.
+  const takeaways = useMemo(() => keyHighlights(s), [s])
   const groups = useMemo(() => {
     const pos: Takeaway[] = []
     const neg: Takeaway[] = []
     const neutral: Takeaway[] = []
-    for (const t of s.takeaways) {
+    for (const t of takeaways) {
       const score = analyzeSentiment(`${t.title}. ${t.detail}`).score
       ;(score > 0 ? pos : score < 0 ? neg : neutral).push(t)
     }
     return { pos, neg, neutral }
-  }, [s.takeaways])
+  }, [takeaways])
 
   // Show the bull/bear split only when there's a real lean on either side;
   // otherwise fall back to a clean bulleted read (also when coloring is off).
   const split = sentimentOn && (groups.pos.length > 0 || groups.neg.length > 0)
 
   const glance = [
-    { icon: 'star', label: 'Key Takeaways', value: s.takeaways.length },
-    { icon: 'schedule', label: 'Interesting Moments', value: s.moments.length },
+    { icon: 'star', label: 'Highlights', value: s.highlights.length },
     { icon: 'help', label: 'Q&A', value: s.qa.length },
   ]
 
@@ -230,7 +234,7 @@ function SummaryTab({ episode }: { episode: Episode }) {
         </div>
 
         {/* Structured breakdown — bull / bear when there's signal, else a clean
-            bulleted read of the key points. Surfaces the takeaways the summary
+            bulleted read of the key points. Surfaces the key takeaways the summary
             already has instead of leaving them buried in another tab. */}
         {split ? (
           <div className="mt-lg border-t border-outline-variant pt-lg">
@@ -242,7 +246,7 @@ function SummaryTab({ episode }: { episode: Episode }) {
           </div>
         ) : (
           <KeyPoints
-            items={s.takeaways}
+            items={takeaways}
             terms={terms}
             heading="Key points"
             className="mt-lg border-t border-outline-variant pt-lg"
@@ -342,59 +346,102 @@ function KeyPoints({
   )
 }
 
-// ── Takeaways tab — numbered, with copy ──────────────────────────────────────
-function TakeawaysTab({ episode, onOpen }: { episode: Episode; onOpen: (segmentId?: string, label?: string) => void }) {
-  const s = episode.summary!
+// ── Highlights tab — the merged takeaways + moments read ─────────────────────
+// One timeline of colored tiles: every beat worth revisiting, each with a
+// timestamp that jumps into the transcript; the AI's headline takeaways carry
+// a quiet "Key" badge instead of living in a near-duplicate second tab.
+function HighlightsTab({
+  episode,
+  hasTranscript,
+  onOpen,
+}: {
+  episode: Episode
+  hasTranscript: boolean
+  onOpen: (segmentId?: string, label?: string) => void
+}) {
+  const highlights = episode.summary!.highlights
   const terms = entityTerms(episode.entities)
   const segments = episode.transcript
-  // Anchor each takeaway to the transcript passage it's drawn from, so a click
-  // jumps straight there. Null when there's no transcript or no strong match.
+  // Items the server didn't link to a row (older data, fuzzy timestamps) still
+  // jump: fall back to anchoring on the passage the text was drawn from.
   const anchors = useMemo(
-    () => s.takeaways.map((t) => anchorSegment(`${t.title} ${t.detail}`, segments)),
-    [s.takeaways, segments],
+    () => highlights.map((h) => h.segmentId ?? anchorSegment(`${h.title} ${h.detail}`, segments)),
+    [highlights, segments],
   )
+  const copyLine = (h: (typeof highlights)[number]) =>
+    `${h.timestamp !== '—' ? `${h.timestamp} — ` : ''}${h.title}: ${h.detail}`
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-outline-variant bg-surface-container-lowest shadow-card">
-      <ul className="divide-y divide-outline-variant">
-        {s.takeaways.map((t, i) => {
-          const anchor = anchors[i]
+    <section>
+      <div className="mb-md flex items-center justify-between gap-sm">
+        <div className="flex items-center gap-2">
+          <Icon name="auto_awesome" className="text-primary" fill />
+          <div>
+            <h2 className="text-[19px] font-semibold text-on-surface">Highlights</h2>
+            <p className="text-metadata text-secondary">
+              Every moment worth revisiting — <Icon name="star" size={12} fill className="relative -top-px inline text-primary" />{' '}
+              marks the key takeaways.
+            </p>
+          </div>
+        </div>
+        <CopyButton text={highlights.map(copyLine).join('\n')} label="Copy All" />
+      </div>
+
+      <ul className="flex flex-col gap-2.5">
+        {highlights.map((h, i) => {
+          const style = TILES[i % TILES.length]
+          const anchor = hasTranscript ? anchors[i] : null
           return (
-            <li key={i}>
+            <li key={h.id}>
               <div
                 role={anchor ? 'button' : undefined}
                 tabIndex={anchor ? 0 : undefined}
-                onClick={anchor ? () => onOpen(anchor, t.title) : undefined}
+                onClick={anchor ? () => onOpen(anchor, h.title) : undefined}
                 onKeyDown={
                   anchor
                     ? (e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault()
-                          onOpen(anchor, t.title)
+                          onOpen(anchor, h.title)
                         }
                       }
                     : undefined
                 }
-                className={`group flex items-start gap-md p-md transition-colors ${
-                  anchor ? 'cursor-pointer hover:bg-surface-container-low/70 focus:bg-surface-container-low/70 focus:outline-none' : ''
+                className={`group flex w-full items-start gap-md rounded-xl border border-outline-variant bg-surface-container-lowest p-md text-left shadow-card ${
+                  anchor ? 'lift cursor-pointer hover:shadow-card-hover focus:outline-none focus-visible:border-primary' : ''
                 }`}
               >
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full chip-signal text-metadata font-bold">
-                  {i + 1}
+                <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg ${style.tile}`}>
+                  <Icon name={style.icon} size={22} className={style.text} />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[16px] font-semibold text-on-surface">{t.title}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-[16px] font-semibold text-on-surface">{h.title}</p>
+                    {h.key && (
+                      <span
+                        title="Flagged by the AI as a key takeaway"
+                        className="inline-flex shrink-0 items-center gap-1 rounded-full chip-signal px-2 py-0.5 text-label-caps uppercase"
+                      >
+                        <Icon name="star" size={11} fill /> Key
+                      </span>
+                    )}
+                  </div>
                   <p className="mt-1 text-body-md text-on-surface-variant">
-                    <RichText text={t.detail} terms={terms} />
+                    <RichText text={h.detail} terms={terms} />
                   </p>
                   {anchor && (
-                    <span className="mt-2 inline-flex items-center gap-1 text-metadata font-semibold text-primary opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus:opacity-100">
+                    <span className="mt-2 inline-flex items-center gap-1 text-metadata font-semibold text-primary opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100">
                       <Icon name="article" size={15} /> Open in transcript
                       <Icon name="arrow_forward" size={14} className="transition-transform group-hover:translate-x-0.5" />
                     </span>
                   )}
                 </div>
-                <CopyButton text={`${t.title} — ${t.detail}`} />
+                <div className="flex shrink-0 items-center gap-2">
+                  {h.timestamp !== '—' && (
+                    <span className={`rounded-md px-2.5 py-1 text-metadata font-semibold ${style.pill}`}>{h.timestamp}</span>
+                  )}
+                  <CopyButton text={copyLine(h)} />
+                </div>
               </div>
             </li>
           )
@@ -427,62 +474,6 @@ function QATab({ episode }: { episode: Episode }) {
   )
 }
 
-// ── Interesting Moments tab — colored tiles ──────────────────────────────────
-function MomentsTab({
-  episode,
-  hasTranscript,
-  onOpen,
-}: {
-  episode: Episode
-  hasTranscript: boolean
-  onOpen: (segmentId?: string, label?: string) => void
-}) {
-  const moments = episode.summary!.moments
-  const terms = entityTerms(episode.entities)
-  return (
-    <section>
-      <div className="mb-md flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Icon name="auto_awesome" className="text-primary" fill />
-          <div>
-            <h2 className="text-[19px] font-semibold text-on-surface">Interesting Moments</h2>
-            <p className="text-metadata text-secondary">Key highlights automatically identified from the episode.</p>
-          </div>
-        </div>
-        <CopyButton text={moments.map((m) => `${m.timestamp} — ${m.title}: ${m.whyItMatters}`).join('\n')} label="Copy All Moments" />
-      </div>
-
-      <ul className="flex flex-col gap-2.5">
-        {moments.map((m, i) => {
-          const style = TILES[i % TILES.length]
-          const clickable = hasTranscript && m.segmentId
-          return (
-            <li key={m.id}>
-              <button
-                onClick={() => clickable && onOpen(m.segmentId, m.title)}
-                className={`flex w-full items-start gap-md rounded-xl border border-outline-variant bg-surface-container-lowest p-md text-left shadow-card ${
-                  clickable ? 'lift hover:shadow-card-hover' : 'cursor-default'
-                }`}
-              >
-                <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg ${style.tile}`}>
-                  <Icon name={style.icon} size={22} className={style.text} />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[16px] font-semibold text-on-surface">{m.title}</p>
-                  <p className="mt-1 text-body-md text-on-surface-variant">
-                    <RichText text={m.whyItMatters} terms={terms} />
-                  </p>
-                </div>
-                <span className={`shrink-0 rounded-md px-2.5 py-1 text-metadata font-semibold ${style.pill}`}>{m.timestamp}</span>
-              </button>
-            </li>
-          )
-        })}
-      </ul>
-    </section>
-  )
-}
-
 // ── Transcript tab — Highlights list ↔ transcript ────────────────────────────
 function TranscriptTab({
   episode,
@@ -497,14 +488,14 @@ function TranscriptTab({
 }) {
   const { on: sentimentOn } = useSentiment()
   const [activeRef, setActiveRef] = useState<string | null>(null)
-  // The segment we jumped to from a takeaway/moment — stays highlighted so the
+  // The segment we jumped to from a highlight — stays highlighted so the
   // reader knows exactly which passage the summary point came from.
   const [focus, setFocus] = useState<{ id: string; label?: string } | null>(
     focusId ? { id: focusId, label: focusLabel } : null,
   )
   const [q, setQ] = useState('')
   const segments = episode.transcript ?? []
-  const moments = episode.summary?.moments.filter((m) => m.segmentId) ?? []
+  const highlights = episode.summary?.highlights.filter((h) => h.segmentId) ?? []
 
   // Re-apply the persistent highlight whenever a fresh jump arrives.
   useEffect(() => {
@@ -529,7 +520,7 @@ function TranscriptTab({
   const visible = needle ? segments.filter((s) => s.text.toLowerCase().includes(needle)) : segments
 
   function jump(segmentId?: string, refId?: string) {
-    setFocus(null) // a Highlights-panel pick takes over from the takeaway focus
+    setFocus(null) // a Highlights-panel pick takes over from the jumped-from focus
     if (refId) setActiveRef(refId)
     if (segmentId) document.getElementById(`seg-${segmentId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
@@ -541,23 +532,26 @@ function TranscriptTab({
         <div className="mb-2 flex items-center gap-2">
           <h3 className="text-[15px] font-semibold text-on-surface">Highlights</h3>
           <span className="grid h-5 min-w-5 place-items-center rounded-full chip-signal px-1.5 text-[11px] font-bold">
-            {moments.length}
+            {highlights.length}
           </span>
         </div>
         <ul className="flex flex-col gap-2">
-          {moments.map((m) => {
-            const active = activeRef === m.id
+          {highlights.map((h) => {
+            const active = activeRef === h.id
             return (
-              <li key={m.id}>
+              <li key={h.id}>
                 <button
-                  onMouseEnter={() => setActiveRef(m.id)}
-                  onClick={() => jump(m.segmentId, m.id)}
+                  onMouseEnter={() => setActiveRef(h.id)}
+                  onClick={() => jump(h.segmentId, h.id)}
                   className={`press-soft w-full rounded-lg border p-3 text-left ${
                     active ? 'border-l-4 border-primary bg-[#eff5ff]' : 'border-outline-variant bg-surface-container-lowest hover:bg-surface-container-low'
                   }`}
                 >
-                  <p className="text-metadata font-semibold text-primary">{m.timestamp}</p>
-                  <p className="mt-0.5 text-[14px] font-medium text-on-surface">{m.title}</p>
+                  <p className="flex items-center gap-1.5 text-metadata font-semibold text-primary">
+                    {h.timestamp}
+                    {h.key && <Icon name="star" size={12} fill />}
+                  </p>
+                  <p className="mt-0.5 text-[14px] font-medium text-on-surface">{h.title}</p>
                 </button>
               </li>
             )
@@ -606,7 +600,7 @@ function TranscriptRow({
   seg: TranscriptSegment
   activeRef: string | null
   onHover: (ref: string | null) => void
-  /** The segment a takeaway/moment jumped to — persistently highlighted. */
+  /** The segment a highlight jumped to — persistently highlighted. */
   focused?: boolean
   focusLabel?: string
   sentimentOn: boolean
@@ -735,7 +729,7 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
   return (
     <button
       onClick={(e) => {
-        e.stopPropagation() // don't trigger a takeaway-row jump when copying
+        e.stopPropagation() // don't trigger a highlight-row jump when copying
         copy()
       }}
       className="press grid h-8 w-8 shrink-0 place-items-center rounded-lg text-secondary hover:bg-surface-container hover:text-primary"

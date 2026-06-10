@@ -108,8 +108,8 @@ function WeeklyDoc({
 
   const stats = [
     { icon: 'play_circle', label: 'Episodes Processed', value: weekly.episodeCount, style: THEME_STYLES[0] },
-    { icon: 'format_list_bulleted', label: 'Key Takeaways', value: ready.reduce((n, e) => n + (e.summary?.takeaways.length ?? 0), 0), style: THEME_STYLES[1] },
-    { icon: 'lightbulb', label: 'Interesting Moments', value: ready.reduce((n, e) => n + (e.summary?.moments.length ?? 0), 0), style: THEME_STYLES[2] },
+    { icon: 'lightbulb', label: 'Highlights', value: ready.reduce((n, e) => n + (e.summary?.highlights.length ?? 0), 0), style: THEME_STYLES[1] },
+    { icon: 'help', label: 'Questions Answered', value: ready.reduce((n, e) => n + (e.summary?.qa.length ?? 0), 0), style: THEME_STYLES[2] },
     { icon: 'podcasts', label: 'Podcasts', value: trackedCount, style: THEME_STYLES[3] },
   ]
 
