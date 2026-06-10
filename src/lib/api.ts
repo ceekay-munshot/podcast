@@ -125,10 +125,11 @@ export function unsubscribeWeekly(email: string): Promise<{ subscribed: boolean;
 // AbortSignal to cancel a superseded keystroke — AbortError is re-thrown so the
 // caller can ignore it rather than clobber state.
 //
-// Plain text queries Apple's Search API straight from the browser: it supports
-// CORS, and Apple's WAF blocks datacenter IPs (our server) but not residential
-// ones (this browser). /api/search-podcasts stays the fallback — and the only
-// path for URLs, whose resolution (SSRF guard, feed parsing) lives server-side.
+// Plain text — and Apple show URLs, which carry their collection id — query
+// Apple's Search API straight from the browser: it supports CORS, and Apple's
+// WAF blocks datacenter IPs (our server) but not residential ones (this
+// browser). /api/search-podcasts stays the fallback — and the only path for
+// other URLs, whose resolution (SSRF guard, feed parsing) lives server-side.
 export function searchPodcasts(query: string, signal?: AbortSignal, limit?: number): Promise<PodcastSearchResult[]> {
   const q = query.trim()
   if (!q) return Promise.resolve([])
@@ -139,8 +140,25 @@ export function searchPodcasts(query: string, signal?: AbortSignal, limit?: numb
         if ((err as { name?: string })?.name === 'AbortError') throw err
         return []
       })
-  if (/^https?:\/\//i.test(q)) return viaServer()
+  if (/^https?:\/\//i.test(q)) {
+    const appleId = appleShowId(q)
+    if (!appleId) return viaServer()
+    return itunesDirect(`https://itunes.apple.com/lookup?id=${encodeURIComponent(appleId)}&entity=podcast`, signal) //
+      .then((direct) => (direct.length ? direct : viaServer()))
+  }
   return searchItunesDirect(q, signal, limit).then((direct) => (direct.length ? direct : viaServer()))
+}
+
+// …podcasts.apple.com/us/podcast/<slug>/id12345 → "12345" (null for non-Apple).
+function appleShowId(rawUrl: string): string | null {
+  try {
+    const u = new URL(rawUrl)
+    const host = u.hostname.toLowerCase()
+    if (host !== 'apple.com' && !host.endsWith('.apple.com')) return null
+    return u.pathname.match(/\/id(\d+)/)?.[1] ?? null
+  } catch {
+    return null
+  }
 }
 
 // One Apple Search row → the wire shape /api/search-podcasts returns. Kept
@@ -157,7 +175,10 @@ interface ItunesRow {
 
 function searchItunesDirect(term: string, signal?: AbortSignal, limit = 12): Promise<PodcastSearchResult[]> {
   const cap = Math.min(Math.max(1, Math.floor(limit) || 12), 50)
-  const url = `https://itunes.apple.com/search?media=podcast&entity=podcast&limit=${cap}&term=${encodeURIComponent(term)}`
+  return itunesDirect(`https://itunes.apple.com/search?media=podcast&entity=podcast&limit=${cap}&term=${encodeURIComponent(term)}`, signal)
+}
+
+function itunesDirect(url: string, signal?: AbortSignal): Promise<PodcastSearchResult[]> {
   return fetch(url, { signal })
     .then((r) => (r.ok ? (r.json() as Promise<{ results?: ItunesRow[] }>) : { results: [] }))
     .then(({ results }) => {
