@@ -7,6 +7,7 @@ const NAV = [
   { to: '/', label: 'Home', icon: 'home', end: true },
   { to: '/episodes', label: 'Episodes', icon: 'play_circle' },
   { to: '/weekly', label: 'Weekly Summary', icon: 'bar_chart' },
+  { to: '/discover', label: 'Discover', icon: 'explore' },
 ]
 
 /** The static sidebar — desktop/tablet only; below `md` the drawer takes over. */

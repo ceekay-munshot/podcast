@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
@@ -7,12 +7,6 @@ import type { Podcast, PodcastSearchResult } from '../lib/types'
 import { stableHash } from '../lib/hash'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
-
-const STEPS = [
-  { n: 1, title: 'Add Podcasts', sub: 'Choose podcasts to track' },
-  { n: 2, title: 'Your Interests', sub: 'Tell us what you care about' },
-  { n: 3, title: 'Review & Finish', sub: 'Confirm and get started' },
-]
 
 // Cover palette for results with no artwork (e.g. YouTube channels). Deterministic
 // per result so the same show always gets the same color.
@@ -97,140 +91,271 @@ export default function Discover() {
     setJustAdded(r.title)
   }
 
-  return (
-    <div className="animate-fade-up pb-24">
-      {/* Stepper */}
-      <ol className="mb-xl flex items-center gap-2">
-        {STEPS.map((s, i) => (
-          <li key={s.n} className="flex flex-1 items-center gap-3">
-            <span
-              className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[13px] font-bold ${
-                s.n === 1 ? 'bg-primary text-on-primary' : 'border border-outline-variant text-secondary'
-              }`}
-            >
-              {s.n}
-            </span>
-            <div className="hidden sm:block">
-              <p className={`text-[14px] font-semibold ${s.n === 1 ? 'text-primary' : 'text-on-surface'}`}>{s.title}</p>
-              <p className="text-[12px] text-secondary">{s.sub}</p>
-            </div>
-            {i < STEPS.length - 1 && <span className="mx-2 hidden h-px flex-1 bg-outline-variant sm:block" />}
-          </li>
-        ))}
-      </ol>
+  // ── Related suggestions — directory shows in the categories the user picked ──
+  // The two dominant categories across the selection drive one directory query
+  // each (cached per category, so toggling shows never refetches); results are
+  // interleaved, then deduped at render time against the catalog and the
+  // selection so a pick instantly drops out of "More like your picks".
+  const catKey = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const p of tracked)
+      for (const c of p.category.split('·').map((s) => s.trim()).filter(Boolean)) counts.set(c, (counts.get(c) ?? 0) + 1)
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 2)
+      .map(([c]) => c)
+      .join('|')
+  }, [tracked.map((p) => p.id).join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
 
-      {/* Heading + search */}
-      <div className="mx-auto max-w-3xl text-center">
-        <h1 className="text-display-lg tracking-tight text-on-surface">Track the podcasts that matter to you</h1>
-        <p className="mt-2 text-body-lg text-secondary">Search Apple Podcasts, or paste an RSS feed or YouTube channel URL to get started.</p>
-        <form onSubmit={(e: FormEvent) => e.preventDefault()} className="relative mx-auto mt-lg">
-          <Icon name="search" size={22} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-outline" />
-          <input
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value)
-              setJustAdded(null)
-            }}
-            placeholder="Search podcasts or paste an RSS / YouTube channel URL"
-            className="w-full rounded-xl border border-outline-variant bg-surface-container-lowest py-3.5 pl-12 pr-11 text-body-md shadow-card outline-none focus:border-primary"
-            autoFocus
-          />
-          {searching && (
-            <Icon name="progress_activity" size={20} className="absolute right-4 top-1/2 -translate-y-1/2 animate-spin text-outline" />
+  const relCache = useRef(new Map<string, PodcastSearchResult[]>())
+  const [relatedRaw, setRelatedRaw] = useState<PodcastSearchResult[]>([])
+  const [relatedLoading, setRelatedLoading] = useState(false)
+
+  useEffect(() => {
+    if (!catKey) {
+      setRelatedRaw([])
+      return
+    }
+    const cats = catKey.split('|')
+    const controller = new AbortController()
+    const allCached = cats.every((c) => relCache.current.has(c))
+    if (!allCached) setRelatedLoading(true)
+    Promise.all(
+      cats.map(
+        (c) =>
+          relCache.current.get(c) ??
+          searchPodcasts(c, controller.signal)
+            .then((r) => {
+              relCache.current.set(c, r)
+              return r
+            })
+            .catch(() => [] as PodcastSearchResult[]), // aborted / unavailable → just no suggestions
+      ),
+    ).then((lists) => {
+      // Round-robin interleave so every picked category is represented up top.
+      const merged: PodcastSearchResult[] = []
+      for (let i = 0; merged.length < 24 && lists.some((l) => i < l.length); i++)
+        for (const l of lists) if (l[i]) merged.push(l[i])
+      setRelatedRaw(merged)
+      setRelatedLoading(false)
+    })
+    return () => controller.abort()
+  }, [catKey])
+
+  const related = useMemo(() => {
+    const seen = new Set<string>()
+    const catalogIds = new Set(podcasts.map((p) => p.id))
+    const catalogFeeds = new Set(podcasts.map((p) => trimFeed(p.feedUrl)).filter(Boolean))
+    return relatedRaw
+      .filter((r) => {
+        const feed = trimFeed(r.feedUrl)
+        if (catalogIds.has(r.id) || (feed && catalogFeeds.has(feed)) || isTracked(r)) return false
+        const key = feed || r.id
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+      .slice(0, 6)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [relatedRaw, podcasts])
+
+  return (
+    // The fixed dock must NOT live inside the entrance animation: `fade-up`'s
+    // persistent transform (fill-mode: both) turns the wrapper into the containing
+    // block for position:fixed, pinning the dock to the page instead of the
+    // viewport — the exact misalignment the old selected-bar suffered.
+    <div className="pb-24 lg:pb-0">
+      <div className="animate-fade-up lg:grid lg:grid-cols-12 lg:gap-gutter">
+        {/* ── Main column ───────────────────────────────────────────────────── */}
+        <div className="lg:col-span-8">
+          {/* Heading + search */}
+          <div className="mx-auto max-w-3xl text-center">
+            <h1 className="text-display-lg tracking-tight text-on-surface">Track the podcasts that matter to you</h1>
+            <p className="mt-2 text-body-lg text-secondary">
+              Search Apple Podcasts, or paste an RSS feed or YouTube channel URL to get started.
+            </p>
+            <form onSubmit={(e: FormEvent) => e.preventDefault()} className="relative mx-auto mt-lg">
+              <Icon name="search" size={22} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-outline" />
+              <input
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value)
+                  setJustAdded(null)
+                }}
+                placeholder="Search podcasts or paste an RSS / YouTube channel URL"
+                className="w-full rounded-xl border border-outline-variant bg-surface-container-lowest py-3.5 pl-12 pr-11 text-body-md shadow-card outline-none focus:border-primary"
+                autoFocus
+              />
+              {searching && (
+                <Icon name="progress_activity" size={20} className="absolute right-4 top-1/2 -translate-y-1/2 animate-spin text-outline" />
+              )}
+            </form>
+            {justAdded && (
+              <p className="mt-sm inline-flex items-center gap-1.5 rounded-lg chip-signal px-3 py-2 text-metadata font-medium">
+                <Icon name="check_circle" size={16} fill /> Tracking <span className="font-semibold">{justAdded}</span> — we'll detect new
+                episodes.
+              </p>
+            )}
+          </div>
+
+          {/* Search results */}
+          {q && (
+            <div className="mt-xl">
+              <h3 className="mb-md text-[19px] font-semibold text-on-surface">Search results</h3>
+              {searching && results.length === 0 ? (
+                <CardSkeletons />
+              ) : error ? (
+                <div className="rounded-xl border border-dashed border-outline-variant bg-surface-container-low p-lg text-center">
+                  <p className="text-body-md text-on-surface-variant">Search is unavailable right now. Please try again in a moment.</p>
+                </div>
+              ) : results.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-outline-variant bg-surface-container-low p-lg text-center">
+                  <p className="text-body-md text-on-surface">
+                    No podcasts found for <span className="font-semibold">“{q}”</span>.
+                  </p>
+                  <p className="mt-1 text-metadata text-secondary">Try a different name, or paste an RSS feed or YouTube channel URL.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-gutter md:grid-cols-2">
+                  {results.map((r) => {
+                    const trackedNow = isTracked(r)
+                    return (
+                      <PodcastCard
+                        key={r.id}
+                        podcast={{ ...toPodcast(r), tracked: trackedNow }}
+                        onToggle={() => {
+                          if (!trackedNow) onAdd(r)
+                        }}
+                      />
+                    )
+                  })}
+                </div>
+              )}
+            </div>
           )}
-        </form>
-        {justAdded && (
-          <p className="mt-sm inline-flex items-center gap-1.5 rounded-lg chip-signal px-3 py-2 text-metadata font-medium">
-            <Icon name="check_circle" size={16} fill /> Tracking <span className="font-semibold">{justAdded}</span> — we'll detect new episodes.
-          </p>
-        )}
+
+          {/* Related to the current selection */}
+          {tracked.length > 0 && (relatedLoading || related.length > 0) && (
+            <div className="mt-xl">
+              <h3 className="text-[19px] font-semibold text-on-surface">More like your picks</h3>
+              <p className="mb-md mt-0.5 text-metadata text-secondary">
+                From the directory, based on the categories you follow{catKey ? ` — ${catKey.split('|').join(', ')}` : ''}.
+              </p>
+              {relatedLoading && related.length === 0 ? (
+                <CardSkeletons />
+              ) : (
+                <div className="grid grid-cols-1 gap-gutter md:grid-cols-2">
+                  {related.map((r) => (
+                    <PodcastCard key={r.id} podcast={{ ...toPodcast(r), tracked: false }} onToggle={() => onAdd(r)} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Popular */}
+          <h3 className="mb-md mt-xl text-[19px] font-semibold text-on-surface">Popular Right Now</h3>
+          <div className="grid grid-cols-1 gap-gutter md:grid-cols-2">
+            {podcasts.map((p) => (
+              <PodcastCard key={p.id} podcast={p} onToggle={() => toggleTracked(p.id)} />
+            ))}
+          </div>
+        </div>
+
+        {/* ── Selection rail (desktop) ──────────────────────────────────────── */}
+        <aside className="hidden lg:col-span-4 lg:block">
+          <div className="sticky top-20 flex max-h-[calc(100vh-6.5rem)] flex-col overflow-hidden rounded-2xl border border-outline-variant bg-surface-container-lowest shadow-card">
+            <div className="border-b border-outline-variant p-md">
+              <div className="flex items-center gap-2">
+                <h2 className="text-[17px] font-semibold text-on-surface">Your podcasts</h2>
+                {tracked.length > 0 && (
+                  <span className="grid h-5 min-w-5 place-items-center rounded-full chip-signal px-1.5 text-[11px] font-bold">
+                    {tracked.length}
+                  </span>
+                )}
+              </div>
+              <p className="mt-0.5 text-metadata text-secondary">New episodes are detected automatically.</p>
+            </div>
+
+            {tracked.length === 0 ? (
+              <div className="grid place-items-center gap-1 px-md py-xl text-center">
+                <Icon name="playlist_add" size={28} className="text-outline" />
+                <p className="text-[14px] font-medium text-on-surface-variant">Nothing tracked yet</p>
+                <p className="text-metadata text-secondary">Pick a few shows to build your feed.</p>
+              </div>
+            ) : (
+              <ul className="flex-1 overflow-y-auto p-2">
+                {tracked.map((p) => (
+                  <li key={p.id}>
+                    <div className="group flex items-center gap-2.5 rounded-lg px-2 py-2 transition-colors hover:bg-surface-container-low">
+                      <CoverTile podcast={p} className="h-9 w-9 shrink-0" rounded="rounded-lg" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[14px] font-medium text-on-surface">{p.title}</p>
+                        <p className="truncate text-[12px] text-secondary">{p.category}</p>
+                      </div>
+                      <button
+                        onClick={() => toggleTracked(p.id)}
+                        aria-label={`Remove ${p.title}`}
+                        className="press grid h-7 w-7 shrink-0 place-items-center rounded-md text-outline hover:bg-surface-container hover:text-error"
+                      >
+                        <Icon name="close" size={16} />
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {tracked.length > 0 && (
+              <div className="border-t border-outline-variant p-md">
+                <button
+                  onClick={() => navigate('/')}
+                  className="press flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-lg py-2.5 text-metadata font-semibold text-on-primary hover:bg-primary-container"
+                >
+                  Continue <Icon name="arrow_forward" size={18} />
+                </button>
+              </div>
+            )}
+          </div>
+        </aside>
       </div>
 
-      {/* Search results */}
-      {q && (
-        <div className="mt-xl">
-          <h3 className="mb-md text-[19px] font-semibold text-on-surface">Search results</h3>
-          {searching && results.length === 0 ? (
-            <div className="grid grid-cols-1 gap-gutter md:grid-cols-2">
-              {[0, 1, 2, 3].map((i) => (
-                <div key={i} className="flex items-center gap-md rounded-xl border border-outline-variant bg-surface-container-lowest p-md">
-                  <div className="h-16 w-16 shrink-0 animate-pulse rounded-xl bg-surface-container-high" />
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <div className="h-4 w-1/2 animate-pulse rounded bg-surface-container-high" />
-                    <div className="h-3 w-1/4 animate-pulse rounded bg-surface-container-high" />
-                    <div className="h-3 w-3/4 animate-pulse rounded bg-surface-container-high" />
-                  </div>
-                </div>
+      {/* ── Selection dock (small screens) — one aligned row, never wraps ───── */}
+      {tracked.length > 0 && (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-outline-variant bg-surface/95 backdrop-blur-xl lg:hidden">
+          <div className="flex items-center gap-sm px-md py-3">
+            <div className="flex shrink-0 -space-x-2">
+              {tracked.slice(0, 4).map((p) => (
+                <CoverTile key={p.id} podcast={p} className="h-8 w-8 ring-2 ring-surface" rounded="rounded-lg" />
               ))}
             </div>
-          ) : error ? (
-            <div className="rounded-xl border border-dashed border-outline-variant bg-surface-container-low p-lg text-center">
-              <p className="text-body-md text-on-surface-variant">Search is unavailable right now. Please try again in a moment.</p>
-            </div>
-          ) : results.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-outline-variant bg-surface-container-low p-lg text-center">
-              <p className="text-body-md text-on-surface">
-                No podcasts found for <span className="font-semibold">“{q}”</span>.
-              </p>
-              <p className="mt-1 text-metadata text-secondary">Try a different name, or paste an RSS feed or YouTube channel URL.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-gutter md:grid-cols-2">
-              {results.map((r) => {
-                const trackedNow = isTracked(r)
-                return (
-                  <PodcastCard
-                    key={r.id}
-                    podcast={{ ...toPodcast(r), tracked: trackedNow }}
-                    onToggle={() => {
-                      if (!trackedNow) onAdd(r)
-                    }}
-                  />
-                )
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Popular */}
-      <h3 className="mb-md mt-xl text-[19px] font-semibold text-on-surface">Popular Right Now</h3>
-      <div className="grid grid-cols-1 gap-gutter md:grid-cols-2">
-        {podcasts.map((p) => (
-          <PodcastCard key={p.id} podcast={p} onToggle={() => toggleTracked(p.id)} />
-        ))}
-      </div>
-
-      {/* Selected bar */}
-      {tracked.length > 0 && (
-        <div className="fixed inset-x-0 bottom-0 z-30 pl-64">
-          <div className="mx-auto max-w-container px-lg pb-4">
-            <div className="flex flex-wrap items-center gap-md rounded-2xl border border-outline-variant bg-surface/95 px-md py-3 shadow-player backdrop-blur-xl">
-              <div className="shrink-0">
-                <p className="text-[15px] font-semibold text-on-surface">Selected ({tracked.length})</p>
-                <p className="text-[12px] text-secondary">You can add or remove podcasts anytime.</p>
-              </div>
-              <div className="flex min-w-0 flex-1 flex-wrap gap-2">
-                {tracked.slice(0, 4).map((p) => (
-                  <span key={p.id} className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant bg-surface px-2 py-1.5 text-[13px] font-medium text-on-surface">
-                    <CoverTile podcast={p} className="h-5 w-5" rounded="rounded" /> {p.title}
-                    <button onClick={() => toggleTracked(p.id)} className="press text-outline hover:text-error" aria-label={`Remove ${p.title}`}>
-                      <Icon name="close" size={15} />
-                    </button>
-                  </span>
-                ))}
-                {tracked.length > 4 && <span className="self-center text-[13px] text-secondary">+{tracked.length - 4} more</span>}
-              </div>
-              <button
-                onClick={() => navigate('/')}
-                className="press inline-flex shrink-0 items-center gap-2 rounded-lg bg-primary px-lg py-2.5 text-metadata font-semibold text-on-primary hover:bg-primary-container"
-              >
-                Continue <Icon name="arrow_forward" size={18} />
-              </button>
-            </div>
+            <p className="min-w-0 truncate text-[14px] font-semibold text-on-surface">{tracked.length} tracked</p>
+            <button
+              onClick={() => navigate('/')}
+              className="press ml-auto inline-flex shrink-0 items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary hover:bg-primary-container"
+            >
+              Continue <Icon name="arrow_forward" size={18} />
+            </button>
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function CardSkeletons() {
+  return (
+    <div className="grid grid-cols-1 gap-gutter md:grid-cols-2">
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} className="flex items-center gap-md rounded-xl border border-outline-variant bg-surface-container-lowest p-md">
+          <div className="h-16 w-16 shrink-0 animate-pulse rounded-xl bg-surface-container-high" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="h-4 w-1/2 animate-pulse rounded bg-surface-container-high" />
+            <div className="h-3 w-1/4 animate-pulse rounded bg-surface-container-high" />
+            <div className="h-3 w-3/4 animate-pulse rounded bg-surface-container-high" />
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
@@ -276,7 +401,7 @@ function PodcastCard({ podcast, onToggle }: { podcast: Podcast; onToggle: () => 
     >
       <CoverTile podcast={podcast} className="h-16 w-16 shrink-0" rounded="rounded-xl" showSource />
       <div className="min-w-0 flex-1">
-        <h4 className="text-[16px] font-semibold text-on-surface">{podcast.title}</h4>
+        <h4 className="line-clamp-2 text-[16px] font-semibold text-on-surface">{podcast.title}</h4>
         <p className="text-[12px] text-secondary">{podcast.category}</p>
         <p className="mt-0.5 line-clamp-1 text-metadata text-on-surface-variant">{podcast.description || podcast.author}</p>
       </div>
