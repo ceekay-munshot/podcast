@@ -7,6 +7,7 @@
 :root {
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1); /* iOS-like sheet/drawer glide */
 }
 
 /* Material Symbols ------------------------------------------------------- */
@@ -324,6 +325,35 @@
   }
 }
 
+/* Mobile nav drawer — slides in from the left edge, the side its ☰ trigger
+   lives on. Stays mounted so the transform/opacity transitions are
+   interruptible (a quick open→close retargets mid-glide instead of
+   restarting); visibility flips after the exit finishes so the closed drawer
+   is unreachable to keyboard and screen readers. Enter glides, exit snaps. */
+.drawer {
+  visibility: hidden;
+  transition: visibility 0s 200ms;
+}
+.drawer[data-open='true'] {
+  visibility: visible;
+  transition-delay: 0s;
+}
+.drawer-scrim {
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+.drawer[data-open='true'] .drawer-scrim {
+  opacity: 1;
+}
+.drawer-panel {
+  transform: translateX(-100%);
+  transition: transform 200ms var(--ease-drawer);
+}
+.drawer[data-open='true'] .drawer-panel {
+  transform: translateX(0);
+  transition-duration: 260ms;
+}
+
 /* Reduced motion: keep the color/opacity fades that aid comprehension; drop
    every transform-based movement and the entrance translate. */
 @media (prefers-reduced-motion: reduce) {
@@ -346,6 +376,15 @@
     .pop {
       transform: none;
     }
+  }
+  /* Drawer: gentler, not gone — keep the fade, drop the slide. */
+  .drawer-panel {
+    transform: none;
+    opacity: 0;
+    transition: opacity 160ms ease;
+  }
+  .drawer[data-open='true'] .drawer-panel {
+    opacity: 1;
   }
   /* Pipeline: keep the determinate fills (they convey real progress) but drop
      the looping sheen / flow / halo / pop movement. */

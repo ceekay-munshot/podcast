@@ -8,7 +8,7 @@ import { useSentiment } from '../store/Sentiment'
 import { CoverTile } from './CoverTile'
 import { Icon } from './Icon'
 
-export function TopBar() {
+export function TopBar({ menuOpen, onMenu }: { menuOpen: boolean; onMenu: () => void }) {
   const navigate = useNavigate()
   const [q, setQ] = useState('')
   const { podcasts, episodes } = useAppData()
@@ -31,7 +31,18 @@ export function TopBar() {
 
   return (
     <header className="sticky top-0 z-40 h-16 border-b border-outline-variant bg-surface/85 backdrop-blur-md">
-      <div className="flex h-full items-center gap-md px-lg">
+      <div className="flex h-full items-center gap-sm px-md md:gap-md md:px-lg">
+        {/* Mobile nav trigger — the drawer slides in from this side */}
+        <button
+          onClick={onMenu}
+          aria-label="Open navigation"
+          aria-expanded={menuOpen}
+          aria-controls="mobile-nav"
+          className="press -ml-1 grid h-10 w-10 shrink-0 place-items-center rounded-lg text-on-surface hover:bg-surface-container-low md:hidden"
+        >
+          <Icon name="menu" size={22} />
+        </button>
+
         {/* Search */}
         <form onSubmit={onSubmit} className="group relative w-full max-w-xl">
           <Icon
