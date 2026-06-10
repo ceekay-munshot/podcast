@@ -9,6 +9,7 @@ import { summarizeEpisode } from './server/summarize'
 import { fileSummaryStore } from './server/summaryStore.node'
 import { handleChannels } from './server/channelStore'
 import { fileChannelStore } from './server/channelStore.node'
+import { resolveVideoId } from './server/resolveVideo'
 
 function json(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status
@@ -67,6 +68,15 @@ function liveApiPlugin(config: {
           json(res, 200, feed && id ? await episodesForFeed(feed, id) : await getLiveEpisodes(store))
         } catch {
           json(res, 200, [])
+        }
+      })
+
+      server.middlewares.use('/api/resolve-video', async (req, res) => {
+        try {
+          const params = new URL(req.url ?? '', 'http://localhost').searchParams
+          json(res, 200, { videoId: await resolveVideoId(params.get('q') ?? '') })
+        } catch {
+          json(res, 200, { videoId: null })
         }
       })
 

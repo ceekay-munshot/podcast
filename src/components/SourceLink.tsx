@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Episode, Podcast } from '../lib/types'
+import { resolveVideo } from '../lib/api'
 import { episodeSourceUrl, sourceLabel, youtubeVideoId } from '../lib/source'
 import { Icon } from './Icon'
 
@@ -12,11 +13,13 @@ interface SourceLinkProps {
   className?: string
 }
 
-// Branded "Listen on Apple Podcasts" / "Watch on YouTube" entry point. When the
-// episode links straight to a video we play it in an in-app modal (YouTube's
-// /embed/ endpoint is built for iframes) — navigating to youtube.com breaks when
-// the app itself runs inside an embedded/sandboxed context (X-Frame-Options).
-// Without a video id we fall back to opening the source in a new tab.
+// Branded "Listen on Apple Podcasts" / "Watch on YouTube" entry point. YouTube
+// shows ALWAYS play in the in-app modal (YouTube's /embed/ endpoint is built
+// for iframes): navigating to youtube.com breaks when the app itself runs
+// inside an embedded/sandboxed context — popups inherit the sandbox and the
+// tab dies with ERR_BLOCKED_BY_RESPONSE. Episodes with a direct video link
+// play immediately; RSS-fed ones (e.g. All-In) resolve their id on open via
+// /api/resolve-video. Apple links keep the plain new-tab anchor.
 export function SourceLink({ episode, podcast, variant = 'button', className = '' }: SourceLinkProps) {
   const href = episodeSourceUrl(episode, podcast)
   const label = sourceLabel(podcast)
@@ -24,14 +27,20 @@ export function SourceLink({ episode, podcast, variant = 'button', className = '
   const videoId = youtube ? youtubeVideoId(episode) : null
   const [open, setOpen] = useState(false)
 
-  const player = videoId && open && (
-    <WatchModal videoId={videoId} title={episode.title} href={href} onClose={() => setOpen(false)} />
+  const player = youtube && open && (
+    <WatchModal
+      videoId={videoId}
+      resolveQuery={`${podcast?.title ?? ''} ${episode.title}`.trim()}
+      title={episode.title}
+      href={href}
+      onClose={() => setOpen(false)}
+    />
   )
 
   if (variant === 'icon') {
     return (
       <>
-        {videoId ? (
+        {youtube ? (
           <button
             onClick={(e) => {
               e.stopPropagation()
@@ -65,7 +74,7 @@ export function SourceLink({ episode, podcast, variant = 'button', className = '
   const pillClass = `press group inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface py-2 pl-2 pr-3.5 text-metadata font-semibold text-on-surface hover:border-primary/40 hover:bg-surface-container-low ${className}`
   return (
     <>
-      {videoId ? (
+      {youtube ? (
         <button
           onClick={(e) => {
             e.stopPropagation()
@@ -90,10 +99,42 @@ export function SourceLink({ episode, podcast, variant = 'button', className = '
 
 // In-app player — centered modal (modals keep transform-origin center), .pop
 // entrance, Esc / scrim / ✕ to close. The privacy-enhanced embed host avoids
-// dropping tracking cookies until playback starts.
-function WatchModal({ videoId, title, href, onClose }: { videoId: string; title: string; href: string; onClose: () => void }) {
+// dropping tracking cookies until playback starts. Opens instantly: with no
+// direct video id it shows a resolving state while /api/resolve-video finds
+// the episode, then swaps the player in; an unresolvable episode degrades to
+// an external search link.
+function WatchModal({
+  videoId: directId,
+  resolveQuery,
+  title,
+  href,
+  onClose,
+}: {
+  videoId: string | null
+  resolveQuery: string
+  title: string
+  href: string
+  onClose: () => void
+}) {
+  const [videoId, setVideoId] = useState(directId)
+  const [failed, setFailed] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
   const restoreRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    if (videoId) return
+    const ctrl = new AbortController()
+    resolveVideo(resolveQuery, ctrl.signal)
+      .then((id) => {
+        if (ctrl.signal.aborted) return
+        if (id) setVideoId(id)
+        else setFailed(true)
+      })
+      .catch(() => {
+        /* aborted (modal closed) — nothing to update */
+      })
+    return () => ctrl.abort()
+  }, [videoId, resolveQuery])
 
   useEffect(() => {
     restoreRef.current = document.activeElement as HTMLElement | null
@@ -126,7 +167,7 @@ function WatchModal({ videoId, title, href, onClose }: { videoId: string; title:
         <div className="flex items-center gap-sm border-b border-outline-variant py-2.5 pl-md pr-2.5">
           <p className="min-w-0 flex-1 truncate text-[14px] font-semibold text-on-surface">{title}</p>
           <a
-            href={href}
+            href={videoId ? `https://www.youtube.com/watch?v=${videoId}` : href}
             target="_blank"
             rel="noreferrer"
             className="press hidden shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-metadata font-semibold text-secondary hover:bg-surface-container-low hover:text-on-surface sm:inline-flex"
@@ -141,14 +182,38 @@ function WatchModal({ videoId, title, href, onClose }: { videoId: string; title:
             <Icon name="close" size={18} />
           </button>
         </div>
-        <div className="aspect-video w-full bg-black">
-          <iframe
-            src={`https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&rel=0`}
-            title={title}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-            className="h-full w-full"
-          />
+        <div className="aspect-video w-full bg-black" aria-busy={!videoId && !failed}>
+          {videoId ? (
+            <iframe
+              src={`https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&rel=0`}
+              title={title}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              className="h-full w-full"
+            />
+          ) : failed ? (
+            <div className="grid h-full w-full place-items-center p-md">
+              <div className="pop flex flex-col items-center gap-1.5 text-center">
+                <p className="text-[14px] font-semibold text-white/90">Couldn't find this episode on YouTube</p>
+                <p className="text-metadata text-white/60">It may not be published there yet.</p>
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="press mt-2 inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-2 text-metadata font-semibold text-white hover:bg-white/15"
+                >
+                  Search on YouTube <Icon name="open_in_new" size={15} />
+                </a>
+              </div>
+            </div>
+          ) : (
+            <div className="grid h-full w-full place-items-center">
+              <div className="animate-pulse flex flex-col items-center gap-2.5">
+                <SourceMark youtube size={34} />
+                <p className="text-metadata font-medium text-white/70">Finding this episode on YouTube…</p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>,

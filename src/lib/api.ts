@@ -135,6 +135,20 @@ export function searchPodcasts(query: string, signal?: AbortSignal, limit?: numb
     })
 }
 
+// Resolve "<show> <episode title>" to a YouTube video id for the in-app player
+// (used when a YouTube-surfaced show is fed by plain RSS, e.g. All-In, so its
+// episodes carry no direct video link). Null on any failure — the caller falls
+// back to the external link.
+export function resolveVideo(query: string, signal?: AbortSignal): Promise<string | null> {
+  return fetch(`/api/resolve-video?q=${encodeURIComponent(query)}`, { signal })
+    .then((r) => (r.ok ? (r.json() as Promise<{ videoId?: string | null }>) : null))
+    .then((d) => (d && typeof d.videoId === 'string' && d.videoId ? d.videoId : null))
+    .catch((err) => {
+      if ((err as { name?: string })?.name === 'AbortError') throw err
+      return null
+    })
+}
+
 // Recent episodes for a single user-added feed. The server validates the URL
 // (SSRF guard) and parses RSS or YouTube/Atom. Returns [] on any failure.
 export function fetchFeedEpisodes(feedUrl: string, podcastId: string): Promise<Episode[]> {
