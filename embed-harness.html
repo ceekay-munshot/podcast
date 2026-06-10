@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Embed harness — chat.muns.io sandbox replica</title>
+    <!--
+      Reproduces EXACTLY how chat.muns.io/dashboards embeds this app: an iframe
+      sandboxed WITHOUT allow-popups-to-escape-sandbox (attribute copied verbatim
+      from the live dashboard DOM). Anything that opens a popup/tab from inside
+      dies there with ERR_BLOCKED_BY_RESPONSE on header-strict sites (YouTube),
+      so in-app flows (the Watch on YouTube modal) must be tested under these
+      flags. Open http://localhost:5173/embed-harness.html during `vite dev`.
+      Dev-only: not a rollup input, so it never ships in dist/.
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe
+      src="/"
+      title="Munshot Podcasts"
+      sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-downloads"
+    ></iframe>
+  </body>
+</html>
