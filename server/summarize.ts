@@ -40,7 +40,11 @@ export interface SummarizeResult {
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini'
 const DEFAULT_ANTHROPIC_MODEL = 'claude-opus-4-8'
 
-const SCHEMA = {
+// Two focused schemas for two focused passes (see SYSTEM_* below). On smaller
+// models a single combined call trades narrative depth for list breadth; splitting
+// "narrative" (synthesis + takeaways) from "extraction" (Q&A + moments) lets each
+// run with full attention and its own token budget.
+const NARRATIVE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
@@ -52,13 +56,21 @@ const SCHEMA = {
     takeaways: {
       type: 'array',
       items: { type: 'object', additionalProperties: false, properties: { title: { type: 'string' }, detail: { type: 'string' } }, required: ['title', 'detail'] },
-      description: '3-4 concrete, non-obvious takeaways.',
+      description: 'The 4-6 most important, non-obvious takeaways, each anchored to a specific detail (a number, name, or claim) from the episode.',
     },
+  },
+  required: ['synthesis', 'takeaways'],
+}
+
+const EXTRACTION_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
     qa: {
       type: 'array',
       items: { type: 'object', additionalProperties: false, properties: { q: { type: 'string' }, a: { type: 'string' } }, required: ['q', 'a'] },
       description:
-        'COMPREHENSIVE coverage of the substantive questions this episode raises and answers — capture EVERY distinct one, not a fixed number. A dense 40-60 minute episode typically yields 6-12; include as many as the material genuinely supports, roughly in the order the episode addresses them, and never drop a real question to hit a target. Exclude only trivial banter, logistics, and ad reads. Phrase each question as a complete, self-contained sentence that names its specific subject — someone who never heard the episode should understand exactly what is being asked (avoid vague stems like "What is the main focus?"). Each answer is a dense, self-explanatory paragraph of 2-4 full sentences that completely answers the question using the concrete specifics from the material — names, numbers, mechanisms, and the reasoning behind them — so it stands on its own without the audio. Draw every detail from the source; never pad or speculate to fill space.',
+        'EXHAUSTIVE coverage — capture EVERY substantive question the episode raises and answers, in the order it addresses them; a full 40-60 minute episode usually yields 8-14, so never settle for a handful. Exclude only trivial banter, logistics, and ad reads. Phrase each question as a complete, self-contained sentence that names its specific subject — someone who never heard the episode should understand exactly what is being asked (avoid vague stems like "What is the main focus?"). Each answer is a dense, self-explanatory paragraph of 2-4 full sentences using the concrete specifics from the material — names, numbers, mechanisms, and the reasoning behind them — so it stands on its own without the audio. Never pad or speculate to fill space.',
     },
     moments: {
       type: 'array',
@@ -68,34 +80,51 @@ const SCHEMA = {
         properties: { title: { type: 'string' }, timestamp: { type: 'string', description: 'mm:ss if known, otherwise "—"' }, whyItMatters: { type: 'string' } },
         required: ['title', 'timestamp', 'whyItMatters'],
       },
-      description: 'COMPREHENSIVE coverage of the genuinely interesting moments — the "double-click" beats a sharp listener would revisit: bold claims, specific predictions or numbers, sharp disagreements, surprising data, memorable anecdotes, or pivotal turns in the conversation. Capture EVERY such moment, not a fixed number; a dense 40-60 minute episode typically yields 5-10, spread across the whole episode (early, middle, AND late) rather than clustered at the opening. Each title names the specific moment; each whyItMatters is 1-2 concrete sentences stating what was actually said (the specific claim, number, or exchange, naming who said it when notable) and why it is worth attention — never generic filler like "this highlights a key shift".',
+      description: 'EXHAUSTIVE coverage of the genuinely interesting moments — the "double-click" beats a sharp listener would revisit: bold claims, specific predictions or numbers, sharp disagreements, surprising data, memorable anecdotes, or pivotal turns. Capture EVERY such moment; a full 40-60 minute episode usually yields 7-12, spread EVENLY across the whole timeline (early, middle, AND late), never clustered at the opening. Each title names the specific moment; each whyItMatters is 1-2 concrete sentences stating what was actually said (the specific claim, number, or exchange, naming who said it when notable) and why it is worth attention — never generic filler like "this highlights a key shift".',
     },
   },
-  required: ['synthesis', 'takeaways', 'qa', 'moments'],
+  required: ['qa', 'moments'],
 }
 
-const SYSTEM_BASE =
-  'You are Munshot, an AI that writes sharp one-page intelligence summaries of podcast episodes for busy operators and investors. Produce the summary by calling the emit_summary tool/function. Rules:\n- Base everything ONLY on the provided material. Do NOT invent facts, quotes, names, or numbers.\n- synthesis: go deeper than the headline. Lead with the central argument, then develop it with the specifics that make it credible — concrete claims, real numbers, named companies/people, and the mechanism or causal chain behind each point. Capture the genuine tension or disagreement between speakers (the bull case vs the bear case, what is contested, what is still uncertain), and surface the non-obvious, second-order insight a sharp listener takes away — not a generic recap anyone could write from the title. Every sentence must carry specific, episode-grounded content; cut filler like "the market is maturing" or "X is seeing significant growth". Emphasise only a FEW short key phrases (2-5 words each, at most ~3 per summary) by wrapping each in matched **double asterisks** — never bold whole sentences or clauses, and always close every ** you open.\n- Be concrete and non-obvious in takeaways, each anchored to a specific detail from the material.\n- qa: be EXHAUSTIVE — capture every substantive question the episode actually raises and answers, in the order it addresses them, not a curated handful. Exclude only trivial banter, logistics, and ad reads. Make every question specific and self-contained (it should read clearly on its own), and every answer thorough, concrete, and fully understandable without the audio — 2-4 real sentences that explain the "why" and the specifics, never one terse line, but never padded or invented either.\n- moments: be thorough — surface every genuinely interesting beat the episode delivers (bold claims, specific predictions or numbers, sharp disagreements, surprising data, memorable anecdotes), not just one or two, with each whyItMatters concrete about what was actually said — never a generic gloss.'
+const SYSTEM_NARRATIVE =
+  'You are Munshot, writing the NARRATIVE half of a sharp one-page intelligence brief for busy operators and investors — a rich synthesis and the key takeaways. It must read like real analysis, not a recap. Produce it by calling the emit tool/function. Rules:\n- Base everything ONLY on the provided material. Do NOT invent facts, quotes, names, or numbers.\n- synthesis: lead with the central argument, then develop it with the specifics that make it credible (real numbers, named people/companies, the mechanism behind each point), the genuine bull/bear tension between speakers, and the non-obvious second-order insight. Cut generic filler like "the market is maturing". Emphasise at most ~3 short key phrases (2-5 words each) in matched **double asterisks**, always closing every ** you open.\n- takeaways: the most important, non-obvious ones, each anchored to a specific detail.'
 
-const SYSTEM_TRANSCRIPT = `${SYSTEM_BASE}\n- You have the FULL transcript, annotated with [mm:ss] markers. Ground everything in what was actually said.\n- For "moments", draw them from DIFFERENT parts of the episode — early, middle, and late, not all from the opening — and set each timestamp to the real [mm:ss] of the nearest marker. Never use 0:00.`
-const SYSTEM_NOTES = `${SYSTEM_BASE}\n- You only have the publisher's show-notes (not the audio). If they are thin or promotional, keep the summary brief and high-level rather than fabricating. Use "—" for moment timestamps.`
+const SYSTEM_EXTRACTION =
+  'You are Munshot, EXTRACTING the complete Q&A and the interesting moments from a podcast episode for busy operators and investors. Produce it by calling the emit tool/function. Rules:\n- Base everything ONLY on the provided material. Do NOT invent.\n- Work through the ENTIRE source chronologically, start to finish. Give the middle and END the SAME attention as the opening — do not front-load; many of the best questions and moments come later.\n- Err toward inclusion: when unsure whether a question or moment qualifies, INCLUDE it. Missing a real one is worse than a borderline one.\n- qa: every substantive question, self-contained and naming its subject, each with a dense 2-4 sentence answer.\n- moments: every genuinely interesting beat, spread evenly across the timeline, each with a concrete whyItMatters and a real timestamp.\nCALIBRATION (form only — never copy this content):\n- GOOD question: "Why does the guest expect Acme\'s usage-based pricing to compress margins through 2026?" BAD: "What about pricing?"\n- GOOD moment whyItMatters: "A guest pegs data-center power demand at 3x the grid by 2030 — a number that reframes the capex debate." BAD: "This highlights an important industry trend."'
 
-function buildPrompt(input: SummarizeInput, transcript: string | null): { system: string; user: string } {
+// Appended to both passes so each knows what source it is working from.
+const SRC_TRANSCRIPT = '\n- You have the FULL transcript, annotated with [mm:ss] markers. Ground every claim in what was actually said; use the real markers for any timestamps (never 0:00).'
+const SRC_NOTES = "\n- You only have the publisher's show-notes (not the audio). If they are thin or promotional, stay high-level rather than fabricating, and use \"—\" for moment timestamps."
+
+function buildUser(input: SummarizeInput, transcript: string | null): string {
   if (transcript) {
     // ~120k chars ≈ 30k tokens — covers ~2 hr in full; trivial cost on gpt-4o-mini.
-    return { system: SYSTEM_TRANSCRIPT, user: `Show: ${input.show}\nEpisode: ${input.title}\n\nTranscript:\n${transcript.slice(0, 120000)}` }
+    return `Show: ${input.show}\nEpisode: ${input.title}\n\nTranscript:\n${transcript.slice(0, 120000)}`
   }
-  return { system: SYSTEM_NOTES, user: `Show: ${input.show}\nEpisode: ${input.title}\n\nShow notes:\n${input.notes || '(no show-notes provided)'}` }
+  return `Show: ${input.show}\nEpisode: ${input.title}\n\nShow notes:\n${input.notes || '(no show-notes provided)'}`
 }
 
-function normalize(raw: Partial<Summary> | undefined): Summary {
-  const r = raw ?? {}
+function normalize(raw: Partial<Summary>): Summary {
+  // Normalize each moment timestamp to a clean "m:ss" (the model sometimes copies the
+  // bracketed transcript marker, e.g. "[12:34]"), sort chronologically (it can emit
+  // them out of order), then assign stable ids in display order. Clean timestamps are
+  // what lets buildTranscript anchor each moment to its transcript row.
+  const moments = (raw.moments ?? [])
+    .map((m) => ({ ...m, timestamp: cleanClock(m.timestamp) }))
+    .sort((a, b) => (parseClock(a.timestamp) ?? Number.POSITIVE_INFINITY) - (parseClock(b.timestamp) ?? Number.POSITIVE_INFINITY))
+    .map((m, i) => ({ ...m, id: `gen-${i}` }))
   return {
-    synthesis: r.synthesis ?? [],
-    takeaways: r.takeaways ?? [],
-    qa: r.qa ?? [],
-    moments: (r.moments ?? []).map((m, i) => ({ ...m, id: `gen-${i}` })),
+    synthesis: raw.synthesis ?? [],
+    takeaways: raw.takeaways ?? [],
+    qa: raw.qa ?? [],
+    moments,
   }
+}
+
+// Clean a moment timestamp to a display-ready "m:ss" / "h:mm:ss", or "—" if unparseable.
+function cleanClock(ts: string): string {
+  const sec = parseClock(ts)
+  return sec == null ? '—' : mmss(sec)
 }
 
 // ── Transcript display: group raw provider segments into readable rows, and
@@ -109,10 +138,12 @@ function mmss(sec: number): string {
   return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`
 }
 
-// Parse a "mm:ss" / "h:mm:ss" clock string (as the LLM cites moments) to seconds.
+// Parse a clock string the LLM cites for a moment ("mm:ss", "h:mm:ss", and even
+// bracketed forms like "[12:34]") to seconds. Strips any non-digit/colon noise first
+// so a stray marker bracket can't break chronological sorting or transcript anchoring.
 function parseClock(ts: string): number | null {
-  const parts = ts.trim().split(':')
-  if (parts.length < 2 || parts.length > 3) return null
+  const parts = (ts || '').replace(/[^\d:]/g, '').split(':')
+  if (parts.length < 2 || parts.length > 3 || parts.some((p) => p === '')) return null
   const nums = parts.map(Number)
   if (nums.some((n) => !Number.isFinite(n))) return null
   return parts.length === 3 ? nums[0] * 3600 + nums[1] * 60 + nums[2] : nums[0] * 60 + nums[1]
@@ -192,7 +223,7 @@ function buildTranscript(raw: RawSeg[], moments: InterestingMoment[]): { segment
 
 // Bump when the summary prompt/schema changes, so a warm worker (whose in-memory
 // cache can outlive a deploy) never serves a summary written by the previous prompt.
-const SUMMARY_REVISION = 3
+const SUMMARY_REVISION = 4
 const cache = new Map<string, SummarizeResult>()
 
 export async function summarizeEpisode(input: SummarizeInput, config: SummarizeConfig): Promise<SummarizeResult> {
@@ -205,16 +236,24 @@ export async function summarizeEpisode(input: SummarizeInput, config: SummarizeC
     { title: input.title, transcriptUrl: input.transcriptUrl, audioUrl: input.audioUrl },
     { deepgramKey: config.deepgramKey, deepgramModel: config.deepgramModel, groqKey: config.groqKey },
   )
-  const prompt = buildPrompt(input, transcript?.text ?? null)
+  const user = buildUser(input, transcript?.text ?? null)
+  const src = transcript ? SRC_TRANSCRIPT : SRC_NOTES
 
   const cacheKey = `${provider}:${model}:${transcript ? 't' : 'n'}:r${SUMMARY_REVISION}::${input.title}`
   const hit = cache.get(cacheKey)
   if (hit) return hit
 
-  const summary =
-    provider === 'openai'
-      ? await viaOpenAI(prompt, config.openaiKey as string, model)
-      : await viaAnthropic(prompt, config.anthropicKey as string, model)
+  // Two focused passes IN PARALLEL: narrative (synthesis + takeaways) and
+  // extraction (Q&A + moments). Each gets full attention and its own token budget,
+  // which beats one combined call that trades depth for breadth on smaller models.
+  const apiKey = (provider === 'openai' ? config.openaiKey : config.anthropicKey) as string
+  const emit = (system: string, schema: object) =>
+    provider === 'openai' ? viaOpenAI(system, user, schema, apiKey, model) : viaAnthropic(system, user, schema, apiKey, model)
+  const [narrative, extraction] = await Promise.all([
+    emit(SYSTEM_NARRATIVE + src, NARRATIVE_SCHEMA),
+    emit(SYSTEM_EXTRACTION + src, EXTRACTION_SCHEMA),
+  ])
+  const summary = normalize({ ...narrative, ...extraction })
 
   // Bundle the real transcript (the same one the summary was built from) so the
   // Transcript tab renders it — no second transcription, no extra cost.
@@ -232,21 +271,24 @@ export async function summarizeEpisode(input: SummarizeInput, config: SummarizeC
 }
 
 // ── OpenAI (Chat Completions + forced function call) ─────────────────────────
-async function viaOpenAI(prompt: { system: string; user: string }, apiKey: string, model: string): Promise<Summary> {
+async function viaOpenAI(system: string, user: string, schema: object, apiKey: string, model: string): Promise<Partial<Summary>> {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
       model,
-      // 8192 leaves room for richer synthesis + comprehensive Q&A. Keep it under
-      // ~16K: this is a non-streaming raw fetch, and larger outputs risk HTTP timeouts.
+      // Slightly low temperature for consistent instruction-following + completeness on
+      // the small model (honors "be exhaustive" more reliably than the 1.0 default).
+      // Not set on the Anthropic path — Opus 4.x rejects sampling params.
+      temperature: 0.4,
+      // 8192 is ample for one focused pass; under ~16K so this non-streaming request can't hit HTTP timeouts.
       max_completion_tokens: 8192,
       messages: [
-        { role: 'system', content: prompt.system },
-        { role: 'user', content: prompt.user },
+        { role: 'system', content: system },
+        { role: 'user', content: user },
       ],
-      tools: [{ type: 'function', function: { name: 'emit_summary', description: 'Emit the structured one-page summary.', parameters: SCHEMA } }],
-      tool_choice: { type: 'function', function: { name: 'emit_summary' } },
+      tools: [{ type: 'function', function: { name: 'emit', description: 'Emit the structured result.', parameters: schema } }],
+      tool_choice: { type: 'function', function: { name: 'emit' } },
     }),
   })
   if (!res.ok) {
@@ -256,22 +298,21 @@ async function viaOpenAI(prompt: { system: string; user: string }, apiKey: strin
   const data: { choices?: Array<{ message?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }> } = await res.json()
   const args = data.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments
   if (!args) throw new Error('openai: no function call in response')
-  return normalize(JSON.parse(args) as Partial<Summary>)
+  return JSON.parse(args) as Partial<Summary>
 }
 
 // ── Anthropic (Messages API + forced tool use) ───────────────────────────────
-async function viaAnthropic(prompt: { system: string; user: string }, apiKey: string, model: string): Promise<Summary> {
+async function viaAnthropic(system: string, user: string, schema: object, apiKey: string, model: string): Promise<Partial<Summary>> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
     body: JSON.stringify({
       model,
-      // Room for comprehensive Q&A; <~16K keeps this non-streaming request under HTTP timeouts.
       max_tokens: 8192,
-      system: prompt.system,
-      tools: [{ name: 'emit_summary', description: 'Emit the structured one-page summary.', input_schema: SCHEMA }],
-      tool_choice: { type: 'tool', name: 'emit_summary' },
-      messages: [{ role: 'user', content: prompt.user }],
+      system,
+      tools: [{ name: 'emit', description: 'Emit the structured result.', input_schema: schema }],
+      tool_choice: { type: 'tool', name: 'emit' },
+      messages: [{ role: 'user', content: user }],
     }),
   })
   if (!res.ok) {
@@ -279,7 +320,7 @@ async function viaAnthropic(prompt: { system: string; user: string }, apiKey: st
     throw new Error(`anthropic ${res.status}: ${body.slice(0, 200)}`)
   }
   const data: { content?: Array<{ type: string; name?: string; input?: unknown }> } = await res.json()
-  const toolUse = (data.content ?? []).find((b) => b.type === 'tool_use' && b.name === 'emit_summary')
-  if (!toolUse?.input) throw new Error('anthropic: no emit_summary tool_use in response')
-  return normalize(toolUse.input as Partial<Summary>)
+  const toolUse = (data.content ?? []).find((b) => b.type === 'tool_use' && b.name === 'emit')
+  if (!toolUse?.input) throw new Error('anthropic: no emit tool_use in response')
+  return toolUse.input as Partial<Summary>
 }
