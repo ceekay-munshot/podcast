@@ -1,5 +1,6 @@
 import type { Episode, Podcast, PodcastSearchResult, Summary, TranscriptSegment, WeeklySummary } from './types'
 import { EPISODES, PODCASTS, WEEKLY } from './mock-data'
+import { stableHash } from './hash'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE SEAM.
@@ -119,19 +120,72 @@ export function unsubscribeWeekly(email: string): Promise<{ subscribed: boolean;
   return delay({ subscribed: false, email })
 }
 
-// Search a real podcast directory (Apple/iTunes — keyless), or resolve a pasted
-// RSS / Apple-show / YouTube-channel URL, via /api/search-podcasts (Vite
-// middleware in dev, Cloudflare Pages Function in prod). Returns [] for an empty
-// query or any failure. Pass an AbortSignal to cancel a superseded keystroke —
-// AbortError is re-thrown so the caller can ignore it rather than clobber state.
+// Search a real podcast directory, or resolve a pasted RSS / Apple-show /
+// YouTube-channel URL. Returns [] for an empty query or any failure. Pass an
+// AbortSignal to cancel a superseded keystroke — AbortError is re-thrown so the
+// caller can ignore it rather than clobber state.
+//
+// Plain text queries Apple's Search API straight from the browser: it supports
+// CORS, and Apple's WAF blocks datacenter IPs (our server) but not residential
+// ones (this browser). /api/search-podcasts stays the fallback — and the only
+// path for URLs, whose resolution (SSRF guard, feed parsing) lives server-side.
 export function searchPodcasts(query: string, signal?: AbortSignal, limit?: number): Promise<PodcastSearchResult[]> {
   const q = query.trim()
   if (!q) return Promise.resolve([])
-  return fetch(`/api/search-podcasts?q=${encodeURIComponent(q)}${limit ? `&limit=${limit}` : ''}`, { signal })
-    .then((r) => (r.ok ? (r.json() as Promise<PodcastSearchResult[]>) : []))
+  const viaServer = () =>
+    fetch(`/api/search-podcasts?q=${encodeURIComponent(q)}${limit ? `&limit=${limit}` : ''}`, { signal })
+      .then((r) => (r.ok ? (r.json() as Promise<PodcastSearchResult[]>) : []))
+      .catch((err) => {
+        if ((err as { name?: string })?.name === 'AbortError') throw err
+        return []
+      })
+  if (/^https?:\/\//i.test(q)) return viaServer()
+  return searchItunesDirect(q, signal, limit).then((direct) => (direct.length ? direct : viaServer()))
+}
+
+// One Apple Search row → the wire shape /api/search-podcasts returns. Kept
+// field-for-field identical to the server's mapping (server/search.ts), ids
+// included, so the same show dedupes no matter which path found it.
+interface ItunesRow {
+  collectionId?: number
+  collectionName?: string
+  artistName?: string
+  feedUrl?: string
+  artworkUrl600?: string
+  primaryGenreName?: string
+}
+
+function searchItunesDirect(term: string, signal?: AbortSignal, limit = 12): Promise<PodcastSearchResult[]> {
+  const cap = Math.min(Math.max(1, Math.floor(limit) || 12), 50)
+  const url = `https://itunes.apple.com/search?media=podcast&entity=podcast&limit=${cap}&term=${encodeURIComponent(term)}`
+  return fetch(url, { signal })
+    .then((r) => (r.ok ? (r.json() as Promise<{ results?: ItunesRow[] }>) : { results: [] }))
+    .then(({ results }) => {
+      const out: PodcastSearchResult[] = []
+      const seen = new Set<string>()
+      for (const row of Array.isArray(results) ? results : []) {
+        const feedUrl = (row.feedUrl || '').trim()
+        const title = (row.collectionName || '').trim()
+        if (!title || !/^https?:\/\//i.test(feedUrl)) continue // no feed → can't ingest
+        const id = `itunes-${row.collectionId ?? stableHash(feedUrl)}`
+        if (seen.has(id)) continue
+        seen.add(id)
+        out.push({
+          id,
+          title,
+          author: (row.artistName || '').trim(),
+          category: (row.primaryGenreName || 'Podcast').trim(),
+          description: '',
+          artworkUrl: row.artworkUrl600 || undefined,
+          feedUrl,
+          source: 'podcast',
+        })
+      }
+      return out
+    })
     .catch((err) => {
       if ((err as { name?: string })?.name === 'AbortError') throw err
-      return []
+      return [] // blocked/offline → the server route gets its turn
     })
 }
 

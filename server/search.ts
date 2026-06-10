@@ -6,7 +6,9 @@ import { attrOf, decodeEntities, fetchFeedHead, hashKey, innerTag, plainText, un
 // Keyless podcast directory search. Runtime-agnostic (Vite dev middleware AND
 // Cloudflare Pages Function), never throws — returns [] on any failure.
 //
-//   plain text  → Apple/iTunes Search API (free, no key)
+//   plain text  → Apple/iTunes Search API (free, no key); when Apple fails or
+//                 returns nothing — its WAF blocks datacenter IPs, so Workers
+//                 egress is often refused — fyyd.de answers instead
 //   apple URL   → iTunes lookup by collection id (…/id123456)
 //   youtube URL → playlist URLs resolve to the playlist's videos.xml feed
 //                 (shows published as playlists); otherwise the channel's
@@ -95,6 +97,68 @@ const searchItunes = (term: string, limit = LIMIT) =>
 
 const resolveAppleId = (id: string) =>
   itunesResults(`https://itunes.apple.com/lookup?id=${encodeURIComponent(id)}&entity=podcast`)
+
+// ── fyyd.de — keyless fallback directory ─────────────────────────────────────
+// Apple's WAF refuses requests from datacenter IPs, so from Workers egress the
+// iTunes call above usually comes back 403/empty. fyyd is an open directory
+// with no such block; smaller catalog, but results beat an empty screen.
+
+interface FyydPodcast {
+  title?: string
+  author?: string
+  xmlURL?: string
+  imgURL?: string
+  smallImageURL?: string
+  description?: string
+  subtitle?: string
+}
+
+async function searchFyyd(term: string, limit = LIMIT): Promise<PodcastSearchResult[]> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 9000)
+  try {
+    const res = await fetch(`https://api.fyyd.de/0.2/search/podcast?title=${encodeURIComponent(term)}&count=${limit}`, {
+      signal: controller.signal,
+      headers: { 'user-agent': UA },
+    })
+    if (!res.ok) return []
+    const data = (await res.json()) as { data?: FyydPodcast[] }
+    const rows = Array.isArray(data.data) ? data.data : []
+    const seen = new Set<string>()
+    const out: PodcastSearchResult[] = []
+    for (const row of rows) {
+      const feedUrl = (row.xmlURL || '').trim()
+      const title = (row.title || '').trim()
+      if (!title || !feedUrl || !isPublicHttpUrl(feedUrl)) continue
+      // feed-<hash> — the same id the raw-RSS resolver derives, so the same show
+      // found by either path dedupes in the UI.
+      const id = `feed-${hashKey(feedUrl)}`
+      if (seen.has(id)) continue
+      seen.add(id)
+      out.push({
+        id,
+        title,
+        author: (row.author || '').trim(),
+        category: 'Podcast', // fyyd categories are numeric ids — not worth a second request
+        description: plainText(row.description || row.subtitle || '').slice(0, 300),
+        artworkUrl: row.smallImageURL || row.imgURL || undefined,
+        feedUrl,
+        source: 'podcast',
+      })
+    }
+    return out
+  } catch {
+    return []
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Plain-text directory search: Apple first, fyyd when Apple yields nothing. */
+async function searchDirectory(term: string, limit = LIMIT): Promise<PodcastSearchResult[]> {
+  const itunes = await searchItunes(term, limit)
+  return itunes.length ? itunes : searchFyyd(term, limit)
+}
 
 // ── Raw RSS feed URL ──────────────────────────────────────────────────────────
 
@@ -274,9 +338,9 @@ export async function searchPodcasts(rawQuery: string, limit = LIMIT): Promise<P
       // Channel page unreachable (bot wall) → most YouTube podcasts also live in
       // the directory, so search the handle text rather than returning nothing.
       const handle = youtubeHandleQuery(u)
-      return handle ? searchItunes(handle, cap) : []
+      return handle ? searchDirectory(handle, cap) : []
     }
     return resolveRssFeed(q)
   }
-  return searchItunes(q, cap)
+  return searchDirectory(q, cap)
 }

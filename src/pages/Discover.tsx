@@ -120,6 +120,7 @@ export default function Discover() {
     }
     const cats = queryKey.split('|')
     const controller = new AbortController()
+    let stale = false // a superseded run must not clobber the newer run's state
     const allCached = cats.every((c) => relCache.current.has(c))
     if (!allCached) setRelatedLoading(true)
     Promise.all(
@@ -134,13 +135,17 @@ export default function Discover() {
             .catch(() => [] as PodcastSearchResult[]), // aborted / unavailable → just no suggestions
       ),
     ).then((lists) => {
+      if (stale) return
       // Round-robin interleave so every picked category is represented up top.
       const merged: PodcastSearchResult[] = []
       for (let i = 0; lists.some((l) => i < l.length); i++) for (const l of lists) if (l[i]) merged.push(l[i])
       setRelatedRaw(merged)
       setRelatedLoading(false)
     })
-    return () => controller.abort()
+    return () => {
+      stale = true
+      controller.abort()
+    }
   }, [queryKey])
 
   type Suggestion = { key: string; podcast: Podcast; add: () => void }
@@ -271,7 +276,7 @@ export default function Discover() {
                   ))}
                 </div>
               )}
-              {(morePoolLeft || moreCatsLeft || relatedLoading) && (
+              {morePoolLeft || moreCatsLeft || relatedLoading ? (
                 <button
                   onClick={onSeeMore}
                   disabled={relatedLoading && !morePoolLeft}
@@ -284,7 +289,12 @@ export default function Discover() {
                   )}
                   See more
                 </button>
-              )}
+              ) : visible > 6 ? (
+                // The well is dry — say so instead of the button silently vanishing.
+                <p className="mt-md text-center text-metadata text-secondary">
+                  That's every suggestion we have for now — search above for anything specific.
+                </p>
+              ) : null}
             </div>
           )}
         </div>
