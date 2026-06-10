@@ -144,6 +144,114 @@
   animation: seg-flash 1.6s var(--ease-out);
 }
 
+/* ───────────────────────────────────────────────────────────────────────── */
+/* Processing pipeline — the "live progress" motion on the episode panel.       */
+/* One determinate value drives the width/height fills; these animations layer   */
+/* movement on top so a dwelling stage (e.g. the LLM writing the summary) still  */
+/* reads as actively working rather than frozen.                                 */
+/* ───────────────────────────────────────────────────────────────────────── */
+
+/* A band of light sweeping across a filled bar — the "we're working" signal. */
+@keyframes pipe-sheen {
+  0% {
+    transform: translateX(-160%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
+}
+.pipe-sheen {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.pipe-sheen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+  animation: pipe-sheen 1.5s var(--ease-in-out) infinite;
+}
+
+/* Energy flowing down the active connector toward the next step. */
+@keyframes pipe-wire {
+  0% {
+    background-position: 0 100%, 0 0;
+  }
+  100% {
+    background-position: 0 -100%, 0 0;
+  }
+}
+.pipe-wire {
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.65) 50%, rgba(255, 255, 255, 0) 100%),
+    linear-gradient(to bottom, #2563eb, #4f86f7);
+  background-size:
+    100% 220%,
+    100% 100%;
+  background-repeat: no-repeat;
+  animation: pipe-wire 1.1s linear infinite;
+}
+
+/* Soft glow riding the leading edge of the vertical fill (the moving front). */
+@keyframes pipe-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.pipe-glow {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  height: 14px;
+  width: 14px;
+  transform: translate(-50%, 50%);
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(37, 99, 235, 0.85), rgba(37, 99, 235, 0) 70%);
+  animation: pipe-pulse 1.3s var(--ease-in-out) infinite;
+  pointer-events: none;
+}
+
+/* Pulsing halo on the node of the stage in progress. */
+@keyframes node-halo {
+  0% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.3);
+  }
+  70% {
+    box-shadow: 0 0 0 9px rgba(37, 99, 235, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0);
+  }
+}
+.node-halo {
+  animation: node-halo 1.8s var(--ease-out) infinite;
+}
+
+/* A node settling into "done" — a quick, confident pop as the front passes it. */
+@keyframes node-pop {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.node-pop {
+  animation: node-pop 380ms var(--ease-out) both;
+}
+
 /* Minimal scrollbar to keep the editorial calm. */
 ::-webkit-scrollbar {
   width: 8px;
@@ -238,5 +346,14 @@
     .pop {
       transform: none;
     }
+  }
+  /* Pipeline: keep the determinate fills (they convey real progress) but drop
+     the looping sheen / flow / halo / pop movement. */
+  .pipe-sheen::after,
+  .pipe-wire,
+  .pipe-glow,
+  .node-halo,
+  .node-pop {
+    animation: none;
   }
 }

@@ -111,7 +111,7 @@ describe('weeklyTone — week-level read', () => {
       readMinutes: 0,
       overview: [],
       topThemes: [],
-      interesting: { quote: '', speaker: '', role: '', episodeId: '' },
+      interesting: { title: '', quote: '', speaker: '', role: '', episodeId: '' },
       takeaways: [],
       contradictions: [],
       mentions: { people: [], companies: [] },

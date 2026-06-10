@@ -34,6 +34,7 @@ export const PODCASTS: Podcast[] = [
     color: '#1c7d52',
     monogram: 'IB',
     artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/61/ae/be/61aebe7a-06e8-7390-3ae5-f2fc5889e36c/mza_10827489189939068066.jpg/600x600bb.jpg',
+    feedUrl: 'https://feeds.megaphone.fm/CLS2859450455',
     tracked: true,
   },
   {
@@ -48,6 +49,7 @@ export const PODCASTS: Podcast[] = [
     color: '#1a1c1c',
     monogram: 'AI',
     artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts124/v4/c7/d2/92/c7d292ea-44b3-47ff-2f5e-74fa5b23db6c/mza_7005270671777648882.png/600x600bb.jpg',
+    feedUrl: 'https://rss.libsyn.com/shows/254861/destinations/1928300.xml',
     tracked: true,
   },
   {
@@ -62,6 +64,7 @@ export const PODCASTS: Podcast[] = [
     color: '#b3541e',
     monogram: 'OL',
     artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/f3/99/6a/f3996a52-e4a4-bf0d-b7d6-e376c4058568/mza_15550359494736224565.jpg/600x600bb.jpg',
+    feedUrl: 'https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/8a94442e-5a74-4fa2-8b8d-ae27003a8d6b/982f5071-765c-403d-969d-ae27003a8d83/podcast.rss',
     tracked: true,
   },
   {
@@ -76,6 +79,7 @@ export const PODCASTS: Podcast[] = [
     color: '#5b3fa8',
     monogram: 'AD',
     artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/9c/78/d8/9c78d82d-a2d1-a026-6ca2-f92ea61be9ae/mza_18421328158594577747.jpg/600x600bb.jpg',
+    feedUrl: 'https://anchor.fm/s/f7cac464/podcast/rss',
     tracked: true,
   },
   {
@@ -90,6 +94,7 @@ export const PODCASTS: Podcast[] = [
     color: '#0a6e6e',
     monogram: 'GC',
     artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/91/46/0d/91460d4a-134f-9b4c-1444-1947ca2f7ee0/mza_2926898652345635132.jpeg/600x600bb.jpg',
+    feedUrl: 'https://feeds.acast.com/public/shows/622618c7057f3400120d15db',
     tracked: true,
   },
   {
@@ -104,6 +109,7 @@ export const PODCASTS: Podcast[] = [
     color: '#2f6f4f',
     monogram: 'AQ',
     artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/43/c5/fb/43c5fbdf-b302-053a-2704-ba5f74322625/mza_13119989780540450831.jpg/600x600bb.jpg',
+    feedUrl: 'https://feeds.transistor.fm/acquired',
     tracked: true,
   },
   {
@@ -118,6 +124,7 @@ export const PODCASTS: Podcast[] = [
     color: '#635bff',
     monogram: 'CP',
     artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/39/58/7b/39587b37-a6e1-e96b-593d-621d5ec5292a/mza_6705197557754043928.jpg/600x600bb.jpg',
+    feedUrl: 'https://feeds.transistor.fm/cheeky-pint-with-john-collison',
     tracked: true,
   },
   // ── Discover suggestions (not yet tracked) ──────────────────────────────────
@@ -147,6 +154,7 @@ export const PODCASTS: Podcast[] = [
     color: '#1f3a8a',
     monogram: 'BG',
     artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/PodcastSource126/v4/4b/ab/e5/4babe58b-7cda-b2b3-40a5-bcac3f262764/33f9cff7-dc0b-4293-a5bf-d8cc62ab8c98.jpg/600x600bb.jpg',
+    feedUrl: 'https://anchor.fm/s/f06c2370/podcast/rss',
     tracked: false,
   },
   {
@@ -161,6 +169,7 @@ export const PODCASTS: Podcast[] = [
     color: '#e0792b',
     monogram: 'LP',
     artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/c7/80/a3/c780a365-a1ed-527f-365f-1bd3e51ac6d1/mza_5908526734339724450.jpg/600x600bb.jpg',
+    feedUrl: 'https://api.substack.com/feed/podcast/10845.rss',
     tracked: false,
   },
   {
@@ -175,6 +184,7 @@ export const PODCASTS: Podcast[] = [
     color: '#111827',
     monogram: 'BM',
     artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Podcasts116/v4/44/51/1c/44511c70-c19e-c12f-0907-7465d9217cbf/mza_13427686079111565317.jpg/600x600bb.jpg',
+    feedUrl: 'https://feeds.simplecast.com/mAT9rqvu',
     tracked: false,
   },
 ]
@@ -896,6 +906,7 @@ export const WEEKLY: WeeklySummary = {
     { label: 'Semiconductors', momentum: 12 },
   ],
   interesting: {
+    title: 'Power, not chips, is the binding constraint',
     quote: `Forget the chips — you cannot pay your way to the front of an interconnection queue. The electrons don't care how much capital you've raised.`,
     speaker: 'Brian Janous',
     role: 'on Odd Lots',

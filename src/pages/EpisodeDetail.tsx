@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
@@ -11,7 +11,7 @@ import { Icon } from '../components/Icon'
 import { RichText, entityTerms } from '../components/RichText'
 import { analyzeSentiment, findSentimentSpans, sentimentClass, sentimentTitle } from '../lib/sentiment'
 import { keyHighlights } from '../lib/highlights'
-import { episodeTone } from '../lib/tone'
+import { episodeToneView } from '../lib/tone'
 import { ToneMeter } from '../components/ToneMeter'
 import { SourceLink } from '../components/SourceLink'
 import { StatusBadge } from '../components/StatusBadge'
@@ -64,12 +64,16 @@ export default function EpisodeDetail() {
     return () => clearTimeout(t)
   }, [tab, jumpTo, jumpTick])
 
-  // When a real (un-summarized) episode is opened, generate its AI summary from
-  // the show-notes. Idempotent — AppData dedupes in-flight requests per id.
+  // When an episode is opened, kick AppData's summarizeEpisode, which either
+  // generates the summary (a new episode) or hydrates the transcript (a SHARED
+  // episode whose summary arrived via the feed overlay without its transcript —
+  // the store hit costs no LLM/transcription). Idempotent — AppData dedupes per id.
   useEffect(() => {
-    if (episode && !episode.summary && episode.notes && episode.status !== 'failed') {
-      summarizeEpisode(episode, podcast)
-    }
+    if (!episode || episode.status === 'failed') return
+    const needsWork =
+      (!episode.summary && !!episode.notes) ||
+      (!!episode.summary && !episode.transcript?.length && !!(episode.transcriptUrl || episode.audioUrl))
+    if (needsWork) summarizeEpisode(episode, podcast)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [episode?.id])
 
@@ -129,8 +133,8 @@ export default function EpisodeDetail() {
               <Icon name="schedule" size={15} /> {formatDuration(episode.durationSec)}
             </span>
             <StatusBadge status={episode.status} />
-            {episode.summary && sentimentOn && <ToneMeter tone={episodeTone(episode)} />}
           </div>
+          {episode.summary && sentimentOn && <ToneMeter tone={episodeToneView(episode)} detailed className="mt-3" />}
         </div>
         <div className="flex items-center gap-2.5">
           <SourceLink episode={episode} podcast={podcast} />
@@ -748,20 +752,97 @@ const PIPELINE: { status: ProcessingStatus; label: string; icon: string }[] = [
   { status: 'summarizing', label: 'Generating AI summary', icon: 'auto_awesome' },
   { status: 'ready', label: 'Summary ready', icon: 'check_circle' },
 ]
+const PIPELINE_N = PIPELINE.length
+const PIPELINE_SEG = 1 / (PIPELINE_N - 1) // fraction of the bar between two adjacent steps
+
+type PipeMode = 'processing' | 'ready' | 'failed' | 'pending'
+type NodeState = 'done' | 'active' | 'pending' | 'error'
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+
+function usePrefersReducedMotion(): boolean {
+  const query = '(prefers-reduced-motion: reduce)'
+  const [reduce, setReduce] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(query).matches)
+  useEffect(() => {
+    const mq = window.matchMedia?.(query)
+    if (!mq) return
+    const onChange = () => setReduce(mq.matches)
+    mq.addEventListener?.('change', onChange)
+    return () => mq.removeEventListener?.('change', onChange)
+  }, [])
+  return reduce
+}
+
+// A single determinate progress value (0–1) for the whole panel. It sweeps up to
+// the active stage, then *trickles* toward — but never reaches — the next step so
+// a long-running stage (the LLM writing the summary) keeps inching instead of
+// sitting frozen. Each step advance eases it onward; "ready" snaps it home. The
+// CSS width/height transitions smooth the discrete updates into continuous glide.
+function usePipelineProgress(idx: number, mode: PipeMode): number {
+  const base = Math.max(0, idx) * PIPELINE_SEG
+  const reduce = usePrefersReducedMotion()
+  const [p, setP] = useState(mode === 'ready' ? 1 : 0)
+
+  useEffect(() => {
+    if (mode === 'ready') return setP(1)
+    if (mode === 'failed') return setP(base)
+    if (mode === 'pending') return setP(0)
+    if (reduce) return setP(Math.min(base + PIPELINE_SEG * 0.5, 0.985))
+
+    const id = setInterval(() => {
+      setP((prev) => {
+        // Ceiling sits just below the next node so the % never rounds to 100 while
+        // working, and the connector keeps its leading-edge glow (fill < 0.99).
+        const cap = Math.min(base + PIPELINE_SEG * 0.96, 0.99)
+        if (prev >= cap) return cap
+        // Quick sweep up to the stage we're on, snapping on at the end so we cross
+        // into the creep band (also re-runs when a step advances and `base` jumps).
+        if (prev < base) {
+          const next = prev + (base - prev) * 0.3
+          return next >= base - 0.004 ? base : next
+        }
+        // Within-stage creep: a shrinking-but-floored step toward the ceiling, so it
+        // slows as it climbs but never stops — a long stage keeps inching forward
+        // instead of parking at one number.
+        const step = Math.max((cap - prev) * 0.018, 0.0006) // ~0.3%/s floor near the top
+        return Math.min(prev + step, cap)
+      })
+    }, 200)
+    return () => clearInterval(id)
+  }, [idx, mode, base, reduce])
+
+  return p
+}
 
 function ProcessingPanel({ episode, onRetry, needsApiKey }: { episode: Episode; onRetry?: () => void; needsApiKey?: boolean }) {
-  const failed = episode.status === 'failed'
-  const currentIndex = failed ? 1 : PIPELINE.findIndex((p) => p.status === episode.status)
+  const status = episode.status
+  const failed = status === 'failed'
+  const ready = status === 'ready'
+  const mode: PipeMode = failed ? 'failed' : ready ? 'ready' : needsApiKey ? 'pending' : 'processing'
+  const rawIndex = PIPELINE.findIndex((p) => p.status === status)
+  const idx = failed ? 1 : rawIndex < 0 ? 0 : rawIndex
+  const progress = usePipelineProgress(idx, mode)
+  const meta = statusMeta(status)
+
+  const nodeState = (i: number): NodeState => {
+    if (failed) return i < idx ? 'done' : i === idx ? 'error' : 'pending'
+    if (ready) return 'done'
+    if (needsApiKey) return i === 0 ? 'active' : 'pending'
+    return i < idx ? 'done' : i === idx ? 'active' : 'pending'
+  }
 
   return (
     <section className="mx-auto max-w-reading rounded-2xl border border-outline-variant bg-surface-container-lowest p-lg shadow-card">
       <div className="mb-lg flex items-center gap-sm">
         <span className="grid h-10 w-10 place-items-center rounded-full chip-signal">
-          <Icon name={failed ? 'error' : statusMeta(episode.status).icon} className={failed ? 'text-error' : ''} />
+          <Icon
+            name={failed ? 'error' : meta.icon}
+            className={`${failed ? 'text-error' : ''} ${mode === 'processing' ? 'motion-safe:animate-spin' : ''}`}
+          />
         </span>
         <div>
           <h2 className="text-[19px] font-semibold text-on-surface">
-            {failed ? 'Processing failed' : needsApiKey ? 'Summary pending' : 'Working on this episode…'}
+            {failed ? 'Processing failed' : needsApiKey ? 'Summary pending' : ready ? 'Summary ready' : 'Working on this episode…'}
           </h2>
           <p className="text-metadata text-secondary">
             {failed
@@ -773,30 +854,32 @@ function ProcessingPanel({ episode, onRetry, needsApiKey }: { episode: Episode; 
         </div>
       </div>
 
-      <ol className="relative ml-5 border-l border-outline-variant">
+      {mode !== 'pending' && <PipelineBar progress={progress} mode={mode} idx={idx} />}
+
+      <ol className="relative">
         {PIPELINE.map((step, i) => {
-          const done = !failed && i < currentIndex
-          const active = !failed && i === currentIndex
-          const errored = failed && i === currentIndex
+          const state = nodeState(i)
+          const last = i === PIPELINE_N - 1
+          // How far the moving front has travelled through the connector below
+          // this node, derived from the one shared progress value.
+          const fill = clamp((progress - i * PIPELINE_SEG) / PIPELINE_SEG, 0, 1)
           return (
-            <li key={step.status} className="mb-lg ml-lg last:mb-0">
-              <span
-                className={`absolute -left-[13px] grid h-6 w-6 place-items-center rounded-full border-2 ${
-                  done
-                    ? 'border-primary bg-primary text-on-primary'
-                    : active
-                      ? 'border-primary bg-surface text-primary'
-                      : errored
-                        ? 'border-error bg-error-container text-on-error-container'
-                        : 'border-outline-variant bg-surface text-outline'
-                }`}
-              >
-                <Icon name={done ? 'check' : errored ? 'priority_high' : step.icon} size={14} className={active ? 'motion-safe:animate-pulse' : ''} />
-              </span>
-              <div className="flex items-center justify-between">
-                <p className={`text-body-md ${done || active ? 'font-semibold text-on-surface' : 'text-secondary'}`}>{step.label}</p>
-                {active && <span className="text-[12px] font-medium text-primary">In progress</span>}
-                {errored && <span className="text-[12px] font-medium text-error">Failed</span>}
+            <li key={step.status} className="flex gap-md">
+              <div className="flex flex-col items-center">
+                <StepNode state={state} icon={step.icon} live={mode === 'processing'} />
+                {!last && <StepConnector fill={fill} active={state === 'active' && mode === 'processing'} />}
+              </div>
+              <div className="flex h-6 flex-1 items-center justify-between">
+                <p className={`text-body-md transition-colors ${state === 'done' || state === 'active' ? 'font-semibold text-on-surface' : 'text-secondary'}`}>
+                  {step.label}
+                </p>
+                {state === 'active' && mode === 'processing' && (
+                  <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-primary">
+                    <span className="h-1.5 w-1.5 rounded-full bg-primary motion-safe:animate-pulse" /> In progress
+                  </span>
+                )}
+                {state === 'error' && <span className="text-[12px] font-medium text-error">Failed</span>}
+                {state === 'done' && <Icon name="check" size={16} className="text-primary/60" />}
               </div>
             </li>
           )
@@ -812,5 +895,84 @@ function ProcessingPanel({ episode, onRetry, needsApiKey }: { episode: Episode; 
         </button>
       )}
     </section>
+  )
+}
+
+// Headline horizontal progress bar — the at-a-glance "how far along" read, with a
+// sheen sweeping the fill while work is live so it never looks stuck.
+function PipelineBar({ progress, mode, idx }: { progress: number; mode: PipeMode; idx: number }) {
+  const pct = Math.round(progress * 100)
+  const tone =
+    mode === 'failed'
+      ? 'from-error to-[#f06565]'
+      : mode === 'ready'
+        ? 'from-success to-[#34d27b]'
+        : 'from-primary to-[#4f86f7]'
+  const pctTone = mode === 'failed' ? 'text-error' : mode === 'ready' ? 'text-success' : 'text-primary'
+  return (
+    <div className="mb-lg">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-metadata font-medium text-secondary">
+          {mode === 'ready' ? 'Complete' : `Step ${Math.min(idx + 1, PIPELINE_N)} of ${PIPELINE_N} · ${PIPELINE[idx].label}`}
+        </span>
+        <span className={`text-metadata font-bold tabular-nums ${pctTone}`}>{pct}%</span>
+      </div>
+      <div
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={pct}
+        aria-label="Episode processing progress"
+        className="relative h-2 overflow-hidden rounded-full bg-surface-container-high"
+      >
+        <div
+          className={`relative h-full rounded-full bg-gradient-to-r ${tone}`}
+          style={{ width: `${progress * 100}%`, transition: 'width 380ms var(--ease-out)' }}
+        >
+          {mode === 'processing' && <span className="pipe-sheen" aria-hidden />}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// The circular step marker. The in-progress stage gets a rotating spinner ring
+// and a pulsing halo; a node "pops" the moment the front passes it into done.
+function StepNode({ state, icon, live }: { state: NodeState; icon: string; live: boolean }) {
+  const ring =
+    state === 'done'
+      ? 'border-primary bg-primary text-on-primary'
+      : state === 'active'
+        ? 'border-primary bg-surface text-primary'
+        : state === 'error'
+          ? 'border-error bg-error-container text-on-error-container'
+          : 'border-outline-variant bg-surface text-outline'
+  const glyph = state === 'done' ? 'check' : state === 'error' ? 'priority_high' : icon
+  const spinning = state === 'active' && live
+  return (
+    <span className="relative grid h-6 w-6 shrink-0 place-items-center">
+      {spinning && (
+        <span className="absolute -inset-[3px] rounded-full border-2 border-primary/25 border-t-primary motion-safe:animate-spin" aria-hidden />
+      )}
+      <span className={`relative grid h-6 w-6 place-items-center rounded-full border-2 transition-colors ${ring} ${spinning ? 'node-halo' : ''}`}>
+        <Icon key={state} name={glyph} size={14} className={state === 'done' || state === 'error' ? 'node-pop' : ''} />
+      </span>
+    </span>
+  )
+}
+
+// The rail segment between two nodes. The blue fill grows from the top toward the
+// next step; the active segment flows + glows at its leading edge so the eye is
+// drawn to exactly where the work is right now.
+function StepConnector({ fill, active }: { fill: number; active: boolean }) {
+  return (
+    <div className="relative my-1 h-7 w-[3px] overflow-hidden rounded-full bg-surface-container-high">
+      <div
+        className={`absolute inset-x-0 top-0 rounded-full ${active ? 'pipe-wire' : 'bg-gradient-to-b from-primary to-[#4f86f7]'}`}
+        style={{ height: `${fill * 100}%`, transition: 'height 380ms var(--ease-out)' }}
+      >
+        {active && fill > 0.02 && fill < 0.99 && <span className="pipe-glow" aria-hidden />}
+      </div>
+    </div>
   )
 }

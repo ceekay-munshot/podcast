@@ -164,14 +164,14 @@ function pickInteresting(ready: Episode[], podcastById: ById): WeeklySummary['in
     ready[0]
   const h = ep.summary?.highlights?.[0]
   const pod = podcastById(ep.podcastId)
-  // Prefer a real spoken line when the highlight links to a transcript segment.
-  let quote = h?.detail ?? ep.blurb ?? ''
-  if (h?.segmentId && ep.transcript?.length) {
-    const seg = ep.transcript.find((s) => s.id === h!.segmentId)
-    if (seg?.text) quote = seg.text
-  }
+  // Surface the curated highlight — its headline plus the why-it-matters insight.
+  // (Never the raw transcript segment: spoken lines are mid-sentence fragments
+  // that read as nonsense out of context.)
+  const title = (h?.title ?? ep.title).replace(/\*\*/g, '').trim()
+  const insight = (h?.detail ?? ep.blurb ?? '').replace(/\*\*/g, '').trim()
   return {
-    quote: trim(quote.replace(/\*\*/g, '').trim(), 260),
+    title: trim(title, 120),
+    quote: trim(insight, 260),
     speaker: pod?.title ?? 'The hosts',
     role: ep.title,
     episodeId: ep.id,

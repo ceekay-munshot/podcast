@@ -3,8 +3,10 @@ import type { Connect, Plugin } from 'vite'
 import type { ServerResponse } from 'node:http'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
-import { getLiveEpisodes } from './server/feeds'
+import { episodesForFeed, getLiveEpisodes } from './server/feeds'
+import { searchPodcasts } from './server/search'
 import { summarizeEpisode } from './server/summarize'
+import { fileSummaryStore } from './server/summaryStore.node'
 
 function json(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status
@@ -24,13 +26,37 @@ function readBody(req: Connect.IncomingMessage): Promise<string> {
 // Serves the live-feed + summary API during `vite dev` / preview, mirroring the
 // Cloudflare Pages Functions (functions/api/*) used in production. Both call the
 // same shared server/* modules, so local and prod behave identically.
-function liveApiPlugin(config: { openaiKey?: string; anthropicKey?: string; model?: string }): Plugin {
+function liveApiPlugin(config: {
+  openaiKey?: string
+  anthropicKey?: string
+  model?: string
+  deepgramKey?: string
+  deepgramModel?: string
+  groqKey?: string
+}): Plugin {
+  // Shared summary store for dev: a filesystem mirror of the prod KV namespace, so
+  // a summary generated once is reused across reloads and across every browser that
+  // hits this dev server — exactly like the deployed app.
+  const store = fileSummaryStore(path.resolve(process.cwd(), '.cache/summaries'))
   return {
     name: 'munshot-live-api',
     configureServer(server) {
-      server.middlewares.use('/api/episodes', async (_req, res) => {
+      server.middlewares.use('/api/episodes', async (req, res) => {
         try {
-          json(res, 200, await getLiveEpisodes())
+          // req.url is the remainder after the mount prefix; base it to read query params.
+          const params = new URL(req.url ?? '', 'http://localhost').searchParams
+          const feed = params.get('feed')
+          const id = params.get('id')
+          json(res, 200, feed && id ? await episodesForFeed(feed, id) : await getLiveEpisodes(store))
+        } catch {
+          json(res, 200, [])
+        }
+      })
+
+      server.middlewares.use('/api/search-podcasts', async (req, res) => {
+        try {
+          const q = new URL(req.url ?? '', 'http://localhost').searchParams.get('q') ?? ''
+          json(res, 200, await searchPodcasts(q))
         } catch {
           json(res, 200, [])
         }
@@ -41,7 +67,7 @@ function liveApiPlugin(config: { openaiKey?: string; anthropicKey?: string; mode
         if (!config.openaiKey && !config.anthropicKey) return json(res, 503, { error: 'no_api_key' })
         try {
           const input = JSON.parse((await readBody(req)) || '{}')
-          json(res, 200, await summarizeEpisode(input, config))
+          json(res, 200, await summarizeEpisode(input, { ...config, store }))
         } catch (e) {
           json(res, 502, { error: 'summarize_failed', detail: String(e).slice(0, 200) })
         }
@@ -67,10 +93,15 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react(), liveApiPlugin(summaryConfig)],
-    // Honor the PORT assigned by the preview harness (falls back to Vite default).
+    // Bind on all interfaces and honor the PORT assigned by the preview harness so
+    // the hosted preview can reach the dev server (it proxies in from beyond
+    // loopback). allowedHosts lets the proxied preview hostname through Vite's
+    // host-header check instead of being rejected as a "blocked request".
     server: {
+      host: true,
       port: Number(process.env.PORT) || 5173,
       strictPort: false,
+      allowedHosts: true,
     },
     resolve: {
       alias: {

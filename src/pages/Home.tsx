@@ -5,7 +5,7 @@ import { useChannelFilter } from '../store/ChannelFilter'
 import { useSentiment } from '../store/Sentiment'
 import { formatDuration, longDate, relativeDate } from '../lib/format'
 import { keyHighlights } from '../lib/highlights'
-import { episodeTone } from '../lib/tone'
+import { episodeToneView } from '../lib/tone'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
 import { RichText, entityTerms } from '../components/RichText'
@@ -98,7 +98,7 @@ export default function Home() {
                   <span className="inline-flex items-center gap-1">
                     <Icon name="mic" size={14} /> Episode {featured.entities.people.length + 280}
                   </span>
-                  {featured.summary && sentimentOn && <ToneMeter tone={episodeTone(featured)} />}
+                  {featured.summary && sentimentOn && <ToneMeter tone={episodeToneView(featured)} />}
                 </div>
                 <p className="text-body-md leading-relaxed text-on-surface-variant">
                   <RichText text={featured.blurb} terms={entityTerms(featured.entities)} />

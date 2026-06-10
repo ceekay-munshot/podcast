@@ -31,10 +31,27 @@ export interface Podcast {
   monogram: string
   /** Real cover art (square). When absent, the UI falls back to color + monogram. */
   artworkUrl?: string
+  /** Canonical RSS/Atom feed. Set for user-added shows (carried from search so
+   *  their episodes can be detected); seed shows keep their feeds server-side. */
+  feedUrl?: string
   tracked: boolean
   /** No public feed → episodes can't be ingested or transcribed. Rendered as a
    *  locked show; its episodes are suppressed so users never see fabricated data. */
   locked?: boolean
+}
+
+/** A directory search hit (Apple Podcasts / resolved RSS / YouTube channel).
+ *  Mirrors the server's `PodcastSearchResult` (server/search.ts) — the wire shape
+ *  the /api/search-podcasts endpoint returns. */
+export interface PodcastSearchResult {
+  id: string
+  title: string
+  author: string
+  category: string
+  description: string
+  artworkUrl?: string
+  feedUrl: string
+  source: SourceKind
 }
 
 /** A plain conclusion — title + supporting detail. Used by the weekly digest,
@@ -76,6 +93,28 @@ export interface TranscriptSegment {
   }
 }
 
+export type ToneSentiment = 'positive' | 'negative' | 'neutral'
+
+/** One thing the episode actually discusses, with the sentiment expressed toward it. */
+export interface ToneAspect {
+  /** A real company / person / topic, e.g. "SpaceX", "secondary markets". */
+  subject: string
+  sentiment: ToneSentiment
+  /** Short, specific reason drawn from the material. */
+  note: string
+}
+
+/** A context-aware tone read produced by the summarizer LLM (not the lexicon). */
+export interface EpisodeTone {
+  // Intentionally mirrors `ToneLabel` (src/lib/tone.ts) WITHOUT importing it — tone.ts
+  // imports this module, so importing back would be a circular dependency.
+  overall: 'positive' | 'cautious' | 'mixed' | 'neutral'
+  /** ONE sentence explaining the net read, grounded in the episode. */
+  rationale: string
+  /** 3-6 aspects — the "about what" behind the net read. */
+  aspects: ToneAspect[]
+}
+
 /** The one-page AI summary — everything a single episode produces. */
 export interface Summary {
   /** The readable one-page synthesis, as paragraphs. */
@@ -83,6 +122,9 @@ export interface Summary {
   /** Timestamped highlights in timeline order; the `key` ones are the headline takeaways. */
   highlights: Highlight[]
   qa: QAItem[]
+  /** Context-aware tone read from the summarizer LLM. Optional: older cached
+   *  summaries (and mock data) predate it and fall back to the lexicon roll-up. */
+  tone?: EpisodeTone
 }
 
 export interface EpisodeEntities {
@@ -123,8 +165,8 @@ export interface WeeklySummary {
   /** "This week in summary" prose. */
   overview: string[]
   topThemes: { label: string; momentum: number }[]
-  /** "What was actually interesting" pull-quote. */
-  interesting: { quote: string; speaker: string; role: string; episodeId: string }
+  /** "What was actually interesting" — a curated moment: a headline + the insight. */
+  interesting: { title: string; quote: string; speaker: string; role: string; episodeId: string }
   takeaways: Takeaway[]
   contradictions: string[]
   mentions: { people: string[]; companies: string[] }

@@ -5,13 +5,15 @@ import { useDateRange } from '../store/DateRange'
 import { useChannelFilter } from '../store/ChannelFilter'
 import { useSentiment } from '../store/Sentiment'
 import { formatDuration, longDate } from '../lib/format'
-import { episodeTone } from '../lib/tone'
+import { episodeToneView } from '../lib/tone'
 import type { Episode } from '../lib/types'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
 import { SourceLink } from '../components/SourceLink'
 import { StatusBadge } from '../components/StatusBadge'
 import { ToneBadge } from '../components/ToneMeter'
+import { PREVIEW_ID, useEpisodePreview } from '../components/EpisodeHoverCard'
+import type { EpisodeHoverProps } from '../components/EpisodeHoverCard'
 
 // Column template flexes by one when the Tone column is shown (sentiment on).
 const GRID = 'grid-cols-[2.6fr_1.6fr_1fr_0.8fr_1fr]'
@@ -25,6 +27,9 @@ export default function Episodes() {
   const navigate = useNavigate()
   const [q, setQ] = useState('')
   const grid = sentimentOn ? GRID_TONE : GRID
+  // Hover/focus preview "toast" so a row's full picture is visible before you
+  // click in (which, for un-processed episodes, triggers the AI pipeline).
+  const { hoverProps, preview, activeId, hardClose } = useEpisodePreview()
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -93,7 +98,18 @@ export default function Episodes() {
         </div>
 
         {rows.map((ep) => (
-          <EpisodeRow key={ep.id} episode={ep} grid={grid} showTone={sentimentOn} onOpen={() => navigate(`/episodes/${ep.id}`)} />
+          <EpisodeRow
+            key={ep.id}
+            episode={ep}
+            grid={grid}
+            showTone={sentimentOn}
+            hover={hoverProps(ep)}
+            active={activeId === ep.id}
+            onOpen={() => {
+              hardClose()
+              navigate(`/episodes/${ep.id}`)
+            }}
+          />
         ))}
 
         {rows.length === 0 && (
@@ -108,6 +124,8 @@ export default function Episodes() {
           </div>
         )}
       </div>
+
+      {preview}
     </div>
   )
 }
@@ -116,16 +134,20 @@ function EpisodeRow({
   episode,
   grid,
   showTone,
+  hover,
+  active,
   onOpen,
 }: {
   episode: Episode
   grid: string
   showTone: boolean
+  hover: EpisodeHoverProps
+  active: boolean
   onOpen: () => void
 }) {
   const { podcastById } = useAppData()
   const podcast = podcastById(episode.podcastId)
-  const tone = useMemo(() => episodeTone(episode), [episode])
+  const tone = useMemo(() => episodeToneView(episode), [episode])
   return (
     <div
       role="button"
@@ -137,7 +159,11 @@ function EpisodeRow({
           onOpen()
         }
       }}
-      className={`group grid w-full cursor-pointer ${grid} items-center gap-md border-b border-outline-variant px-md py-3.5 text-left transition-colors last:border-b-0 hover:bg-surface-container-low/60 focus:bg-surface-container-low/60 focus:outline-none`}
+      {...hover}
+      aria-describedby={active ? PREVIEW_ID : undefined}
+      className={`group grid w-full cursor-pointer ${grid} items-center gap-md border-b border-outline-variant px-md py-3.5 text-left transition-colors last:border-b-0 hover:bg-surface-container-low/60 focus:bg-surface-container-low/60 focus:outline-none ${
+        active ? 'bg-surface-container-low/60 ring-1 ring-inset ring-primary/15' : ''
+      }`}
     >
       <div className="flex min-w-0 items-center gap-3">
         {podcast && <CoverTile podcast={podcast} className="h-11 w-11 shrink-0" />}

@@ -8,7 +8,7 @@
 // undercount a long body, and the score reflects every signal.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { Episode, WeeklySummary } from './types'
+import type { Episode, EpisodeTone, ToneAspect, WeeklySummary } from './types'
 import { analyzeSentiment } from './sentiment'
 
 export type ToneLabel = 'positive' | 'cautious' | 'mixed' | 'neutral'
@@ -66,4 +66,84 @@ export function weeklyTone(w: WeeklySummary): Tone {
     ...w.contradictions,
     ...w.questions,
   ])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tone *view* — one shape the gauge renders from, sourced from the LLM tone when
+// present and falling back to the lexicon roll-up above otherwise. This is where
+// the gauge's source switches from keyword counts to the context-aware LLM read;
+// the inline word tints (RichText / sentiment.ts) are untouched.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ToneView {
+  /** Drives the icon + colour (shared META in ToneMeter). */
+  label: ToneLabel
+  /** Green share of the proportion bar, 0..1. */
+  posRatio: number
+  /** Whether there's enough directional signal to draw the bar. */
+  bar: boolean
+  /** One-sentence net-read explanation — LLM tone only. */
+  rationale?: string
+  /** Per-subject reads — LLM tone only. */
+  aspects?: ToneAspect[]
+}
+
+/** Runtime guard: the tone may come from an older localStorage cache, a hand-edited
+ *  mock fixture, or a partial payload — never trust the static type alone. */
+export function isEpisodeTone(t: unknown): t is EpisodeTone {
+  if (!t || typeof t !== 'object') return false
+  const v = t as { overall?: unknown; rationale?: unknown; aspects?: unknown }
+  return (
+    typeof v.overall === 'string' &&
+    (['positive', 'cautious', 'mixed', 'neutral'] as const).includes(v.overall as ToneLabel) &&
+    typeof v.rationale === 'string' &&
+    Array.isArray(v.aspects)
+  )
+}
+
+function fromLexicon(t: Tone): ToneView {
+  return { label: t.label, posRatio: t.posRatio, bar: t.signal >= 2 }
+}
+
+// Bar is driven by the DIRECTIONAL aspect mix only — neutral aspects never enter the
+// denominator, so the green/red split reflects expressed positive vs negative.
+function fromLLM(t: EpisodeTone): ToneView {
+  const pos = t.aspects.filter((a) => a.sentiment === 'positive').length
+  const neg = t.aspects.filter((a) => a.sentiment === 'negative').length
+  const decided = pos + neg
+  return {
+    label: t.overall, // label is always the LLM's net read, independent of the bar
+    posRatio: decided ? pos / decided : 0.5,
+    bar: decided >= 1,
+    rationale: t.rationale,
+    aspects: t.aspects,
+  }
+}
+
+/** An episode's tone for the gauge — LLM read when present, else the lexicon roll-up. */
+export function episodeToneView(ep: Episode): ToneView {
+  const t = ep.summary?.tone
+  return isEpisodeTone(t) ? fromLLM(t) : fromLexicon(episodeTone(ep))
+}
+
+/** The week's tone for the gauge. Prefers aggregating the per-episode LLM tones, but
+ *  only once they cover at least half the week's episodes — otherwise one freshly
+ *  re-summarised episode would speak for a week of stale ones. Falls back to the
+ *  lexicon roll-up of the weekly prose. */
+export function weeklyToneView(w: WeeklySummary, episodeById: (id: string) => Episode | undefined): ToneView {
+  const tones = w.sourceEpisodeIds.map((id) => episodeById(id)?.summary?.tone).filter(isEpisodeTone)
+  const coverage = tones.length / Math.max(1, w.sourceEpisodeIds.length)
+  if (tones.length && coverage >= 0.5) {
+    const aspects = tones.flatMap((t) => t.aspects)
+    const pos = aspects.filter((a) => a.sentiment === 'positive').length
+    const neg = aspects.filter((a) => a.sentiment === 'negative').length
+    const decided = pos + neg
+    let label: ToneLabel
+    if (!decided) label = 'neutral'
+    else if (pos > neg * 1.5) label = 'positive'
+    else if (neg > pos * 1.5) label = 'cautious'
+    else label = 'mixed'
+    return { label, posRatio: decided ? pos / decided : 0.5, bar: decided >= 1 }
+  }
+  return fromLexicon(weeklyTone(w))
 }
