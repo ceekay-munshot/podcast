@@ -3,10 +3,12 @@ import type { Connect, Plugin } from 'vite'
 import type { ServerResponse } from 'node:http'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
-import { episodesForFeed, getLiveEpisodes } from './server/feeds'
+import { episodesForFeed, getLiveEpisodes, SEED_IDS } from './server/feeds'
 import { searchPodcasts } from './server/search'
 import { summarizeEpisode } from './server/summarize'
 import { fileSummaryStore } from './server/summaryStore.node'
+import { handleChannels } from './server/channelStore'
+import { fileChannelStore } from './server/channelStore.node'
 
 function json(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status
@@ -38,9 +40,24 @@ function liveApiPlugin(config: {
   // a summary generated once is reused across reloads and across every browser that
   // hits this dev server — exactly like the deployed app.
   const store = fileSummaryStore(path.resolve(process.cwd(), '.cache/summaries'))
+  // Durable channel roster for dev: a file mirror of the prod KV entry, so the
+  // tracked-show list survives restarts and is shared by every browser that
+  // hits this dev server — exactly like the deployed app.
+  const channels = fileChannelStore(path.resolve(process.cwd(), '.cache/channels.json'))
   return {
     name: 'munshot-live-api',
     configureServer(server) {
+      server.middlewares.use('/api/channels', async (req, res) => {
+        try {
+          const method = req.method ?? 'GET'
+          const { status, body } = await handleChannels(channels, method, method === 'GET' ? '' : await readBody(req), SEED_IDS)
+          json(res, status, body)
+        } catch {
+          if (req.method === 'GET') json(res, 200, [])
+          else json(res, 500, { error: 'channels_failed' })
+        }
+      })
+
       server.middlewares.use('/api/episodes', async (req, res) => {
         try {
           // req.url is the remainder after the mount prefix; base it to read query params.

@@ -47,11 +47,40 @@ export function getWeekly(): Promise<WeeklySummary> {
   return delay(clone(WEEKLY))
 }
 
-// ── Mutations — optimistic on the client, persisted here in a real backend ───
+// ── Durable channel roster — /api/channels (KV in prod, .cache file in dev) ──
+// Which shows you track — including ones added from Discover — lives server-side
+// so it survives deploys and is identical on every browser/device. Every call is
+// best-effort: on failure the UI quietly falls back to the localStorage mirror.
 
-export function setPodcastTracked(id: string, tracked: boolean): Promise<{ id: string; tracked: boolean }> {
-  // SEAM: POST /api/podcasts/:id/track
-  return delay({ id, tracked })
+export function listChannels(): Promise<Podcast[]> {
+  return fetch('/api/channels')
+    .then((r) => (r.ok ? (r.json() as Promise<Podcast[]>) : []))
+    .then((list) => (Array.isArray(list) ? list : []))
+    .catch(() => [])
+}
+
+/** Persist one channel's state (add, re-track, or untrack via tracked:false). */
+export function upsertChannel(podcast: Podcast): Promise<boolean> {
+  return fetch('/api/channels', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ podcast }),
+  })
+    .then((r) => r.ok)
+    .catch(() => false)
+}
+
+/** One-time push of channels this browser knows but the server doesn't (saved
+ *  before the backend store existed). Server entries always win; this only adds. */
+export function migrateChannels(podcasts: Podcast[]): Promise<boolean> {
+  if (!podcasts.length) return Promise.resolve(true)
+  return fetch('/api/channels', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ podcasts }),
+  })
+    .then((r) => r.ok)
+    .catch(() => false)
 }
 
 export class NoApiKeyError extends Error {}

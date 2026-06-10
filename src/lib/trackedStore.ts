@@ -1,16 +1,15 @@
 import type { Podcast } from './types'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// User-added-podcast persistence (per browser/origin).
+// Local MIRROR of the user-added side of the channel roster (per browser/origin).
 //
-// The app has no backend store yet, so a podcast the user searches for and adds
-// would vanish on reload. This keeps a localStorage record of the shows the user
-// added themselves (each carrying its resolved `feedUrl`), re-hydrated on load and
-// merged into the seed list. Seed/curated shows are NOT stored here — they always
-// come from the seed data — so this only ever holds genuinely user-added feeds.
-//
-// Cross-device sync would need a real backend; wire it in behind these functions
-// and the rest of the app is unchanged. Mirrors processedStore.ts.
+// The durable source of truth is the server roster (/api/channels → KV; see
+// server/channelStore.ts) — it survives deploys and is shared across devices.
+// This localStorage copy is the offline fallback (server unreachable → the list
+// still renders) and the migration source: entries saved here before the backend
+// store existed are pushed up once on boot (see AppData). Seed/curated shows are
+// NOT stored here — their tracked overrides live only in the server roster —
+// so this only ever holds genuinely user-added feeds. Mirrors processedStore.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const KEY = 'munshot:tracked:v1'
@@ -59,6 +58,17 @@ export function saveTracked(podcast: Podcast): void {
 /** Forget a user-added podcast. */
 export function removeTracked(id: string): void {
   persist(loadTracked().filter((p) => p.id !== id))
+}
+
+/** Overwrite the whole local mirror — called after boot so this browser's
+ *  fallback copy matches the server roster (plus anything just migrated). */
+export function mirrorTracked(list: Podcast[]): void {
+  persist(
+    list
+      .map((p) => ({ ...p, tracked: true as const }))
+      .filter((p) => isValid(p))
+      .slice(0, MAX),
+  )
 }
 
 function persist(list: Podcast[]): void {

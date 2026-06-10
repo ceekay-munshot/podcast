@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import type { Episode, Podcast, ProcessingStatus, WeeklySummary } from '../lib/types'
 import * as api from '../lib/api'
 import { loadProcessed, saveProcessed } from '../lib/processedStore'
-import { loadTracked, removeTracked, saveTracked } from '../lib/trackedStore'
+import { loadTracked, mirrorTracked, removeTracked, saveTracked } from '../lib/trackedStore'
 
 // One provider loads everything through the api seam on mount and hands it to
 // the app via context, so individual pages stay synchronous and snappy.
@@ -89,13 +89,27 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let alive = true
-    Promise.all([api.listPodcasts(), api.listEpisodes(), api.getWeekly()]).then(([p, e, w]) => {
+    Promise.all([api.listPodcasts(), api.listEpisodes(), api.getWeekly(), api.listChannels()]).then(([p, e, w, roster]) => {
       if (!alive) return
       seedIds.current = new Set(p.map((x) => x.id))
-      // Merge user-added podcasts (persisted in localStorage) ahead of the seed
-      // list, de-duped by id so a persisted copy of a seed show can't double it.
-      const persisted = loadTracked().filter((tp) => !seedIds.current.has(tp.id))
-      const merged = [...persisted, ...p]
+      // The durable channel roster (KV via /api/channels) is the source of truth:
+      // it survives deploys and is shared across every browser/device.
+      const rosterById = new Map(roster.map((c) => [c.id, c]))
+      // Seeds, with any stored tracked override applied (a suggestion picked in
+      // Discover, or a default show the user untracked).
+      const seeds = p.map((s) => {
+        const o = rosterById.get(s.id)
+        return o ? { ...s, tracked: !!o.tracked } : s
+      })
+      // User-added shows: the server roster first, then any known only to this
+      // browser (saved before the backend store existed, or while it was
+      // unreachable) — pushed up once so they're on every device from now on.
+      const rosterAdds = roster.filter((c) => !seedIds.current.has(c.id) && c.tracked)
+      const localOnly = loadTracked().filter((tp) => !seedIds.current.has(tp.id) && !rosterById.has(tp.id))
+      if (localOnly.length) void api.migrateChannels(localOnly)
+      const persisted = [...rosterAdds, ...localOnly]
+      mirrorTracked(persisted) // local fallback copy = what we just resolved
+      const merged = [...persisted, ...seeds]
       // Locked shows have no public feed — drop any (seed) episodes for them so a
       // fabricated summary/transcript can never reach the UI. Single chokepoint:
       // Home, Episodes, Search, Weekly, and the channel selector all derive from this.
@@ -162,7 +176,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     if (!current) return
     const nowTracked = !current.tracked
     setPodcasts((prev) => prev.map((p) => (p.id === id ? { ...p, tracked: nowTracked } : p)))
-    void api.setPodcastTracked(id, nowTracked) // optimistic
+    // Optimistic write-through to the durable roster — seeds and adds alike, so
+    // the choice survives reloads, deploys, and other browsers.
+    void api.upsertChannel({ ...current, tracked: nowTracked })
     // Only user-added shows persist. Re-detect episodes when re-tracked; on untrack,
     // drop their episodes from the session so a custom feed doesn't linger on Episodes.
     if (!seedIds.current.has(id)) {
@@ -183,7 +199,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       if (match) {
         // Already known (often a seed show surfaced by search) — just ensure it's tracked.
         setPodcasts((prev) => prev.map((p) => (p.id === match.id ? { ...p, tracked: true } : p)))
-        void api.setPodcastTracked(match.id, true)
+        void api.upsertChannel({ ...match, tracked: true })
         if (!seedIds.current.has(match.id)) {
           saveTracked({ ...match, tracked: true })
           if (match.feedUrl) api.fetchFeedEpisodes(match.feedUrl, match.id).then(mergeEpisodes)
@@ -194,6 +210,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         prev.some((p) => p.id === entry.id) ? prev.map((p) => (p.id === entry.id ? { ...p, tracked: true } : p)) : [entry, ...prev],
       )
       saveTracked(entry)
+      void api.upsertChannel(entry)
       if (entry.feedUrl) api.fetchFeedEpisodes(entry.feedUrl, entry.id).then(mergeEpisodes)
     },
     [mergeEpisodes],

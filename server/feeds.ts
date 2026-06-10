@@ -34,6 +34,11 @@ const SOURCES: Source[] = [
   { id: 'benmarc', feedUrl: 'https://feeds.simplecast.com/mAT9rqvu' },
 ]
 
+/** Ids of the curated seed shows. The channel roster (server/channelStore.ts)
+ *  needs them: untracking a seed stores a tracked:false override, while
+ *  untracking a user-added show deletes its entry outright. */
+export const SEED_IDS: ReadonlySet<string> = new Set(SOURCES.map((s) => s.id))
+
 const PER_SOURCE = 4 // recent episodes to surface per show
 
 // Stream only the head of a feed — items are newest-first, so the first ~800 KB
