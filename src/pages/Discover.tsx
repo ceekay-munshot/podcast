@@ -172,7 +172,7 @@ export default function Discover() {
           <div className="mx-auto max-w-3xl text-center">
             <h1 className="text-display-lg tracking-tight text-on-surface">Track the podcasts that matter to you</h1>
             <p className="mt-2 text-body-lg text-secondary">
-              Search Apple Podcasts, or paste an RSS feed or YouTube channel URL to get started.
+              Search Apple Podcasts, or paste an RSS feed, YouTube channel, or playlist URL to get started.
             </p>
             <form onSubmit={(e: FormEvent) => e.preventDefault()} className="relative mx-auto mt-lg">
               <Icon name="search" size={22} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-outline" />
@@ -182,7 +182,7 @@ export default function Discover() {
                   setQuery(e.target.value)
                   setJustAdded(null)
                 }}
-                placeholder="Search podcasts or paste an RSS / YouTube channel URL"
+                placeholder="Search podcasts or paste an RSS / YouTube channel / playlist URL"
                 className="w-full rounded-xl border border-outline-variant bg-surface-container-lowest py-3.5 pl-12 pr-11 text-body-md shadow-card outline-none focus:border-primary"
                 autoFocus
               />
@@ -213,7 +213,7 @@ export default function Discover() {
                   <p className="text-body-md text-on-surface">
                     No podcasts found for <span className="font-semibold">“{q}”</span>.
                   </p>
-                  <p className="mt-1 text-metadata text-secondary">Try a different name, or paste an RSS feed or YouTube channel URL.</p>
+                  <p className="mt-1 text-metadata text-secondary">Try a different name, or paste an RSS feed, YouTube channel, or playlist URL.</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-gutter md:grid-cols-2">

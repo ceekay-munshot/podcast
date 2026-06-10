@@ -8,7 +8,8 @@ import { attrOf, decodeEntities, fetchFeedHead, hashKey, innerTag, plainText, un
 //
 //   plain text  → Apple/iTunes Search API (free, no key)
 //   apple URL   → iTunes lookup by collection id (…/id123456)
-//   youtube URL → resolve the channel to its videos.xml RSS feed
+//   youtube URL → playlist URLs resolve to the playlist's videos.xml feed
+//                 (shows published as playlists); otherwise the channel's
 //   rss URL     → accept the feed and read its channel metadata
 //
 // Every user-supplied URL (and the feedUrl a result carries) is validated by the
@@ -124,7 +125,39 @@ async function resolveRssFeed(url: string): Promise<PodcastSearchResult[]> {
   ]
 }
 
-// ── YouTube channel URL → videos.xml RSS ──────────────────────────────────────
+// ── YouTube playlist / channel URL → videos.xml RSS ───────────────────────────
+
+/** The playlist id carried by a YouTube URL (`/playlist?list=…`, or a watch /
+ *  share link inside the playlist carrying `?list=…`). Null for session mixes
+ *  (RD… ids — YouTube serves no feed for those) and anything malformed. */
+export function youtubePlaylistId(rawUrl: string): string | null {
+  let u: URL
+  try {
+    u = new URL(rawUrl)
+  } catch {
+    return null
+  }
+  if (!isYouTubeHost(u.hostname)) return null
+  const list = (u.searchParams.get('list') || '').trim()
+  if (!/^[A-Za-z0-9_-]{12,48}$/.test(list) || list.startsWith('RD')) return null
+  return list
+}
+
+// A podcast published on YouTube is usually a PLAYLIST on a bigger channel
+// (e.g. one series among many shows), so a playlist URL resolves to the
+// playlist's own feed — exactly its episodes — never the whole channel.
+async function resolveYouTubePlaylist(rawUrl: string): Promise<PodcastSearchResult[]> {
+  const listId = youtubePlaylistId(rawUrl)
+  if (!listId) return []
+  const feedUrl = `https://www.youtube.com/feeds/videos.xml?playlist_id=${listId}`
+  const xml = await fetchFeedHead(feedUrl, 200_000)
+  if (!xml) return []
+  const head = xml.replace(/<entry\b[\s\S]*?<\/entry>/gi, '') // playlist-level fields only
+  const title = decodeEntities(unwrapCdata(innerTag(head, 'title'))).trim()
+  if (!title) return [] // private / deleted playlist → let the channel path try
+  const author = decodeEntities(unwrapCdata(innerTag(innerTag(head, 'author'), 'name'))).trim() || title
+  return [{ id: `yt-pl-${listId}`, title, author, category: 'YouTube', description: '', feedUrl, source: 'youtube' }]
+}
 
 function youtubeHandleName(u: URL): string {
   const seg = u.pathname.split('/').filter(Boolean)
@@ -181,6 +214,10 @@ async function resolveYouTubeChannelId(rawUrl: string): Promise<string | null> {
 
 async function resolveYouTubeFeed(rawUrl: string): Promise<PodcastSearchResult[]> {
   if (!isPublicHttpUrl(rawUrl)) return []
+  // A URL carrying a playlist id is the playlist (the show); the channel is the
+  // fallback for plain channel/handle/watch URLs — and for dead playlists.
+  const playlist = await resolveYouTubePlaylist(rawUrl)
+  if (playlist.length) return playlist
   const channelId = await resolveYouTubeChannelId(rawUrl)
   if (!channelId) return []
   const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`

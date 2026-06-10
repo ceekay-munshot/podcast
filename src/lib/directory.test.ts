@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { isPublicHttpUrl } from '../../server/safeUrl'
 import { parseAtomEntries } from '../../server/feeds'
+import { youtubePlaylistId } from '../../server/search'
 
 // The SSRF guard is the security boundary for every user-supplied URL we fetch
 // server-side (search input + /api/episodes?feed=). These are the cases the
@@ -117,5 +118,30 @@ describe('parseAtomEntries (YouTube)', () => {
 
   it('returns [] for a feed with no entries', () => {
     expect(parseAtomEntries('<feed><title>Empty</title></feed>', 'yt-x')).toEqual([])
+  })
+})
+
+// A podcast on YouTube is usually a playlist (a series on a bigger channel), and
+// the Share button hands out playlist URLs — these must resolve to the playlist
+// id so Discover tracks the show, not the whole channel.
+describe('youtubePlaylistId', () => {
+  const PL = 'PLVPkbpccdn996PFFnil1ZETF6RSs7KsLg'
+
+  it('reads the id from a /playlist URL (ignoring tracking params)', () => {
+    expect(youtubePlaylistId(`https://youtube.com/playlist?list=${PL}&si=2GX-jJkln2jcwCHY`)).toBe(PL)
+    expect(youtubePlaylistId(`https://www.youtube.com/playlist?list=${PL}`)).toBe(PL)
+  })
+
+  it('reads the id from watch and short links inside a playlist', () => {
+    expect(youtubePlaylistId(`https://www.youtube.com/watch?v=ABC123&list=${PL}&index=4`)).toBe(PL)
+    expect(youtubePlaylistId(`https://youtu.be/ABC123?list=${PL}`)).toBe(PL)
+  })
+
+  it('rejects session mixes, non-YouTube hosts, and URLs with no list', () => {
+    expect(youtubePlaylistId('https://www.youtube.com/watch?v=ABC123&list=RDABC123')).toBeNull()
+    expect(youtubePlaylistId(`https://example.com/playlist?list=${PL}`)).toBeNull()
+    expect(youtubePlaylistId('https://www.youtube.com/watch?v=ABC123')).toBeNull()
+    expect(youtubePlaylistId('https://www.youtube.com/playlist?list=short')).toBeNull()
+    expect(youtubePlaylistId('not a url')).toBeNull()
   })
 })
