@@ -309,6 +309,17 @@
   }
 }
 
+/* Plain opacity entrance — scrims and other fade-only surfaces. */
+.fade-in {
+  opacity: 1;
+  transition: opacity 200ms ease;
+}
+@starting-style {
+  .fade-in {
+    opacity: 0;
+  }
+}
+
 /* Origin-aware popover/menu entrance. Pair with a Tailwind `origin-*` so the
    menu grows from its trigger, never from center. */
 .pop {

@@ -1,5 +1,8 @@
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { Episode, Podcast } from '../lib/types'
-import { episodeSourceUrl, sourceLabel } from '../lib/source'
+import { episodeSourceUrl, sourceLabel, youtubeVideoId } from '../lib/source'
+import { Icon } from './Icon'
 
 interface SourceLinkProps {
   episode: Episode
@@ -9,41 +12,147 @@ interface SourceLinkProps {
   className?: string
 }
 
-// Branded "Listen on Apple Podcasts" / "Watch on YouTube" link, opening the
-// episode at its origin in a new tab. The brand mark makes the destination
-// recognisable at a glance instead of a generic glyph.
+// Branded "Listen on Apple Podcasts" / "Watch on YouTube" entry point. When the
+// episode links straight to a video we play it in an in-app modal (YouTube's
+// /embed/ endpoint is built for iframes) — navigating to youtube.com breaks when
+// the app itself runs inside an embedded/sandboxed context (X-Frame-Options).
+// Without a video id we fall back to opening the source in a new tab.
 export function SourceLink({ episode, podcast, variant = 'button', className = '' }: SourceLinkProps) {
   const href = episodeSourceUrl(episode, podcast)
   const label = sourceLabel(podcast)
   const youtube = podcast?.source === 'youtube'
+  const videoId = youtube ? youtubeVideoId(episode) : null
+  const [open, setOpen] = useState(false)
+
+  const player = videoId && open && (
+    <WatchModal videoId={videoId} title={episode.title} href={href} onClose={() => setOpen(false)} />
+  )
 
   if (variant === 'icon') {
     return (
-      <a
-        href={href}
-        target="_blank"
-        rel="noreferrer"
-        onClick={(e) => e.stopPropagation()}
-        title={label}
-        aria-label={label}
-        className={`press grid h-8 w-8 shrink-0 place-items-center rounded-lg hover:bg-surface-container ${className}`}
-      >
-        <SourceMark youtube={youtube} size={18} />
-      </a>
+      <>
+        {videoId ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              setOpen(true)
+            }}
+            title={label}
+            aria-label={label}
+            aria-haspopup="dialog"
+            className={`press grid h-8 w-8 shrink-0 place-items-center rounded-lg hover:bg-surface-container ${className}`}
+          >
+            <SourceMark youtube={youtube} size={18} />
+          </button>
+        ) : (
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            title={label}
+            aria-label={label}
+            className={`press grid h-8 w-8 shrink-0 place-items-center rounded-lg hover:bg-surface-container ${className}`}
+          >
+            <SourceMark youtube={youtube} size={18} />
+          </a>
+        )}
+        {player}
+      </>
     )
   }
 
+  const pillClass = `press group inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface py-2 pl-2 pr-3.5 text-metadata font-semibold text-on-surface hover:border-primary/40 hover:bg-surface-container-low ${className}`
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      onClick={(e) => e.stopPropagation()}
-      className={`press group inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface py-2 pl-2 pr-3.5 text-metadata font-semibold text-on-surface hover:border-primary/40 hover:bg-surface-container-low ${className}`}
-    >
-      <SourceMark youtube={youtube} size={22} />
-      {label}
-    </a>
+    <>
+      {videoId ? (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            setOpen(true)
+          }}
+          aria-haspopup="dialog"
+          className={pillClass}
+        >
+          <SourceMark youtube={youtube} size={22} />
+          {label}
+        </button>
+      ) : (
+        <a href={href} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className={pillClass}>
+          <SourceMark youtube={youtube} size={22} />
+          {label}
+        </a>
+      )}
+      {player}
+    </>
+  )
+}
+
+// In-app player — centered modal (modals keep transform-origin center), .pop
+// entrance, Esc / scrim / ✕ to close. The privacy-enhanced embed host avoids
+// dropping tracking cookies until playback starts.
+function WatchModal({ videoId, title, href, onClose }: { videoId: string; title: string; href: string; onClose: () => void }) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  const restoreRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    restoreRef.current = document.activeElement as HTMLElement | null
+    panelRef.current?.focus()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+      restoreRef.current?.focus?.()
+    }
+  }, [onClose])
+
+  // Portaled to <body>: ancestors with persistent transforms (entrance
+  // animations, .lift rows) would otherwise become the containing block for
+  // position:fixed and trap the dialog inside themselves.
+  return createPortal(
+    <div className="fixed inset-0 z-[80] grid place-items-center p-4" role="dialog" aria-modal="true" aria-label={`Playing: ${title}`}>
+      <button aria-hidden tabIndex={-1} onClick={onClose} className="fade-in absolute inset-0 cursor-default bg-inverse-surface/60" />
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        className="pop relative w-[min(94vw,960px)] overflow-hidden rounded-2xl border border-outline-variant bg-surface shadow-card-hover focus:outline-none"
+      >
+        <div className="flex items-center gap-sm border-b border-outline-variant py-2.5 pl-md pr-2.5">
+          <p className="min-w-0 flex-1 truncate text-[14px] font-semibold text-on-surface">{title}</p>
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            className="press hidden shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-metadata font-semibold text-secondary hover:bg-surface-container-low hover:text-on-surface sm:inline-flex"
+          >
+            Open on YouTube <Icon name="open_in_new" size={15} />
+          </a>
+          <button
+            onClick={onClose}
+            aria-label="Close player"
+            className="press grid h-8 w-8 shrink-0 place-items-center rounded-lg text-secondary hover:bg-surface-container-low hover:text-on-surface"
+          >
+            <Icon name="close" size={18} />
+          </button>
+        </div>
+        <div className="aspect-video w-full bg-black">
+          <iframe
+            src={`https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&rel=0`}
+            title={title}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            className="h-full w-full"
+          />
+        </div>
+      </div>
+    </div>,
+    document.body,
   )
 }
 

@@ -30,6 +30,32 @@ export function episodeSourceUrl(
     : `https://podcasts.apple.com/us/search?term=${q}`
 }
 
+const idish = (s?: string | null) => (s && /^[\w-]{6,}$/.test(s) ? s : null)
+
+/** The YouTube video id behind an episode's sourceUrl, when it links straight to
+ *  a video. Drives the in-app player: youtube.com itself refuses to render in
+ *  embedded contexts (X-Frame-Options), so wherever we have an id we play via
+ *  the /embed/ endpoint instead of navigating — which works even when the whole
+ *  app is running inside someone else's (sandboxed) iframe. */
+export function youtubeVideoId(episode: Pick<Episode, 'sourceUrl'>): string | null {
+  const url = episode.sourceUrl
+  if (!url) return null
+  try {
+    const u = new URL(url)
+    const host = u.hostname.replace(/^www\./, '').toLowerCase()
+    if (host === 'youtu.be') return idish(u.pathname.split('/').filter(Boolean)[0])
+    if (host === 'youtube.com' || host.endsWith('.youtube.com')) {
+      const v = u.searchParams.get('v')
+      if (v) return idish(v)
+      const m = u.pathname.match(/\/(?:shorts|embed|live)\/([\w-]{6,})/)
+      if (m) return idish(m[1])
+    }
+  } catch {
+    /* not a URL */
+  }
+  return null
+}
+
 export function sourceLabel(podcast?: Pick<Podcast, 'source'>): string {
   return podcast?.source === 'youtube' ? 'Watch on YouTube' : 'Listen on Apple Podcasts'
 }
