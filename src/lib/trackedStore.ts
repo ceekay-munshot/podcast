@@ -1,10 +1,12 @@
 import type { Podcast } from './types'
+import { scopedKey } from './storageScope'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Local MIRROR of the user-added side of the channel roster (per browser/origin).
+// Local MIRROR of the user-added side of the channel roster (per browser/origin,
+// scoped per Munshot user via scopedKey — anonymous keeps the legacy key).
 //
 // The durable source of truth is the server roster (/api/channels → KV; see
-// server/channelStore.ts) — it survives deploys and is shared across devices.
+// server/channelStore.ts) — per user when identified, and it survives deploys.
 // This localStorage copy is the offline fallback (server unreachable → the list
 // still renders) and the migration source: entries saved here before the backend
 // store existed are pushed up once on boot (see AppData). Seed/curated shows are
@@ -12,7 +14,7 @@ import type { Podcast } from './types'
 // so this only ever holds genuinely user-added feeds. Mirrors processedStore.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const KEY = 'munshot:tracked:v1'
+const BASE = 'munshot:tracked:v1'
 const MAX = 100 // guards the localStorage quota
 
 function isValid(p: unknown): p is Podcast {
@@ -38,7 +40,7 @@ function isValid(p: unknown): p is Podcast {
 /** User-added podcasts, most-recent first. Never throws; drops malformed rows. */
 export function loadTracked(): Podcast[] {
   try {
-    const raw = localStorage.getItem(KEY)
+    const raw = localStorage.getItem(scopedKey(BASE))
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     return Array.isArray(parsed) ? parsed.filter(isValid) : []
@@ -73,7 +75,7 @@ export function mirrorTracked(list: Podcast[]): void {
 
 function persist(list: Podcast[]): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(list))
+    localStorage.setItem(scopedKey(BASE), JSON.stringify(list))
   } catch {
     /* storage unavailable (private mode) or over quota — adds still work in-session */
   }

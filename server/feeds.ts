@@ -217,17 +217,39 @@ export function parseAtomEntries(xml: string, podcastId: string): Episode[] {
   return out
 }
 
+// Overlay summaries already in the shared store: an episode processed by ANY
+// user flips to READY with its summary attached. Summary only — the bulky
+// transcript is lazy-loaded on the detail page from the same store (a store hit
+// there costs no LLM/transcription), keeping list responses lean.
+async function overlaySummaries(episodes: Episode[], store?: SummaryStore): Promise<Episode[]> {
+  if (!store) return episodes
+  await Promise.all(
+    episodes.map(async (e) => {
+      const hit = await store.get(sharedSummaryKey(e.id)).catch(() => null)
+      if (hit?.summary) {
+        e.status = 'ready'
+        e.summary = hit.summary
+      }
+    }),
+  )
+  return episodes
+}
+
 // Recent episodes for a SINGLE feed URL — the dynamic path used by user-added
 // podcasts (and reused by the seed shows below). Validates the URL against the
 // SSRF guard, picks the parser by sniffing RSS (<item>) vs Atom (<entry>), and
 // returns the parsed episodes or []. NEVER falls back to mock data: a user feed
 // that errors must show an empty list, not someone else's seeded content.
-export async function episodesForFeed(feedUrl: string, podcastId: string): Promise<Episode[]> {
+// Pass the shared summary store to overlay already-processed episodes as READY;
+// the seed path (episodesForSource) deliberately does NOT pass it — seeds are
+// overlaid once, in getLiveEpisodes, never twice.
+export async function episodesForFeed(feedUrl: string, podcastId: string, store?: SummaryStore): Promise<Episode[]> {
   if (!isPublicHttpUrl(feedUrl)) return []
   const xml = await fetchFeedHead(feedUrl)
   if (!xml) return []
   const isAtom = /<entry[\s>]/i.test(xml) && !/<item[\s>]/i.test(xml)
-  return isAtom ? parseAtomEntries(xml, podcastId) : parseEpisodes(xml, podcastId)
+  const episodes = isAtom ? parseAtomEntries(xml, podcastId) : parseEpisodes(xml, podcastId)
+  return store ? overlaySummaries(episodes, store) : episodes
 }
 
 async function episodesForSource(src: Source): Promise<Episode[]> {
@@ -247,21 +269,6 @@ async function episodesForSource(src: Source): Promise<Episode[]> {
 export async function getLiveEpisodes(store?: SummaryStore): Promise<Episode[]> {
   const settled = await Promise.allSettled(SOURCES.map(episodesForSource))
   const episodes = settled.flatMap((r, i) => (r.status === 'fulfilled' ? r.value : mockFor(SOURCES[i].id)))
-
-  // Overlay summaries already in the shared store. Summary only — the bulky
-  // transcript is lazy-loaded on the detail page from the same store (a store hit
-  // there costs no LLM/transcription), keeping this hot list response lean.
-  if (store) {
-    await Promise.all(
-      episodes.map(async (e) => {
-        const hit = await store.get(sharedSummaryKey(e.id)).catch(() => null)
-        if (hit?.summary) {
-          e.status = 'ready'
-          e.summary = hit.summary
-        }
-      }),
-    )
-  }
-
+  await overlaySummaries(episodes, store)
   return episodes.sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt))
 }

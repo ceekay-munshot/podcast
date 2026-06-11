@@ -2,24 +2,35 @@ import type { Podcast } from '../src/lib/types'
 import type { KVNamespace } from './summaryStore'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Durable channel roster — the single source of truth for which shows are
-// tracked, shared by every browser/device and unaffected by deploys.
+// Durable channel roster — the source of truth for which shows are tracked,
+// unaffected by deploys. One roster PER USER: requests carrying a Munshot
+// identity (see server/identity.ts) read/write `u:<uid>:channels:v1`, while
+// anonymous requests (standalone visits, local dev, curl) keep the legacy
+// global `channels:v1` — byte-for-byte today's behavior.
 //
-// One KV value (no TTL → permanent) holding an array of Podcast entries:
+// One KV value per roster (no TTL → permanent) holding an array of Podcast
+// entries:
 //   • user-added shows (from Discover/search), stored in full with tracked:true;
 //   • seed-show overrides — a curated show the user picked or untracked is stored
 //     with its tracked flag, overriding the seed default on every client.
 // Untracking a NON-seed show deletes its entry (forget the add); untracking a
-// seed keeps an entry with tracked:false (the override IS the data).
+// seed keeps an entry with tracked:false (the override IS the data). An empty
+// per-user roster is exactly the fresh-start default: all seeds tracked.
 //
 //   • Production (Pages Function /api/channels): Workers KV → `kvChannelStore`.
-//   • Local dev (Vite middleware):               one JSON file → channelStore.node.ts.
+//   • Local dev (Vite middleware):       one JSON file per roster → channelStore.node.ts.
 //
-// Single-household app, so last-write-wins on the whole list is acceptable; the
-// client also mirrors the list into localStorage as an offline fallback.
+// Last-write-wins on the whole list is acceptable: every write is scoped to one
+// user's own roster (or the anonymous one), so a race only ever drops that same
+// user's concurrent edit — and the client's localStorage mirror re-pushes it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const CHANNELS_KEY = 'channels:v1'
+
+/** Per-user roster key; null uid (anonymous) → the legacy global key. The
+ *  `u:<uid>:` prefix groups all of one user's keys (future list/cleanup) and
+ *  cannot collide with the `sum:`/`channels:` namespaces. */
+export const channelsKeyFor = (uid: string | null): string => (uid ? `u:${uid}:channels:v1` : CHANNELS_KEY)
 const MAX_CHANNELS = 300 // roster cap — guards the KV value from unbounded growth
 const MERGE_CAP = 200 // most entries accepted in one bulk migration
 
@@ -32,12 +43,13 @@ export interface ChannelStore {
 }
 
 /** Cloudflare Workers KV backend (production). Eventually consistent (~60s);
- *  the client's localStorage mirror covers the propagation window. */
-export function kvChannelStore(kv: KVNamespace): ChannelStore {
+ *  the client's localStorage mirror covers the propagation window. `key` picks
+ *  the roster — per-user via channelsKeyFor(uid), legacy global by default. */
+export function kvChannelStore(kv: KVNamespace, key: string = CHANNELS_KEY): ChannelStore {
   return {
     async get() {
       try {
-        const v = await kv.get(CHANNELS_KEY, 'json')
+        const v = await kv.get(key, 'json')
         if (v === null || v === undefined) return []
         return Array.isArray(v) ? (v as Podcast[]) : null
       } catch {
@@ -46,7 +58,7 @@ export function kvChannelStore(kv: KVNamespace): ChannelStore {
     },
     async put(list) {
       try {
-        await kv.put(CHANNELS_KEY, JSON.stringify(list))
+        await kv.put(key, JSON.stringify(list))
       } catch {
         // Quota/transient failure — the client's local mirror still has the data
         // and re-pushes on its next mutation or boot migration.

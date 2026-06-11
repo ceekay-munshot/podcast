@@ -13,12 +13,14 @@ export const onRequestGet = async (context: { request: Request; env: { SUMMARIES
     const params = new URL(context.request.url).searchParams
     const feed = params.get('feed')
     const id = params.get('id')
+    const store = context.env?.SUMMARIES ? kvSummaryStore(context.env.SUMMARIES) : undefined
     if (feed && id) {
-      return new Response(JSON.stringify(await episodesForFeed(feed, id)), {
+      // The store rides along so episodes already processed by ANY user come
+      // back READY here too — same shared-state overlay as the seed path.
+      return new Response(JSON.stringify(await episodesForFeed(feed, id, store)), {
         headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
       })
     }
-    const store = context.env?.SUMMARIES ? kvSummaryStore(context.env.SUMMARIES) : undefined
     const episodes = await getLiveEpisodes(store)
     return new Response(JSON.stringify(episodes), {
       headers: {

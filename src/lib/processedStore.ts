@@ -1,28 +1,29 @@
 import type { Episode } from './types'
+import { scopedKey } from './storageScope'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Processed-history persistence.
+// Processed-history persistence — the LOCAL layer.
 //
-// The dashboard has no backend store yet (api.ts is a seam; summaries are
-// generated client-side but never saved). So an episode you've processed lives
-// only in memory and vanishes on reload — or when a code push redeploys the app.
-//
-// This keeps a per-browser record (localStorage) of the episodes you've actually
-// processed, so that history survives reloads and redeploys. Persisted entries
+// This keeps a per-browser record (localStorage, scoped per Munshot user via
+// scopedKey) of the episodes you've actually processed, so that history
+// survives reloads and redeploys — and stands in offline. Persisted entries
 // are re-hydrated on load and overlaid onto the freshly-fetched feed; any that
 // have since rolled off the feed are added back, so nothing is lost.
 //
-// Scope: per browser/origin. Cross-device history would need a real backend —
-// wire it in behind these two functions and the rest of the app is unchanged.
+// For SIGNED-IN users the durable source of truth is the server history
+// (/api/processed → KV, see server/processedStore.ts): AppData merges it over
+// this cache on boot (server wins), mirrors the result back here, and re-pushes
+// any local entry the server is missing (a previously failed POST self-heals).
+// Anonymous visitors keep exactly this localStorage behavior, nothing more.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const KEY = 'munshot:processed:v1'
+const BASE = 'munshot:processed:v1'
 const MAX = 200 // most-recent processed episodes to keep (guards localStorage quota)
 
 /** Episodes the user has processed, most-recent first. Never throws. */
 export function loadProcessed(): Episode[] {
   try {
-    const raw = localStorage.getItem(KEY)
+    const raw = localStorage.getItem(scopedKey(BASE))
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
@@ -45,17 +46,35 @@ export function loadProcessed(): Episode[] {
 /** Record a freshly-processed episode (idempotent by id). No-op if not ready. */
 export function saveProcessed(episode: Episode): void {
   if (episode.status !== 'ready' || !episode.summary) return
-  const next = [episode, ...loadProcessed().filter((e) => e.id !== episode.id)].slice(0, MAX)
-  if (persist(next)) return
+  persistWithFallback([episode, ...loadProcessed().filter((e) => e.id !== episode.id)].slice(0, MAX))
+}
+
+/** Overwrite the whole local cache with the server-merged truth — called after
+ *  boot so this browser's fallback copy matches the durable per-user history
+ *  (the mirror of trackedStore's mirrorTracked, for processed episodes). */
+export function mirrorProcessed(list: Episode[]): void {
+  persistWithFallback(list.filter((e) => e.status === 'ready' && !!e.summary).slice(0, MAX))
+}
+
+/** The lean wire shape POSTed to /api/processed: the episode minus its two
+ *  bulky artifacts. The summary/transcript live once in the GLOBAL shared cache
+ *  (keyed by episode id) and re-attach on read — never duplicated per user. */
+export function leanEpisode(e: Episode): Omit<Episode, 'summary' | 'transcript'> {
+  const { summary: _summary, transcript: _transcript, ...lean } = e
+  return lean
+}
+
+function persistWithFallback(list: Episode[]): void {
+  if (persist(list)) return
   // Quota exceeded: drop the bulky transcripts but keep every summary — the
   // summary is the core of "what I've processed". (JSON.stringify omits the
   // undefined key, so the stored shape simply has no transcript.)
-  persist(next.map((e) => ({ ...e, transcript: undefined })))
+  persist(list.map((e) => ({ ...e, transcript: undefined })))
 }
 
 function persist(list: Episode[]): boolean {
   try {
-    localStorage.setItem(KEY, JSON.stringify(list))
+    localStorage.setItem(scopedKey(BASE), JSON.stringify(list))
     return true
   } catch {
     return false // storage unavailable (private mode) or still over quota

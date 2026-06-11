@@ -1,6 +1,8 @@
 import type { Episode, Podcast, Takeaway, WeeklySummary } from './types'
 import { keyHighlights } from './highlights'
 import { topTopics } from './topics'
+import { apiFetch } from './apiFetch'
+import { scopedKey } from './storageScope'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Real Weekly Summary — a "summary of summaries" built ONLY from analysed
@@ -14,12 +16,17 @@ import { topTopics } from './topics'
 //     faithful data-derived version when there's no key or the call fails.
 //
 // Cached per analysed-episode set (memory + localStorage), so it's generated
-// once and instant on return.
+// once and instant on return. Both cache layers are scoped per Munshot user
+// (scopedKey), so a mid-session user switch can never serve another user's
+// digest — even though the content hash alone would usually differ anyway.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type ById = (id: string) => Podcast | undefined
 
 const SESSION = new Map<string, WeeklySummary>()
+
+// One user-scoped cache key for both layers (memory map + localStorage).
+const cacheKey = (key: string): string => scopedKey('munshot:weekly') + `:${key}`
 
 export async function generateWeekly(episodes: Episode[], podcastById: ById): Promise<WeeklySummary | null> {
   const ready = episodes
@@ -28,9 +35,10 @@ export async function generateWeekly(episodes: Episode[], podcastById: ById): Pr
   if (!ready.length) return null
 
   const key = hashKey(ready)
-  const cached = SESSION.get(key) ?? readCache(key)
+  const ck = cacheKey(key)
+  const cached = SESSION.get(ck) ?? readCache(ck)
   if (cached) {
-    SESSION.set(key, cached)
+    SESSION.set(ck, cached)
     return cached
   }
 
@@ -61,8 +69,8 @@ export async function generateWeekly(episodes: Episode[], podcastById: ById): Pr
     questions,
     sourceEpisodeIds: ready.map((e) => e.id),
   }
-  SESSION.set(key, weekly)
-  writeCache(key, weekly)
+  SESSION.set(ck, weekly)
+  writeCache(ck, weekly)
   return weekly
 }
 
@@ -89,7 +97,7 @@ async function aiSynthesize(
     `Base everything ONLY on the material below; do not invent.\n\n${body}`
 
   try {
-    const res = await fetch('/api/summary', {
+    const res = await apiFetch('/api/summary', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ title: `Munshot Weekly Roundup — ${range}`, show: 'Munshot Weekly', notes }),
@@ -209,18 +217,18 @@ function hashKey(ready: Episode[]): string {
   return h.toString(36)
 }
 
-function readCache(key: string): WeeklySummary | null {
+function readCache(storageKey: string): WeeklySummary | null {
   try {
-    const raw = localStorage.getItem(`munshot:weekly:${key}`)
+    const raw = localStorage.getItem(storageKey)
     return raw ? (JSON.parse(raw) as WeeklySummary) : null
   } catch {
     return null
   }
 }
 
-function writeCache(key: string, w: WeeklySummary): void {
+function writeCache(storageKey: string, w: WeeklySummary): void {
   try {
-    localStorage.setItem(`munshot:weekly:${key}`, JSON.stringify(w))
+    localStorage.setItem(storageKey, JSON.stringify(w))
   } catch {
     /* storage unavailable — fine, session cache still applies */
   }

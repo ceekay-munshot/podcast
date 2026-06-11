@@ -2,11 +2,18 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from 'react'
 import type { Episode, Podcast, ProcessingStatus, WeeklySummary } from '../lib/types'
 import * as api from '../lib/api'
-import { loadProcessed, saveProcessed } from '../lib/processedStore'
+import { setApiUser } from '../lib/apiFetch'
+import { getIdentity, onIdentityChange, resolveIdentity, type Identity } from '../lib/munshot'
+import { setStorageUser } from '../lib/storageScope'
+import { leanEpisode, loadProcessed, mirrorProcessed, saveProcessed } from '../lib/processedStore'
 import { loadTracked, mirrorTracked, removeTracked, saveTracked } from '../lib/trackedStore'
 
-// One provider loads everything through the api seam on mount and hands it to
-// the app via context, so individual pages stay synchronous and snappy.
+// One provider loads everything through the api seam and hands it to the app
+// via context, so individual pages stay synchronous and snappy. The boot fetch
+// is gated on the Munshot identity (resolved from the host when embedded), so
+// a signed-in user only ever sees THEIR roster — never a flash of another
+// user's (or the anonymous) data — and a mid-session user switch re-runs the
+// whole load against the new user's stores.
 
 interface AppData {
   loading: boolean
@@ -76,6 +83,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   // Latest podcasts mirrored into a ref so the stable callbacks below can read the
   // current list without being re-created (and re-subscribing consumers) on change.
   const podcastsRef = useRef<Podcast[]>([])
+  // undefined = identity still resolving (gates the boot fetch); null = anonymous.
+  const [identity, setIdentity] = useState<Identity | null | undefined>(undefined)
+  // Bumped on every identity transition. Async work captures the epoch it
+  // started under and discards its results if the user changed underneath it —
+  // a summary started as user A must never write into user B's world.
+  const identityEpoch = useRef(0)
 
   // Union new episodes into state, keeping any existing (e.g. already-summarized) copy.
   const mergeEpisodes = useCallback((eps: Episode[]) => {
@@ -87,13 +100,61 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  // Identity bootstrap: resolve the Munshot host identity once, then track
+  // mid-session transitions (user switch, sign-out, late host:init). apply()
+  // re-points storage scoping and the API header BEFORE setIdentity, so the
+  // boot effect below always reads the right user's stores.
   useEffect(() => {
     let alive = true
-    Promise.all([api.listPodcasts(), api.listEpisodes(), api.getWeekly(), api.listChannels()]).then(([p, e, w, roster]) => {
-      if (!alive) return
+    const apply = (id: Identity | null) => {
+      identityEpoch.current += 1
+      setStorageUser(id?.key ?? null)
+      setApiUser(id?.key ?? null)
+      setIdentity(id)
+    }
+    void resolveIdentity().then((id) => {
+      if (alive) apply(id)
+    })
+    const off = onIdentityChange((id) => {
+      if (alive) apply(id)
+    })
+    return () => {
+      alive = false
+      off()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (identity === undefined) return // identity still resolving — the gate IS the loading state
+    let alive = true
+    const epoch = identityEpoch.current
+    // Full reset (state AND the refs the mutation callbacks read): on a user
+    // switch, nothing of the previous user may bleed into this load.
+    setLoading(true)
+    setPodcasts([])
+    setEpisodes([])
+    setWeekly(null)
+    setNeedsApiKey(false)
+    podcastsRef.current = []
+    seedIds.current = new Set()
+    summarizing.current.clear()
+    Promise.all([
+      api.listPodcasts(),
+      api.listEpisodes(),
+      api.getWeekly(),
+      api.listChannels(),
+      identity ? api.listProcessed() : Promise.resolve([] as Episode[]),
+    ]).then(([p, e, w, roster, remoteProcessed]) => {
+      // Epoch too, not just alive: an identity switch re-points storage/header
+      // SYNCHRONOUSLY (apply() in the SDK message handler) while this effect's
+      // cleanup only runs at React's next commit — without the epoch check, a
+      // boot fetched as user A could land its mirrors/migration in user B's
+      // scope during that window.
+      if (!alive || identityEpoch.current !== epoch) return
       seedIds.current = new Set(p.map((x) => x.id))
       // The durable channel roster (KV via /api/channels) is the source of truth:
-      // it survives deploys and is shared across every browser/device.
+      // it survives deploys — the signed-in user's own roster, or the shared
+      // legacy one for anonymous/standalone visits.
       const rosterById = new Map(roster.map((c) => [c.id, c]))
       // Seeds, with any stored tracked override applied (a suggestion picked in
       // Discover, or a default show the user untracked).
@@ -104,6 +165,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       // User-added shows: the server roster first, then any known only to this
       // browser (saved before the backend store existed, or while it was
       // unreachable) — pushed up once so they're on every device from now on.
+      // loadTracked() is user-scoped, so a signed-in first session reads an
+      // empty mirror and never migrates legacy/anonymous data into the user.
       const rosterAdds = roster.filter((c) => !seedIds.current.has(c.id) && c.tracked)
       const localOnly = loadTracked().filter((tp) => !seedIds.current.has(tp.id) && !rosterById.has(tp.id))
       if (localOnly.length) void api.migrateChannels(localOnly)
@@ -114,13 +177,32 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       // fabricated summary/transcript can never reach the UI. Single chokepoint:
       // Home, Episodes, Search, Weekly, and the channel selector all derive from this.
       const locked = new Set(p.filter((x) => x.locked).map((x) => x.id))
-      // Re-hydrate the episodes this browser has already processed (persisted in
-      // localStorage), so a reload — or a code-push redeploy — never drops that
-      // history. Persisted (ready) versions overlay the freshly-fetched feed by id;
-      // any that have since rolled off the feed are added back at the end.
+      // Re-hydrate processed history. Precedence: fresh feed ← this browser's
+      // cache (user-scoped localStorage) ← the durable per-user server history,
+      // which wins as the cross-device truth — except a locally cached transcript
+      // is kept when the lean server copy lacks one (it re-hydrates from the
+      // shared store otherwise, but keeping it is free).
+      const localProcessed = loadProcessed()
+      const localById = new Map(localProcessed.map((x) => [x.id, x]))
+      const remoteMerged = remoteProcessed.map((ep) => {
+        const local = localById.get(ep.id)
+        return local?.transcript?.length && !ep.transcript?.length ? { ...ep, transcript: local.transcript } : ep
+      })
       const byId = new Map<string, Episode>()
       for (const ep of e) byId.set(ep.id, ep)
-      for (const ep of loadProcessed()) byId.set(ep.id, ep)
+      for (const ep of localProcessed) byId.set(ep.id, ep)
+      for (const ep of remoteMerged) byId.set(ep.id, ep)
+      if (identity) {
+        const remoteIds = new Set(remoteMerged.map((x) => x.id))
+        const localExtras = localProcessed.filter((x) => !remoteIds.has(x.id))
+        // Local cache := the durable truth plus this browser's unpushed extras…
+        mirrorProcessed([...remoteMerged, ...localExtras])
+        // …and self-heal KV: an entry only the browser has means an earlier
+        // POST failed (offline, transient) — push it up now.
+        for (const ep of localExtras) {
+          if (ep.status === 'ready' && ep.summary) void api.saveProcessedRemote(leanEpisode(ep))
+        }
+      }
       setPodcasts(merged)
       setEpisodes([...byId.values()].filter((ep) => !locked.has(ep.podcastId)))
       setWeekly(w)
@@ -129,14 +211,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       for (const tp of persisted) {
         if (!tp.feedUrl) continue
         api.fetchFeedEpisodes(tp.feedUrl, tp.id).then((eps) => {
-          if (alive) mergeEpisodes(eps)
+          if (alive && identityEpoch.current === epoch) mergeEpisodes(eps)
         })
       }
     })
     return () => {
       alive = false
     }
-  }, [mergeEpisodes])
+  }, [identity, mergeEpisodes])
 
   // Keep the ref in step with the latest podcasts for the stable callbacks.
   useEffect(() => {
@@ -184,7 +266,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     if (!seedIds.current.has(id)) {
       if (nowTracked) {
         saveTracked({ ...current, tracked: true })
-        if (current.feedUrl) api.fetchFeedEpisodes(current.feedUrl, id).then(mergeEpisodes)
+        if (current.feedUrl) {
+          const epoch = identityEpoch.current
+          api.fetchFeedEpisodes(current.feedUrl, id).then((eps) => {
+            if (identityEpoch.current === epoch) mergeEpisodes(eps)
+          })
+        }
       } else {
         removeTracked(id)
         setEpisodes((prev) => prev.filter((e) => e.podcastId !== id))
@@ -194,6 +281,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const addPodcast = useCallback(
     (incoming: Podcast) => {
+      const epoch = identityEpoch.current
+      const mergeIfSameUser = (eps: Episode[]) => {
+        if (identityEpoch.current === epoch) mergeEpisodes(eps)
+      }
       const entry: Podcast = { ...incoming, tracked: true }
       const match = podcastsRef.current.find((p) => samePodcast(p, entry))
       if (match) {
@@ -202,7 +293,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         void api.upsertChannel({ ...match, tracked: true })
         if (!seedIds.current.has(match.id)) {
           saveTracked({ ...match, tracked: true })
-          if (match.feedUrl) api.fetchFeedEpisodes(match.feedUrl, match.id).then(mergeEpisodes)
+          if (match.feedUrl) api.fetchFeedEpisodes(match.feedUrl, match.id).then(mergeIfSameUser)
         }
         return
       }
@@ -211,7 +302,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       )
       saveTracked(entry)
       void api.upsertChannel(entry)
-      if (entry.feedUrl) api.fetchFeedEpisodes(entry.feedUrl, entry.id).then(mergeEpisodes)
+      if (entry.feedUrl) api.fetchFeedEpisodes(entry.feedUrl, entry.id).then(mergeIfSameUser)
     },
     [mergeEpisodes],
   )
@@ -232,6 +323,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     )
       return
     summarizing.current.add(episode.id)
+    // A summary started under one identity must never write into another's
+    // state, localStorage cache, or server history (episode ids are global, so
+    // a stale write WOULD land) — if the user switched mid-flight, drop it all.
+    const epoch = identityEpoch.current
     const setStatus = (status: Episode['status'], patch?: Partial<Episode>) =>
       setEpisodes((prev) => prev.map((e) => (e.id === episode.id ? { ...e, status, ...(patch ?? {}) } : e)))
     // Only show the processing pipeline when actually generating; a transcript
@@ -246,12 +341,25 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         transcriptUrl: episode.transcriptUrl,
         audioUrl: episode.audioUrl,
       })
+      if (identityEpoch.current !== epoch) return
       const ready: Partial<Episode> = { summary, ...(transcript?.length ? { transcript } : {}) }
       setStatus('ready', ready)
-      // Remember it so this work survives a reload / redeploy (see processedStore).
-      saveProcessed({ ...episode, status: 'ready', ...ready })
+      // Persist ONLY work this session actually generated. A transcript hydrate
+      // of a shared-overlay episode (processed by some OTHER user) must not
+      // enter this user's history — "processed" means episodes YOU ran, and the
+      // hydrate refetches free from the shared store on any later visit anyway.
+      if (needsSummary) {
+        // Locally so it survives a reload / redeploy (see processedStore) — and,
+        // when signed in, the lean entry goes to the durable per-user history so
+        // it follows the user across devices (the summary itself lives once, in
+        // the global shared cache).
+        const done: Episode = { ...episode, status: 'ready', ...ready }
+        saveProcessed(done)
+        if (getIdentity()) void api.saveProcessedRemote(leanEpisode(done))
+      }
       setNeedsApiKey(false)
     } catch (err) {
+      if (identityEpoch.current !== epoch) return
       if (err instanceof api.NoApiKeyError) {
         setNeedsApiKey(true)
         if (needsSummary) setStatus('detected') // not a real failure — just no key configured yet
@@ -260,7 +368,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       }
       // A hydrate failure leaves the existing summary intact (status stays 'ready').
     } finally {
-      summarizing.current.delete(episode.id)
+      // Same-epoch calls own their marker. A stale call's marker was already
+      // removed by the boot reset's clear(); any marker present now belongs to
+      // a NEWER call for the same (globally-shared) episode id — deleting it
+      // here would let a duplicate generation slip past the dedupe check.
+      if (identityEpoch.current === epoch) summarizing.current.delete(episode.id)
     }
   }, [])
 

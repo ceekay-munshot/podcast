@@ -1,9 +1,14 @@
 # Cloudflare Pages configuration.
 #
-# The SUMMARIES KV namespace is the shared, persistent summary cache: once any
-# user processes an episode, the result is stored here and reused by every other
-# user (no repeat transcription / LLM calls). The /api/summary and /api/episodes
-# Functions read it as `env.SUMMARIES`.
+# The SUMMARIES KV namespace holds ALL durable state, in three kinds of keys:
+#   • `sum:r*:<episodeId>` — the GLOBAL summary cache: once any user processes
+#     an episode, the result is stored here and reused by every other user
+#     (no repeat transcription / LLM calls).
+#   • `u:<uid>:channels:v1` / `u:<uid>:processed:v1` — PER-USER roster and
+#     processed history for Munshot-identified visitors (see server/identity.ts).
+#   • `channels:v1` — the legacy/global roster, still serving anonymous visits.
+# The /api/summary, /api/episodes, /api/channels and /api/processed Functions
+# read it as `env.SUMMARIES`.
 #
 # One-time setup (creates the namespace and prints its id):
 #   npx wrangler kv namespace create SUMMARIES

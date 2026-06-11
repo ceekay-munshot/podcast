@@ -1,6 +1,7 @@
 import type { Episode, Podcast, PodcastSearchResult, Summary, TranscriptSegment, WeeklySummary } from './types'
 import { EPISODES, PODCASTS, WEEKLY } from './mock-data'
 import { stableHash } from './hash'
+import { apiFetch } from './apiFetch'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE SEAM.
@@ -34,7 +35,7 @@ export function listEpisodes(): Promise<Episode[]> {
   // Live: real episodes from the shows' feeds via /api/episodes (Vite middleware
   // in dev, Cloudflare Pages Function in prod). Falls back to the seeded episodes
   // if the endpoint is unreachable or returns nothing.
-  return fetch('/api/episodes')
+  return apiFetch('/api/episodes')
     .then((r) => (r.ok ? (r.json() as Promise<Episode[]>) : Promise.reject(new Error('feed endpoint unavailable'))))
     .then((eps) => (Array.isArray(eps) && eps.length > 0 ? eps : clone(EPISODES)))
     .catch(() => clone(EPISODES))
@@ -50,11 +51,13 @@ export function getWeekly(): Promise<WeeklySummary> {
 
 // ── Durable channel roster — /api/channels (KV in prod, .cache file in dev) ──
 // Which shows you track — including ones added from Discover — lives server-side
-// so it survives deploys and is identical on every browser/device. Every call is
+// so it survives deploys and follows you across devices. Munshot-identified
+// visitors (apiFetch attaches the user header) each get their OWN roster;
+// anonymous/standalone visits share the legacy global one. Every call is
 // best-effort: on failure the UI quietly falls back to the localStorage mirror.
 
 export function listChannels(): Promise<Podcast[]> {
-  return fetch('/api/channels')
+  return apiFetch('/api/channels')
     .then((r) => (r.ok ? (r.json() as Promise<Podcast[]>) : []))
     .then((list) => (Array.isArray(list) ? list : []))
     .catch(() => [])
@@ -62,7 +65,7 @@ export function listChannels(): Promise<Podcast[]> {
 
 /** Persist one channel's state (add, re-track, or untrack via tracked:false). */
 export function upsertChannel(podcast: Podcast): Promise<boolean> {
-  return fetch('/api/channels', {
+  return apiFetch('/api/channels', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ podcast }),
@@ -75,10 +78,36 @@ export function upsertChannel(podcast: Podcast): Promise<boolean> {
  *  before the backend store existed). Server entries always win; this only adds. */
 export function migrateChannels(podcasts: Podcast[]): Promise<boolean> {
   if (!podcasts.length) return Promise.resolve(true)
-  return fetch('/api/channels', {
+  return apiFetch('/api/channels', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ podcasts }),
+  })
+    .then((r) => r.ok)
+    .catch(() => false)
+}
+
+// ── Per-user processed history — /api/processed (KV in prod, .cache in dev) ──
+// Which episodes the signed-in user has run summaries on, durable across
+// devices. Entries are lean: the server re-attaches summaries from the GLOBAL
+// shared cache on read (transcripts stay lazy), so the expensive artifacts are
+// never duplicated per user. Anonymous visitors have no server history — their
+// processed list stays in localStorage exactly as before.
+
+/** The user's processed episodes, summary attached. [] when anonymous or on any failure. */
+export function listProcessed(): Promise<Episode[]> {
+  return apiFetch('/api/processed')
+    .then((r) => (r.ok ? (r.json() as Promise<Episode[]>) : []))
+    .then((list) => (Array.isArray(list) ? list : []))
+    .catch(() => [])
+}
+
+/** Upsert one lean processed entry (no summary/transcript — see leanEpisode). Best-effort. */
+export function saveProcessedRemote(episode: Omit<Episode, 'summary' | 'transcript'>): Promise<boolean> {
+  return apiFetch('/api/processed', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ episode }),
   })
     .then((r) => r.ok)
     .catch(() => false)
@@ -98,7 +127,7 @@ export async function generateSummary(input: {
   transcriptUrl?: string
   audioUrl?: string
 }): Promise<{ summary: Summary; transcript?: TranscriptSegment[] }> {
-  const r = await fetch('/api/summary', {
+  const r = await apiFetch('/api/summary', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
@@ -134,7 +163,7 @@ export function searchPodcasts(query: string, signal?: AbortSignal, limit?: numb
   const q = query.trim()
   if (!q) return Promise.resolve([])
   const viaServer = () =>
-    fetch(`/api/search-podcasts?q=${encodeURIComponent(q)}${limit ? `&limit=${limit}` : ''}`, { signal })
+    apiFetch(`/api/search-podcasts?q=${encodeURIComponent(q)}${limit ? `&limit=${limit}` : ''}`, { signal })
       .then((r) => (r.ok ? (r.json() as Promise<PodcastSearchResult[]>) : []))
       .catch((err) => {
         if ((err as { name?: string })?.name === 'AbortError') throw err
@@ -215,7 +244,7 @@ function itunesDirect(url: string, signal?: AbortSignal): Promise<PodcastSearchR
 // episodes carry no direct video link). Null on any failure — the caller falls
 // back to the external link.
 export function resolveVideo(query: string, signal?: AbortSignal): Promise<string | null> {
-  return fetch(`/api/resolve-video?q=${encodeURIComponent(query)}`, { signal })
+  return apiFetch(`/api/resolve-video?q=${encodeURIComponent(query)}`, { signal })
     .then((r) => (r.ok ? (r.json() as Promise<{ videoId?: string | null }>) : null))
     .then((d) => (d && typeof d.videoId === 'string' && d.videoId ? d.videoId : null))
     .catch((err) => {
@@ -227,7 +256,7 @@ export function resolveVideo(query: string, signal?: AbortSignal): Promise<strin
 // Recent episodes for a single user-added feed. The server validates the URL
 // (SSRF guard) and parses RSS or YouTube/Atom. Returns [] on any failure.
 export function fetchFeedEpisodes(feedUrl: string, podcastId: string): Promise<Episode[]> {
-  return fetch(`/api/episodes?feed=${encodeURIComponent(feedUrl)}&id=${encodeURIComponent(podcastId)}`)
+  return apiFetch(`/api/episodes?feed=${encodeURIComponent(feedUrl)}&id=${encodeURIComponent(podcastId)}`)
     .then((r) => (r.ok ? (r.json() as Promise<Episode[]>) : []))
     .catch(() => [])
 }
