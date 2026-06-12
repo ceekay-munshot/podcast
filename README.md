@@ -67,6 +67,23 @@ Replace the bodies and the UI is live.
 
 Clean, minimal, editorial SaaS. A near-white `#fafbfc` canvas, white cards with subtle borders + faint shadows, **Inter** type, and a single bright blue accent (`#2563eb`) reserved for actions and active states. Green denotes a ready summary. Tokens live in [`tailwind.config.js`](./tailwind.config.js) — the whole app re-skins from that one file. Cover art is generated from each show's brand color + monogram (an SVG), so the prototype ships with zero external image dependencies.
 
+## Per-user sign-in inside chat.muns.io
+
+Embedded in chat.muns.io, every user gets their own roster + processed history
+(KV keys scoped by the Munshot identity), while episode summaries stay one
+global cache shared by everyone. The dashboard side is fully wired
+(`src/lib/munshot.ts` — it announces `dashboard:ready` and consumes
+`host:init`), **but the host platform must send the other half of the
+handshake**: chat.muns.io currently embeds dashboards without any host-side
+SDK, so the sidebar badge shows "Not signed in".
+
+→ Drop [`munshot-host-snippet.js`](./munshot-host-snippet.js) into the
+chat.muns.io dashboards page (it initializes every dashboard iframe with the
+signed-in user's context and answers late `dashboard:ready` announcements).
+To rehearse the whole flow locally, open `localhost:5173/embed-harness.html`
+during `vite dev` — it simulates a correctly-behaving host, user switching
+included.
+
 ## What's mocked vs. real
 
 - **Real:** every screen, route, interaction, status pipeline, search, settings, tracking toggles, the docked player UI, highlight ↔ summary linking.
