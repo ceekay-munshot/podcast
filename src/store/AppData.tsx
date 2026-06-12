@@ -20,6 +20,9 @@ interface AppData {
   podcasts: Podcast[]
   episodes: Episode[]
   weekly: WeeklySummary | null
+  /** The Munshot host identity scoping this session's data:
+   *  undefined = still resolving, null = anonymous (shared space). */
+  identity: Identity | null | undefined
   /** True once a summary request came back "no API key configured". */
   needsApiKey: boolean
   // selectors
@@ -382,6 +385,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       podcasts,
       episodes,
       weekly,
+      identity,
       needsApiKey,
       podcastById,
       episodeById,
@@ -390,7 +394,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       addPodcast,
       summarizeEpisode,
     }),
-    [loading, podcasts, episodes, weekly, needsApiKey, podcastById, episodeById, episodesByPodcast, toggleTracked, addPodcast, summarizeEpisode],
+    [loading, podcasts, episodes, weekly, identity, needsApiKey, podcastById, episodeById, episodesByPodcast, toggleTracked, addPodcast, summarizeEpisode],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

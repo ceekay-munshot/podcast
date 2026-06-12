@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Link, NavLink } from 'react-router-dom'
+import { useAppData } from '../store/AppData'
+import type { Identity } from '../lib/munshot'
 import { Icon } from './Icon'
 import { WeeklySubscribe } from './WeeklySubscribe'
 
@@ -114,8 +116,75 @@ function SidebarContent({ onNavigate, onClose }: { onNavigate?: () => void; onCl
           <WeeklySubscribe />
         </li>
       </ul>
+
+      {/* Who this space belongs to — pinned to the bottom */}
+      <IdentityBadge />
     </>
   )
+}
+
+/** Shows whose space this is: the Munshot account the host signed in (data
+ *  synced per user), the shared space when anonymous, or a quiet skeleton for
+ *  the moment identity is still resolving. */
+function IdentityBadge() {
+  const { identity } = useAppData()
+
+  if (identity === undefined) {
+    return (
+      <div className="mt-auto flex items-center gap-3 rounded-xl border border-outline-variant/60 px-3 py-2.5" aria-hidden>
+        <span className="h-8 w-8 shrink-0 rounded-full bg-surface-container-low motion-safe:animate-pulse" />
+        <span className="flex min-w-0 flex-col gap-1.5">
+          <span className="h-2.5 w-24 rounded-full bg-surface-container-low motion-safe:animate-pulse" />
+          <span className="h-2 w-16 rounded-full bg-surface-container-low motion-safe:animate-pulse" />
+        </span>
+      </div>
+    )
+  }
+
+  if (!identity) {
+    return (
+      <div
+        className="mt-auto flex items-center gap-3 rounded-xl border border-outline-variant/60 px-3 py-2.5"
+        title="No Munshot sign-in detected — podcasts you track here are stored in the shared space"
+      >
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface-container-low text-secondary">
+          <Icon name="person" size={18} />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-[13px] font-semibold text-on-surface">Not signed in</p>
+          <p className="truncate text-[11.5px] text-secondary">Browsing the shared space</p>
+        </div>
+      </div>
+    )
+  }
+
+  const display = identity.name || identity.email || identity.userId
+  const detail = identity.email && identity.email !== display ? identity.email : 'Personal space · synced'
+  return (
+    <div
+      className="mt-auto flex items-center gap-3 rounded-xl border border-outline-variant/60 bg-surface-container-low/40 px-3 py-2.5"
+      title={`Signed in via Munshot — your tracked shows and history are saved to this account (${identity.userId})`}
+    >
+      <span className="relative shrink-0">
+        <span className="grid h-8 w-8 place-items-center rounded-full bg-primary-fixed/70 text-[12px] font-bold text-primary">
+          {initials(identity)}
+        </span>
+        {/* Connected-to-host dot */}
+        <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-surface" />
+      </span>
+      <div className="min-w-0">
+        <p className="truncate text-[13px] font-semibold text-on-surface">{display}</p>
+        <p className="truncate text-[11.5px] text-secondary">{detail}</p>
+      </div>
+    </div>
+  )
+}
+
+function initials(identity: Identity): string {
+  const source = identity.name || identity.email || identity.userId
+  const words = source.replace(/@.*$/, '').split(/[\s._-]+/).filter(Boolean)
+  const chars = words.length >= 2 ? words[0][0] + words[1][0] : source.slice(0, 2)
+  return chars.toUpperCase()
 }
 
 function navClass({ isActive }: { isActive: boolean }): string {
