@@ -57,7 +57,9 @@ export function captionsToText(raw: string): string {
 
 // Parse an SRT/VTT timestamp ("HH:MM:SS,mmm" / "MM:SS.mmm") to seconds.
 function parseTimestamp(ts: string): number {
-  const m = ts.trim().match(/(?:(\d+):)?(\d{1,2}):(\d{2})[.,]\d{1,3}/)
+  // Milliseconds optional: standard SRT/VTT carry them, but a cue without ("00:01:02")
+  // must still parse to its real second rather than collapsing every segment to 0:00.
+  const m = ts.trim().match(/(?:(\d+):)?(\d{1,2}):(\d{2})(?:[.,]\d{1,3})?/)
   if (!m) return 0
   return (m[1] ? Number(m[1]) * 3600 : 0) + Number(m[2]) * 60 + Number(m[3])
 }
@@ -183,7 +185,7 @@ async function transcribeViaGroq(audioUrl: string, apiKey: string): Promise<{ te
     })
     if (!res.ok) return empty // 429 / 413 / etc. → graceful fall back
     const data = (await res.json()) as { text?: string; segments?: Array<{ start: number; text: string }> }
-    const segments: RawSegment[] = (data.segments ?? []).map((s) => ({ start: s.start, text: s.text.trim() }))
+    const segments: RawSegment[] = (data.segments ?? []).map((s) => ({ start: s.start, text: (s.text ?? '').trim() }))
     const text = segments.length ? segmentsToTimestampedText(segments) : (data.text ?? '')
     return { text, segments: segments.length ? segments : text ? [{ start: 0, text }] : [] }
   } catch {
@@ -217,7 +219,7 @@ async function transcribeViaDeepgram(audioUrl: string, apiKey: string, model: st
     }
     const utts = data.results?.utterances
     if (utts?.length) {
-      const segments: RawSegment[] = utts.map((u) => ({ start: u.start, text: u.transcript.trim(), speaker: u.speaker }))
+      const segments: RawSegment[] = utts.map((u) => ({ start: u.start, text: (u.transcript ?? '').trim(), speaker: u.speaker }))
       return { text: segmentsToTimestampedText(segments), segments }
     }
     const flat = data.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? ''

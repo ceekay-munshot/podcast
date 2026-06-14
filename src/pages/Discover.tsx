@@ -129,7 +129,7 @@ export default function Discover() {
           relCache.current.get(c) ??
           searchPodcasts(c, controller.signal, 50)
             .then((r) => {
-              relCache.current.set(c, r)
+              if (r.length) relCache.current.set(c, r) // don't cache an empty result — a transient failure also resolves [], and caching it would hide the category for the whole session
               return r
             })
             .catch(() => [] as PodcastSearchResult[]), // aborted / unavailable → just no suggestions

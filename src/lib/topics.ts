@@ -111,15 +111,28 @@ export function excerptWindow(text: string, terms: string[], radius = 160): stri
   if (text.length <= radius * 2) return text
   const lower = text.toLowerCase()
   let idx = -1
+  let matchLen = 0
   for (const t of terms) {
     const i = lower.indexOf(t)
-    if (i !== -1 && (idx === -1 || i < idx)) idx = i
+    if (i !== -1 && (idx === -1 || i < idx)) {
+      idx = i
+      matchLen = t.length
+    }
   }
-  if (idx === -1) return text.slice(0, radius * 2) + '…'
+  if (idx === -1) return text.slice(0, radius * 2).trimEnd() + '…'
   let start = Math.max(0, idx - radius)
-  let end = Math.min(text.length, idx + radius)
-  // Snap to word boundaries.
-  if (start > 0) start = text.indexOf(' ', start) + 1 || start
-  if (end < text.length) end = text.lastIndexOf(' ', end)
+  let end = Math.min(text.length, idx + matchLen + radius)
+  // Expand OUTWARD to whole words so the snap can never cross (and drop) the matched
+  // term: leftward from start, rightward from end. The previous indexOf/lastIndexOf
+  // pair searched toward the term and could leap past it, omitting the very word the
+  // window is meant to centre on.
+  if (start > 0) {
+    const sp = text.lastIndexOf(' ', start)
+    start = sp === -1 ? 0 : sp + 1
+  }
+  if (end < text.length) {
+    const sp = text.indexOf(' ', end)
+    if (sp !== -1) end = sp
+  }
   return `${start > 0 ? '… ' : ''}${text.slice(start, end).trim()}${end < text.length ? ' …' : ''}`
 }

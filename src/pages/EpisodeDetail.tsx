@@ -49,6 +49,16 @@ export default function EpisodeDetail() {
   const episode = id ? episodeById(id) : undefined
   const podcast = episode ? podcastById(episode.podcastId) : undefined
 
+  // React Router reuses this component across /episodes/:id changes, so the
+  // useState initializer above runs only once. Re-sync the active tab whenever the
+  // episode (or its ?tab=) changes, so a deep link to another episode's transcript
+  // lands on that tab instead of the stale one. Plain tab clicks (which don't touch
+  // the URL or id) leave these deps unchanged, so a user's selection still sticks.
+  useEffect(() => {
+    setTab(paramTab ?? 'summary')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, paramTab])
+
   useEffect(() => {
     if (tab !== 'transcript' || !jumpTo) return
     const el = document.getElementById(`seg-${jumpTo}`)

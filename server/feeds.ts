@@ -104,15 +104,20 @@ export function unwrapCdata(s: string): string {
 }
 
 export function decodeEntities(s: string): string {
+  // Astral-safe: fromCodePoint (not fromCharCode) so emoji / rare CJK survive; an
+  // out-of-range code point decodes to nothing rather than throwing RangeError.
+  const cp = (n: number) => (Number.isFinite(n) && n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : '')
   return s
-    .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#0?39;|&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, n) => cp(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => cp(parseInt(h, 16)))
     .replace(/&nbsp;/g, ' ')
+    // `&amp;` LAST: an already-escaped sequence like `&amp;lt;` (the literal text
+    // "&lt;") must decode exactly once to "&lt;", not collapse all the way to "<".
+    .replace(/&amp;/g, '&')
 }
 
 export function plainText(s: string): string {
@@ -137,7 +142,10 @@ function parseDuration(raw: string): number {
 }
 
 function mockFor(podcastId: string): Episode[] {
-  return EPISODES.filter((e) => e.podcastId === podcastId)
+  // Shallow-clone each match: overlaySummaries mutates status/summary in place, and
+  // these are references into the module-level EPISODES singleton — mutating them
+  // would leak one request's overlaid summary into every later request on a warm isolate.
+  return EPISODES.filter((e) => e.podcastId === podcastId).map((e) => ({ ...e }))
 }
 
 // Tiny, dependency-free, stable string hash → short base36 token. Used to build a
@@ -149,15 +157,19 @@ export function hashKey(s: string): string {
 }
 
 function parseEpisodes(xml: string, podcastId: string): Episode[] {
-  const blocks = [...xml.matchAll(/<item\b[\s\S]*?<\/item>/gi)].slice(0, PER_SOURCE).map((m) => m[0])
+  const blocks = [...xml.matchAll(/<item\b[\s\S]*?<\/item>/gi)].map((m) => m[0])
   const out: Episode[] = []
-  blocks.forEach((block) => {
+  for (const block of blocks) {
+    if (out.length >= PER_SOURCE) break // take the first PER_SOURCE *valid* items, not raw items
     const title = decodeEntities(unwrapCdata(innerTag(block, 'title'))).trim()
-    if (!title) return
+    if (!title) continue
     const pub = unwrapCdata(innerTag(block, 'pubDate')).trim()
     const parsed = pub ? new Date(pub) : null
     const publishedAt = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString()
-    const link = unwrapCdata(innerTag(block, 'link')).trim() || attrOf(block, 'enclosure', 'url')
+    // Decode entities on the URLs too — RSS routinely XML-escapes query separators
+    // (`?a=1&amp;b=2`), and a literal "&amp;" in audioUrl makes the Whisper fetch 404.
+    const link = decodeEntities(unwrapCdata(innerTag(block, 'link')).trim() || attrOf(block, 'enclosure', 'url'))
+    const audioUrl = decodeEntities(attrOf(block, 'enclosure', 'url'))
     const guid = plainText(innerTag(block, 'guid'))
     const description = innerTag(block, 'description') || innerTag(block, 'content:encoded')
     const notes = plainText(description)
@@ -177,10 +189,10 @@ function parseEpisodes(xml: string, podcastId: string): Episode[] {
       sourceUrl: link || undefined,
       notes: notes ? notes.slice(0, 2500) : undefined, // fallback material for the AI summary
       transcriptUrl: transcriptUrlFrom(block) || undefined, // free publisher transcript, when present
-      audioUrl: attrOf(block, 'enclosure', 'url') || undefined, // for Whisper providers
+      audioUrl: audioUrl || undefined, // for Whisper providers
       entities: { people: [], companies: [], themes: [] },
     })
-  })
+  }
   return out
 }
 
@@ -188,15 +200,16 @@ function parseEpisodes(xml: string, podcastId: string): Episode[] {
 // the app's Episode shape. No audio enclosure / transcript / duration exists in
 // a YouTube feed, so those stay undefined and durationSec is 0.
 export function parseAtomEntries(xml: string, podcastId: string): Episode[] {
-  const blocks = [...xml.matchAll(/<entry\b[\s\S]*?<\/entry>/gi)].slice(0, PER_SOURCE).map((m) => m[0])
+  const blocks = [...xml.matchAll(/<entry\b[\s\S]*?<\/entry>/gi)].map((m) => m[0])
   const out: Episode[] = []
-  blocks.forEach((block) => {
+  for (const block of blocks) {
+    if (out.length >= PER_SOURCE) break // first PER_SOURCE *valid* entries, not raw entries
     const title = decodeEntities(unwrapCdata(innerTag(block, 'title'))).trim()
-    if (!title) return
+    if (!title) continue
     const pub = unwrapCdata(innerTag(block, 'published')).trim() || unwrapCdata(innerTag(block, 'updated')).trim()
     const parsed = pub ? new Date(pub) : null
     const publishedAt = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString()
-    const link = (block.match(/<link\b[^>]*\brel=["']alternate["'][^>]*\bhref=["']([^"']+)["']/i)?.[1] || attrOf(block, 'link', 'href')).trim()
+    const link = decodeEntities((block.match(/<link\b[^>]*\brel=["']alternate["'][^>]*\bhref=["']([^"']+)["']/i)?.[1] || attrOf(block, 'link', 'href')).trim())
     const videoId = plainText(innerTag(block, 'yt:videoId')) || plainText(innerTag(block, 'id'))
     const notes = plainText(innerTag(block, 'media:description'))
     const identity = videoId || link || `${title}|${publishedAt}`
@@ -213,7 +226,7 @@ export function parseAtomEntries(xml: string, podcastId: string): Episode[] {
       notes: notes ? notes.slice(0, 2500) : undefined,
       entities: { people: [], companies: [], themes: [] },
     })
-  })
+  }
   return out
 }
 

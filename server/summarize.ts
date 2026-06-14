@@ -1,4 +1,5 @@
 import type { EpisodeTone, Highlight, QAItem, Summary, TranscriptSegment } from '../src/lib/types'
+import { stableHash } from '../src/lib/hash'
 import { transcribeEpisode } from './transcribe'
 import { SUMMARY_REVISION, sharedSummaryKey, type SummaryStore } from './summaryStore'
 
@@ -300,7 +301,14 @@ export async function summarizeEpisode(input: SummarizeInput, config: SummarizeC
   )
   const prompt = buildPrompt(input, transcript?.text ?? null)
 
-  const cacheKey = `${provider}:${model}:${transcript ? 't' : 'n'}:r${SUMMARY_REVISION}::${input.title}`
+  // Key the in-process L1 cache by the STABLE episode id (globally unique), not the
+  // title: two different episodes that share a title ("Mailbag", "2024 Predictions",
+  // and across shows generally) would otherwise collide here and serve each other's
+  // summary — and since L1 is checked after the per-id L2 store, an L1 collision
+  // shadows the correct L2 entry. The id-less weekly roundup falls back to a hash of
+  // its show+notes so distinct weeks still get distinct slots.
+  const idPart = input.id ?? `n:${stableHash(`${input.show} ${input.notes ?? ''}`)}`
+  const cacheKey = `${provider}:${model}:${transcript ? 't' : 'n'}:r${SUMMARY_REVISION}::${idPart}`
   const hit = cache.get(cacheKey)
   if (hit) return hit
 

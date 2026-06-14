@@ -47,7 +47,9 @@ export function DateRangeProvider({ children }: { children: ReactNode }) {
   // Default to "All time" so freshly pulled feed episodes always show, whatever
   // their publish dates — the user can narrow from the top-bar pill.
   const [presetId, setPresetId] = useState('all')
-  const preset = PRESETS.find((p) => p.id === presetId) ?? PRESETS[1]
+  // Fall back to "All time" (the documented default) for an unknown id, not a
+  // 7-day window that would silently hide most episodes.
+  const preset = PRESETS.find((p) => p.id === presetId) ?? PRESETS[PRESETS.length - 1]
 
   const setPreset = useCallback((id: string) => setPresetId(id), [])
 

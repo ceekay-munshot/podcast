@@ -123,8 +123,12 @@ export function applyMerge(list: Podcast[], rawList: unknown): { next: Podcast[]
       fresh.push(ch)
     }
   }
-  // Migrated entries are older knowledge than what's already stored → append.
-  return { next: [...list, ...fresh].slice(0, MAX_CHANNELS), added: fresh.length }
+  // Migrated entries are older knowledge than what's already stored → append, then
+  // cap from the front. Derive `added` from what actually SURVIVED the cap, so we
+  // never tell the client (or skip a needed write because) entries were added that
+  // the slice silently dropped at MAX_CHANNELS.
+  const next = [...list, ...fresh].slice(0, MAX_CHANNELS)
+  return { next, added: next.length - list.length }
 }
 
 /** The whole /api/channels endpoint, runtime-agnostic — the Pages Function and

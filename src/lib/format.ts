@@ -2,16 +2,20 @@ import type { ProcessingStatus } from './types'
 
 /** 6420 → "1h 47m" · 2520 → "42m". */
 export function formatDuration(totalSeconds: number): string {
-  const h = Math.floor(totalSeconds / 3600)
-  const m = Math.round((totalSeconds % 3600) / 60)
+  // Round to whole minutes FIRST, then split — rounding minutes independently of
+  // the hour division produced "60m" (e.g. 3599s) and "1h 60m" (e.g. 7170s).
+  const total = Number.isFinite(totalSeconds) ? Math.round(Math.max(0, totalSeconds) / 60) : 0
+  const h = Math.floor(total / 60)
+  const m = total % 60
   return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
 
 /** 6420 → "1:47:00" for the media player clock. */
 export function formatClock(totalSeconds: number): string {
-  const h = Math.floor(totalSeconds / 3600)
-  const m = Math.floor((totalSeconds % 3600) / 60)
-  const s = Math.floor(totalSeconds % 60)
+  const secs = Number.isFinite(totalSeconds) ? Math.max(0, totalSeconds) : 0
+  const h = Math.floor(secs / 3600)
+  const m = Math.floor((secs % 3600) / 60)
+  const s = Math.floor(secs % 60)
   const mm = h > 0 ? String(m).padStart(2, '0') : String(m)
   const ss = String(s).padStart(2, '0')
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
@@ -22,8 +26,10 @@ const DAY = 86_400_000
 /** ISO date → "Today" / "Yesterday" / "3d ago" / "Apr 12". */
 export function relativeDate(iso: string, now = NOW): string {
   const then = new Date(iso).getTime()
+  if (!Number.isFinite(then)) return '' // unparseable date → render nothing, never "Invalid Date"
   const days = Math.floor((startOfDay(now) - startOfDay(then)) / DAY)
-  if (days <= 0) return 'Today'
+  if (days < 0) return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) // future-dated → absolute, not "Today"
+  if (days === 0) return 'Today'
   if (days === 1) return 'Yesterday'
   if (days < 7) return `${days}d ago`
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
@@ -75,5 +81,6 @@ export function statusMeta(status: ProcessingStatus): StatusMeta {
 export function statusProgress(status: ProcessingStatus): number {
   const order: ProcessingStatus[] = ['detected', 'fetching', 'transcribing', 'summarizing', 'ready']
   const i = order.indexOf(status)
-  return status === 'failed' ? 0 : i / (order.length - 1)
+  if (status === 'failed' || i < 0) return 0 // unknown status → 0, never a negative bar
+  return i / (order.length - 1)
 }
