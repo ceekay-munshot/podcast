@@ -77,6 +77,22 @@ export interface QAItem {
   a: string
 }
 
+/** A concrete, actionable idea pitched in an episode — an investment/stock pick,
+ *  a trade, a macro call, or a bold specific prediction — with the thesis behind
+ *  it. The unit that lets the weekly surface "what was actually pitched" instead
+ *  of dissolving it into generic themes. */
+export interface Idea {
+  /** The specific call, naming the instrument/company/action — e.g. "Long Uber (UBER)",
+   *  "Short commercial real estate", "Fed cuts twice in 2026". */
+  idea: string
+  /** Who pitched it (speaker), or "—" when unattributed. */
+  proponent: string
+  /** The 2-4 key supporting thesis points, each a concrete clause. */
+  thesis: string[]
+  /** Optional coarse tag driving a subtle badge in the UI. */
+  kind?: 'stock' | 'trade' | 'macro' | 'prediction'
+}
+
 export interface TranscriptSegment {
   id: string
   speaker: string
@@ -122,6 +138,10 @@ export interface Summary {
   /** Timestamped highlights in timeline order; the `key` ones are the headline takeaways. */
   highlights: Highlight[]
   qa: QAItem[]
+  /** Concrete ideas pitched in the episode (stock/macro/trade calls + thesis).
+   *  Optional: empty/absent when the episode pitches nothing specific, and older
+   *  cached summaries predate the field. */
+  ideas?: Idea[]
   /** Context-aware tone read from the summarizer LLM. Optional: older cached
    *  summaries (and mock data) predate it and fall back to the lexicon roll-up. */
   tone?: EpisodeTone
@@ -157,6 +177,24 @@ export interface Episode {
   transcript?: TranscriptSegment[]
 }
 
+/** A pitched idea as it appears in the weekly digest — the episode `Idea` plus a
+ *  link back to the source episode (the show is implied by its parent digest). */
+export interface WeeklyIdea extends Idea {
+  episodeId: string
+}
+
+/** One show's slice of the week — the per-show mini-digest that is the weekly's
+ *  primary organizing principle: what this show pitched, concluded, and left open. */
+export interface WeeklyShowDigest {
+  show: string
+  podcastId: string
+  episodeIds: string[]
+  episodeCount: number
+  ideas: WeeklyIdea[]
+  takeaways: Takeaway[]
+  questions: string[]
+}
+
 export interface WeeklySummary {
   id: string
   rangeLabel: string // "May 19 – May 25, 2026"
@@ -164,9 +202,13 @@ export interface WeeklySummary {
   readMinutes: number
   /** "This week in summary" prose. */
   overview: string[]
+  /** The week organized by show — the primary body. Each show is a mini-digest. */
+  shows: WeeklyShowDigest[]
   topThemes: { label: string; momentum: number }[]
   /** "What was actually interesting" — a curated moment: a headline + the insight. */
   interesting: { title: string; quote: string; speaker: string; role: string; episodeId: string }
+  /** Cross-show fallback takeaways (rendering is per-show via `shows`; kept for the
+   *  deterministic/no-key path and older consumers). */
   takeaways: Takeaway[]
   contradictions: string[]
   mentions: { people: string[]; companies: string[] }

@@ -96,6 +96,21 @@ const DOC_CSS = `
   .chip { font-size: 9.5pt; font-weight: 600; color: #2563eb; background: #eff5ff; border: 1px solid #dbeafe; padding: 2pt 9pt; white-space: nowrap; }
   .subhead { margin: 0 0 6pt; font-size: 8.5pt; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: #64748b; }
 
+  .show-block { margin: 0 0 16pt; }
+  .show-head { margin: 18pt 0 9pt; font-size: 13pt; font-weight: 800; color: #0f172a; }
+  .show-head .show-count { font-size: 9.5pt; font-weight: 600; color: #64748b; }
+  .show-block .subhead { margin-top: 11pt; }
+
+  .idea { border: 1px solid #e7e9ee; border-left: 3px solid #2563eb; padding: 10pt 13pt; margin-bottom: 7pt; }
+  .idea-title { margin: 0 0 3pt; font-size: 11.5pt; font-weight: 700; color: #0f172a; }
+  .idea-kind { font-size: 8pt; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; color: #2563eb; background: #eff5ff; padding: 1pt 5pt; margin-right: 5pt; }
+  .idea-who { margin: 0 0 4pt; font-size: 9.5pt; color: #64748b; }
+  .thesis { margin: 4pt 0 0; padding-left: 16pt; }
+  .thesis li { font-size: 10pt; color: #475569; margin: 0 0 2pt; }
+
+  .tlist { margin: 0 0 4pt; padding-left: 16pt; }
+  .tlist li { font-size: 10.5pt; color: #475569; margin: 0 0 3pt; }
+
   .quote { border-left: 3px solid #2563eb; background: #eff5ff; padding: 13pt 15pt; }
   .quote .qt { margin: 0 0 5pt; font-size: 12.5pt; font-weight: 700; color: #0f172a; }
   .quote .ql { margin: 0 0 7pt; font-size: 12pt; font-style: italic; color: #1e293b; }

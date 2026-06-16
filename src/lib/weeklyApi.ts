@@ -1,4 +1,4 @@
-import type { Episode, Podcast, Takeaway, WeeklySummary } from './types'
+import type { Episode, Podcast, Takeaway, WeeklyIdea, WeeklyShowDigest, WeeklySummary } from './types'
 import { keyHighlights } from './highlights'
 import { topTopics } from './topics'
 import { apiFetch } from './apiFetch'
@@ -25,8 +25,13 @@ type ById = (id: string) => Podcast | undefined
 
 const SESSION = new Map<string, WeeklySummary>()
 
-// One user-scoped cache key for both layers (memory map + localStorage).
-const cacheKey = (key: string): string => scopedKey('munshot:weekly') + `:${key}`
+// One user-scoped cache key for both layers (memory map + localStorage). The `:v2`
+// namespace retires the pre-by-show digest shape, so stale entries are never read.
+const cacheKey = (key: string): string => scopedKey('munshot:weekly:v2') + `:${key}`
+
+// Per-show caps — keep each show's digest scannable when it has several episodes.
+const SHOW_TAKEAWAYS_CAP = 6
+const SHOW_QUESTIONS_CAP = 5
 
 export async function generateWeekly(episodes: Episode[], podcastById: ById): Promise<WeeklySummary | null> {
   const ready = episodes
@@ -43,6 +48,7 @@ export async function generateWeekly(episodes: Episode[], podcastById: ById): Pr
   }
 
   // Always-real, deterministic layer.
+  const shows = buildShowDigests(ready, podcastById)
   const topThemes = topTopics(ready, 6).map((t) => ({ label: t.label, momentum: t.count }))
   const mentions = aggregateMentions(ready)
   const interesting = pickInteresting(ready, podcastById)
@@ -61,6 +67,7 @@ export async function generateWeekly(episodes: Episode[], podcastById: ById): Pr
     episodeCount: ready.length,
     readMinutes: Math.max(1, Math.round(words / 200)),
     overview,
+    shows,
     topThemes,
     interesting,
     takeaways,
@@ -86,14 +93,19 @@ async function aiSynthesize(
       const show = podcastById(e.podcastId)?.title ?? 'Unknown show'
       const syn = s.synthesis.join(' ').replace(/\*\*/g, '')
       const tk = keyHighlights(s).map((h) => `- ${h.title}: ${h.detail}`).join('\n')
-      return `### ${show} — ${e.title}\n${syn}\nKey points:\n${tk}`
+      const ideas = (s.ideas ?? [])
+        .map((i) => `- ${i.idea}${i.proponent && i.proponent !== '—' ? ` (${i.proponent})` : ''}: ${i.thesis.join('; ')}`)
+        .join('\n')
+      const ideasBlock = ideas ? `\nIdeas pitched:\n${ideas}` : ''
+      return `### ${show} — ${e.title}\n${syn}\nKey points:\n${tk}${ideasBlock}`
     })
     .join('\n\n')
 
   const notes =
-    `This is a WEEKLY MASTER SUMMARY task across ${ready.length} podcast episode${ready.length === 1 ? '' : 's'} from ${range}. ` +
-    `Synthesise ACROSS the episodes below — the through-line of the week, the recurring themes, the most important cross-episode takeaways, ` +
-    `and the sharpest open questions worth investigating next. In "qa", put the open QUESTIONS the week raises (with a one-line answer if known). ` +
+    `This is a WEEKLY ROUNDUP across ${ready.length} podcast episode${ready.length === 1 ? '' : 's'} from ${range}. ` +
+    `Your job is to PRESERVE and ORGANISE the specific substance of the week — NOT to abstract it into generic themes. ` +
+    `Write a tight 2-3 paragraph overview that LEADS with the most important concrete ideas and calls actually pitched this week: name them, name who made them, and name the real numbers, companies, and people involved. ` +
+    `Never write generic filler like "the market is maturing" or "AI continues to grow". In "qa", put the sharpest open QUESTIONS the week raises (with a one-line answer if known). ` +
     `Base everything ONLY on the material below; do not invent.\n\n${body}`
 
   try {
@@ -123,6 +135,70 @@ async function aiSynthesize(
 }
 
 // ── Deterministic builders (real data, no fabrication) ───────────────────────
+
+// Group the week's episodes by show into per-show mini-digests — the weekly's
+// primary structure. Everything here is lifted straight from the per-episode
+// summaries (no AI re-abstraction), so specifics like a stock pitch survive intact.
+// Exported for unit testing.
+export function buildShowDigests(ready: Episode[], podcastById: ById): WeeklyShowDigest[] {
+  const byShow = new Map<string, Episode[]>()
+  for (const e of ready) {
+    const arr = byShow.get(e.podcastId) ?? []
+    arr.push(e)
+    byShow.set(e.podcastId, arr)
+  }
+
+  const built: { digest: WeeklyShowDigest; newest: number }[] = []
+  for (const [podcastId, eps] of byShow) {
+    // High-signal episodes lead, then newest-first within the show.
+    const sorted = [...eps].sort(
+      (a, b) =>
+        (b.signal === 'high' ? 1 : 0) - (a.signal === 'high' ? 1 : 0) ||
+        +new Date(b.publishedAt) - +new Date(a.publishedAt),
+    )
+    const show = podcastById(podcastId)?.title ?? 'Unknown show'
+
+    const ideas: WeeklyIdea[] = sorted.flatMap((e) =>
+      (e.summary?.ideas ?? []).map((idea) => ({ ...idea, episodeId: e.id })),
+    )
+
+    const takeaways: Takeaway[] = []
+    for (const e of sorted) {
+      for (const h of e.summary ? keyHighlights(e.summary) : []) {
+        if (takeaways.length >= SHOW_TAKEAWAYS_CAP) break
+        takeaways.push({ title: h.title.replace(/\*\*/g, '').trim(), detail: h.detail })
+      }
+    }
+
+    const seenQ = new Set<string>()
+    const questions: string[] = []
+    for (const e of sorted) {
+      for (const { q } of e.summary?.qa ?? []) {
+        if (questions.length >= SHOW_QUESTIONS_CAP) break
+        const norm = q.trim().toLowerCase()
+        if (!norm || seenQ.has(norm)) continue
+        seenQ.add(norm)
+        questions.push(q.trim())
+      }
+    }
+
+    built.push({
+      digest: { show, podcastId, episodeIds: sorted.map((e) => e.id), episodeCount: sorted.length, ideas, takeaways, questions },
+      newest: +new Date(sorted[0].publishedAt),
+    })
+  }
+
+  // Shows that actually pitched ideas lead; then by episode count; then recency.
+  return built
+    .sort(
+      (a, b) =>
+        (b.digest.ideas.length ? 1 : 0) - (a.digest.ideas.length ? 1 : 0) ||
+        b.digest.episodeCount - a.digest.episodeCount ||
+        b.newest - a.newest,
+    )
+    .map((b) => b.digest)
+}
+
 function derivedOverview(ready: Episode[], themes: { label: string }[], podcastById: ById): string[] {
   const shows = [...new Set(ready.map((e) => podcastById(e.podcastId)?.title).filter(Boolean) as string[])]
   const themeList = themes.slice(0, 4).map((t) => t.label)
@@ -210,7 +286,7 @@ function trim(s: string, n: number): string {
 
 function hashKey(ready: Episode[]): string {
   const sig = ready
-    .map((e) => `${e.id}:${e.summary?.synthesis?.join('').length ?? 0}:${e.summary?.highlights?.length ?? 0}`)
+    .map((e) => `${e.id}:${e.summary?.synthesis?.join('').length ?? 0}:${e.summary?.highlights?.length ?? 0}:${e.summary?.ideas?.length ?? 0}`)
     .join('|')
   let h = 5381
   for (let i = 0; i < sig.length; i++) h = ((h << 5) + h + sig.charCodeAt(i)) >>> 0

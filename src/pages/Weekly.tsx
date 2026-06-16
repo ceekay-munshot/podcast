@@ -6,7 +6,7 @@ import { useSentiment } from '../store/Sentiment'
 import { downloadWeekly } from '../lib/exportWeekly'
 import { generateWeekly } from '../lib/weeklyApi'
 import { weeklyToneView } from '../lib/tone'
-import type { WeeklySummary } from '../lib/types'
+import type { WeeklyIdea, WeeklyShowDigest, WeeklySummary } from '../lib/types'
 import { Icon } from '../components/Icon'
 import { RichText, entityTerms } from '../components/RichText'
 import { ToneMeter } from '../components/ToneMeter'
@@ -105,22 +105,24 @@ function WeeklyDoc({
   const terms = entityTerms(weekly.mentions)
   const interestingEpisode = episodeById(weekly.interesting.episodeId)
   const hasMentions = weekly.mentions.people.length > 0 || weekly.mentions.companies.length > 0
+  const shows = weekly.shows ?? [] // older cached digests predate the by-show shape
+  const ideaCount = shows.reduce((n, s) => n + s.ideas.length, 0)
 
   const stats = [
     { icon: 'play_circle', label: 'Episodes Processed', value: weekly.episodeCount, style: THEME_STYLES[0] },
-    { icon: 'lightbulb', label: 'Highlights', value: ready.reduce((n, e) => n + (e.summary?.highlights.length ?? 0), 0), style: THEME_STYLES[1] },
+    { icon: 'trending_up', label: 'Ideas Pitched', value: ideaCount, style: THEME_STYLES[1] },
     { icon: 'help', label: 'Questions Answered', value: ready.reduce((n, e) => n + (e.summary?.qa.length ?? 0), 0), style: THEME_STYLES[2] },
     { icon: 'podcasts', label: 'Podcasts', value: trackedCount, style: THEME_STYLES[3] },
   ]
 
-  // Only nav to sections that actually have content (zero empty/fake sections).
+  // Only nav to sections that actually have content (zero empty/fake sections). The
+  // per-show digests are the primary body, so each show gets its own jump target.
   const nav = [
     { id: 'overview', label: 'Overview', icon: 'play_circle', show: weekly.overview.length > 0 },
+    ...shows.map((s) => ({ id: `show-${s.podcastId}`, label: s.show, icon: 'podcasts', show: true })),
     { id: 'themes', label: 'Top Themes', icon: 'sell', show: weekly.topThemes.length > 0 },
-    { id: 'takeaways', label: 'Key Takeaways', icon: 'format_list_bulleted', show: weekly.takeaways.length > 0 },
-    { id: 'interesting', label: 'Interesting Ideas', icon: 'lightbulb', show: !!weekly.interesting.quote },
     { id: 'mentions', label: 'Mentions', icon: 'alternate_email', show: hasMentions },
-    { id: 'questions', label: 'Questions', icon: 'help', show: weekly.questions.length > 0 },
+    { id: 'interesting', label: 'Interesting', icon: 'lightbulb', show: !!weekly.interesting.quote },
   ].filter((n) => n.show)
 
   function go(id: string) {
@@ -153,7 +155,7 @@ function WeeklyDoc({
       {/* Content */}
       <div className="col-span-12 md:col-span-9">
         <div className="rounded-2xl border border-outline-variant bg-surface-container-lowest p-lg shadow-card">
-          {/* Overview */}
+          {/* Overview + at-a-glance stats */}
           {weekly.overview.length > 0 && (
             <section id="wk-overview" className="scroll-mt-20">
               <h2 className="mb-md text-[22px] font-bold tracking-tight text-on-surface">This Week in Summary</h2>
@@ -164,12 +166,34 @@ function WeeklyDoc({
                   </p>
                 ))}
               </div>
+              <div className="mt-lg grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                {stats.map((s) => (
+                  <div key={s.label} className="rounded-xl border border-outline-variant bg-surface-container-low p-3">
+                    <span className={`mb-2 grid h-9 w-9 place-items-center rounded-lg border ${s.style.tile}`}>
+                      <Icon name={s.icon} size={18} />
+                    </span>
+                    <p className="text-[24px] font-bold leading-none text-on-surface">{s.value}</p>
+                    <p className="mt-1 text-[12px] text-secondary">{s.label}</p>
+                  </div>
+                ))}
+              </div>
             </section>
           )}
 
-          {/* Themes */}
+          {/* By show — the primary body: each show's pitched ideas, takeaways, questions */}
+          {shows.map((digest, i) => (
+            <ShowDigest
+              key={digest.podcastId}
+              digest={digest}
+              first={i === 0 && weekly.overview.length === 0}
+              terms={terms}
+              episodeById={episodeById}
+            />
+          ))}
+
+          {/* Themes (cross-show) */}
           {weekly.topThemes.length > 0 && (
-            <Block id="wk-themes" first={weekly.overview.length === 0} title="Top Themes">
+            <Block id="wk-themes" title="Top Themes">
               <div className="flex flex-wrap gap-2.5">
                 {weekly.topThemes.map((t, i) => {
                   const s = THEME_STYLES[i % THEME_STYLES.length]
@@ -187,35 +211,17 @@ function WeeklyDoc({
             </Block>
           )}
 
-          {/* Key takeaways + stat tiles */}
-          {weekly.takeaways.length > 0 && (
-            <Block id="wk-takeaways" title="Key Takeaways Across All Podcasts">
-              <ul className="space-y-2.5">
-                {weekly.takeaways.map((t, i) => (
-                  <li key={i} className="flex gap-2.5 text-body-md text-on-surface-variant">
-                    <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-                    <span>
-                      <span className="font-semibold text-on-surface">{t.title}.</span>{' '}
-                      <RichText text={t.detail} terms={terms} />
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-lg grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-                {stats.map((s) => (
-                  <div key={s.label} className="rounded-xl border border-outline-variant bg-surface-container-low p-3">
-                    <span className={`mb-2 grid h-9 w-9 place-items-center rounded-lg border ${s.style.tile}`}>
-                      <Icon name={s.icon} size={18} />
-                    </span>
-                    <p className="text-[24px] font-bold leading-none text-on-surface">{s.value}</p>
-                    <p className="mt-1 text-[12px] text-secondary">{s.label}</p>
-                  </div>
-                ))}
+          {/* Mentions (cross-show) */}
+          {hasMentions && (
+            <Block id="wk-mentions" title="Mentions">
+              <div className="grid grid-cols-1 gap-md sm:grid-cols-2">
+                {weekly.mentions.people.length > 0 && <MentionGroup title="People" icon="person" items={weekly.mentions.people} />}
+                {weekly.mentions.companies.length > 0 && <MentionGroup title="Companies" icon="domain" items={weekly.mentions.companies} />}
               </div>
             </Block>
           )}
 
-          {/* Interesting */}
+          {/* Interesting (cross-show) */}
           {weekly.interesting.quote && (
             <Block id="wk-interesting" title="What Was Actually Interesting">
               <div className="relative overflow-hidden rounded-xl p-md text-white" style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}>
@@ -239,32 +245,6 @@ function WeeklyDoc({
                   )}
                 </div>
               </div>
-            </Block>
-          )}
-
-          {/* Mentions */}
-          {hasMentions && (
-            <Block id="wk-mentions" title="Mentions">
-              <div className="grid grid-cols-1 gap-md sm:grid-cols-2">
-                {weekly.mentions.people.length > 0 && <MentionGroup title="People" icon="person" items={weekly.mentions.people} />}
-                {weekly.mentions.companies.length > 0 && <MentionGroup title="Companies" icon="domain" items={weekly.mentions.companies} />}
-              </div>
-            </Block>
-          )}
-
-          {/* Questions */}
-          {weekly.questions.length > 0 && (
-            <Block id="wk-questions" title="Questions Worth Investigating">
-              <ul className="space-y-2.5">
-                {weekly.questions.map((q, i) => (
-                  <li key={i} className="flex items-start gap-2.5 rounded-xl border border-outline-variant bg-surface-container-low p-md">
-                    <Icon name="help" size={20} className="shrink-0 text-primary" />
-                    <p className="text-body-md text-on-surface-variant">
-                      <RichText text={q} terms={terms} />
-                    </p>
-                  </li>
-                ))}
-              </ul>
             </Block>
           )}
 
@@ -306,6 +286,141 @@ function Block({ id, title, first, children }: { id: string; title: string; firs
       <h3 className="mb-md text-[17px] font-semibold text-on-surface">{title}</h3>
       {children}
     </section>
+  )
+}
+
+const KIND_LABEL: Record<NonNullable<WeeklyIdea['kind']>, string> = {
+  stock: 'Stock',
+  trade: 'Trade',
+  macro: 'Macro',
+  prediction: 'Prediction',
+}
+
+// One show's slice of the week: its pitched ideas first (the headline value), then
+// its key takeaways and open questions. Subheads are hidden when a group is empty.
+function ShowDigest({
+  digest,
+  first,
+  terms,
+  episodeById,
+}: {
+  digest: WeeklyShowDigest
+  first?: boolean
+  terms: string[]
+  episodeById: ReturnType<typeof useAppData>['episodeById']
+}) {
+  return (
+    <section
+      id={`wk-show-${digest.podcastId}`}
+      className={`scroll-mt-20 ${first ? '' : 'mt-lg border-t border-outline-variant pt-lg'}`}
+    >
+      <div className="mb-md flex items-center gap-2.5">
+        <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary-fixed/60 text-primary">
+          <Icon name="podcasts" size={18} />
+        </span>
+        <h3 className="text-[18px] font-bold tracking-tight text-on-surface">{digest.show}</h3>
+        <span className="text-metadata text-secondary">
+          {digest.episodeCount} episode{digest.episodeCount === 1 ? '' : 's'}
+        </span>
+      </div>
+
+      {digest.ideas.length > 0 && (
+        <div className="mb-md">
+          <p className="mb-sm flex items-center gap-1.5 text-metadata font-semibold uppercase tracking-wide text-secondary">
+            <Icon name="trending_up" size={15} className="text-primary" /> Ideas Pitched
+          </p>
+          <ul className="space-y-2.5">
+            {digest.ideas.map((idea, i) => (
+              <IdeaCard key={i} idea={idea} terms={terms} episodeById={episodeById} />
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {digest.takeaways.length > 0 && (
+        <div className="mb-md">
+          <p className="mb-sm text-metadata font-semibold uppercase tracking-wide text-secondary">Key Takeaways</p>
+          <ul className="space-y-2.5">
+            {digest.takeaways.map((t, i) => (
+              <li key={i} className="flex gap-2.5 text-body-md text-on-surface-variant">
+                <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                <span>
+                  <span className="font-semibold text-on-surface">{t.title}.</span> <RichText text={t.detail} terms={terms} />
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {digest.questions.length > 0 && (
+        <div>
+          <p className="mb-sm text-metadata font-semibold uppercase tracking-wide text-secondary">Questions</p>
+          <ul className="space-y-1.5">
+            {digest.questions.map((q, i) => (
+              <li key={i} className="flex items-start gap-2 text-body-md text-on-surface-variant">
+                <Icon name="help" size={18} className="mt-0.5 shrink-0 text-primary" />
+                <span>
+                  <RichText text={q} terms={terms} />
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  )
+}
+
+// A single pitched idea: the call (with a category badge), who pitched it, the
+// thesis bullets, and a jump to the episode it came from.
+function IdeaCard({
+  idea,
+  terms,
+  episodeById,
+}: {
+  idea: WeeklyIdea
+  terms: string[]
+  episodeById: ReturnType<typeof useAppData>['episodeById']
+}) {
+  const ep = episodeById(idea.episodeId)
+  return (
+    <li className="rounded-xl border border-outline-variant bg-surface-container-low p-md">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-body-md font-semibold text-on-surface">
+          {idea.kind && (
+            <span className="mr-2 inline-block rounded bg-primary-fixed/70 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase tracking-wide text-primary">
+              {KIND_LABEL[idea.kind]}
+            </span>
+          )}
+          <RichText text={idea.idea} terms={terms} />
+        </p>
+        {ep && (
+          <Link
+            to={`/episodes/${ep.id}`}
+            title={ep.title}
+            className="press shrink-0 text-secondary hover:text-primary"
+          >
+            <Icon name="open_in_new" size={16} />
+          </Link>
+        )}
+      </div>
+      {idea.proponent && idea.proponent !== '—' && (
+        <p className="mt-1 text-metadata text-secondary">Pitched by {idea.proponent}</p>
+      )}
+      {idea.thesis.length > 0 && (
+        <ul className="mt-2 space-y-1">
+          {idea.thesis.map((t, i) => (
+            <li key={i} className="flex gap-2 text-[13.5px] leading-snug text-on-surface-variant">
+              <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-secondary" />
+              <span>
+                <RichText text={t} terms={terms} />
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
   )
 }
 

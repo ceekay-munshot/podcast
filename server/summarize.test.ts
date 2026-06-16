@@ -80,3 +80,42 @@ describe('summarizeEpisode — shared store reuse', () => {
     expect(store.put).not.toHaveBeenCalled()
   })
 })
+
+describe('summarizeEpisode — ideas extraction', () => {
+  it('passes through valid pitched ideas and drops malformed ones', async () => {
+    const args = JSON.stringify({
+      synthesis: ['point'],
+      qa: [],
+      ideas: [
+        { idea: 'Long NVDA', proponent: 'Sacks', thesis: ['power constrained', 'real demand'], kind: 'stock' },
+        { idea: '', proponent: 'Nobody', thesis: ['orphaned'] }, // dropped: no headline
+        { idea: 'Buy gold', proponent: '  ', thesis: 'not-an-array', kind: 'bogus' }, // proponent→"—", thesis→[], kind dropped
+      ],
+      highlights: [],
+      tone: { overall: 'neutral', rationale: 'r', aspects: [] },
+    })
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ choices: [{ message: { tool_calls: [{ function: { arguments: args } }] } }] }),
+    })
+
+    const { summary } = await summarizeEpisode(
+      { id: 'live-allin-ideas', title: 'Pitch Episode', show: 'All-In', notes: 'notes' },
+      { openaiKey: 'sk-test', store: memStore() },
+    )
+
+    expect(summary.ideas).toEqual([
+      { idea: 'Long NVDA', proponent: 'Sacks', thesis: ['power constrained', 'real demand'], kind: 'stock' },
+      { idea: 'Buy gold', proponent: '—', thesis: [] },
+    ])
+  })
+
+  it('omits the ideas field entirely when nothing is pitched', async () => {
+    fetchMock.mockResolvedValueOnce(okLLM()) // okLLM() carries no ideas
+    const { summary } = await summarizeEpisode(
+      { id: 'live-allin-noideas', title: 'No Pitch', show: 'All-In', notes: 'notes' },
+      { openaiKey: 'sk-test', store: memStore() },
+    )
+    expect(summary.ideas).toBeUndefined()
+  })
+})

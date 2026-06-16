@@ -1,4 +1,4 @@
-import type { EpisodeTone, Highlight, QAItem, Summary, TranscriptSegment } from '../src/lib/types'
+import type { EpisodeTone, Highlight, Idea, QAItem, Summary, TranscriptSegment } from '../src/lib/types'
 import { stableHash } from '../src/lib/hash'
 import { transcribeEpisode } from './transcribe'
 import { SUMMARY_REVISION, sharedSummaryKey, type SummaryStore } from './summaryStore'
@@ -63,6 +63,30 @@ const SCHEMA = {
       description:
         'COMPREHENSIVE coverage of the substantive questions this episode raises and answers — capture EVERY distinct one, not a fixed number. A dense 40-60 minute episode typically yields 6-12; include as many as the material genuinely supports, roughly in the order the episode addresses them, and never drop a real question to hit a target. Exclude only trivial banter, logistics, and ad reads. Phrase each question as a complete, self-contained sentence that names its specific subject — someone who never heard the episode should understand exactly what is being asked (avoid vague stems like "What is the main focus?"). Each answer is a dense, self-explanatory paragraph of 2-4 full sentences that completely answers the question using the concrete specifics from the material — names, numbers, mechanisms, and the reasoning behind them — so it stands on its own without the audio. Draw every detail from the source; never pad or speculate to fill space.',
     },
+    ideas: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          idea: {
+            type: 'string',
+            description:
+              'The specific, actionable call in a few words, naming the concrete instrument/company/action — e.g. "Long Uber (UBER)", "Short commercial real estate", "Buy 2-year Treasuries", "Fed cuts twice in 2026". Always name the ticker/company/asset when stated.',
+          },
+          proponent: { type: 'string', description: 'Who pitched/made the call (speaker name). Use "—" only if genuinely unattributed.' },
+          thesis: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'The 2-4 KEY supporting points actually given for the call — each a concrete, specific clause (the reason, the catalyst, the number), not a restatement of the idea.',
+          },
+          kind: { type: 'string', enum: ['stock', 'trade', 'macro', 'prediction'], description: 'Coarse category: a single-name equity pick (stock), a non-equity trade (trade), a macro/rates/economy call (macro), or a bold dated forecast (prediction).' },
+        },
+        required: ['idea', 'proponent', 'thesis'],
+      },
+      description:
+        'Every CONCRETE, ACTIONABLE idea pitched in the episode — investment/stock picks (with ticker/company), trades, macro calls, or bold specific predictions — each with who pitched it and its key thesis. Capture EACH distinct call, not a summary of them; shows with an explicit pitch segment (e.g. All-In stock picks) must yield one entry per pick. Return an EMPTY array when the episode makes no specific, actionable call — do NOT lower the bar to fill it with vague opinions ("AI is overhyped") or generic observations. Never invent a pitch that was not actually made.',
+    },
     highlights: {
       type: 'array',
       items: {
@@ -111,11 +135,11 @@ const SCHEMA = {
       required: ['overall', 'rationale', 'aspects'],
     },
   },
-  required: ['synthesis', 'qa', 'highlights', 'tone'],
+  required: ['synthesis', 'qa', 'ideas', 'highlights', 'tone'],
 }
 
 const SYSTEM_BASE =
-  'You are Munshot, an AI that writes sharp one-page intelligence summaries of podcast episodes for busy operators and investors. Produce the summary by calling the emit_summary tool/function. Rules:\n- Base everything ONLY on the provided material. Do NOT invent facts, quotes, names, or numbers.\n- synthesis: go deeper than the headline. Lead with the central argument, then develop it with the specifics that make it credible — concrete claims, real numbers, named companies/people, and the mechanism or causal chain behind each point. Capture the genuine tension or disagreement between speakers (the bull case vs the bear case, what is contested, what is still uncertain), and surface the non-obvious, second-order insight a sharp listener takes away — not a generic recap anyone could write from the title. Every sentence must carry specific, episode-grounded content; cut filler like "the market is maturing" or "X is seeing significant growth". Emphasise only a FEW short key phrases (2-5 words each, at most ~3 per summary) by wrapping each in matched **double asterisks** — never bold whole sentences or clauses, and always close every ** you open.\n- qa: be EXHAUSTIVE — capture every substantive question the episode actually raises and answers, in the order it addresses them, not a curated handful. Exclude only trivial banter, logistics, and ad reads. Make every question specific and self-contained (it should read clearly on its own), and every answer thorough, concrete, and fully understandable without the audio — 2-4 real sentences that explain the "why" and the specifics, never one terse line, but never padded or invented either.\n- highlights: be thorough — surface every genuinely interesting beat the episode delivers (bold claims, specific predictions or numbers, sharp disagreements, surprising data, memorable anecdotes), not just one or two, with each detail concrete about what was actually said — never a generic gloss. Then flag the 4-6 most important, non-obvious ones with key=true — the headline takeaways; a reader who only sees those must walk away with the episode\'s core. Never flag more than half the list.\n- tone: read the episode\'s sentiment from what is ACTUALLY said — never invent a feeling that was not expressed. Set "overall" to the net lean, write "rationale" as ONE grounded sentence, and list 3-6 "aspects": the specific companies/people/topics the episode is positive, negative, or neutral ABOUT, each with a short subject (1-4 words) and a one-clause "note" giving the real reason. Only include subjects the episode genuinely discusses.'
+  'You are Munshot, an AI that writes sharp one-page intelligence summaries of podcast episodes for busy operators and investors. Produce the summary by calling the emit_summary tool/function. Rules:\n- Base everything ONLY on the provided material. Do NOT invent facts, quotes, names, or numbers.\n- synthesis: go deeper than the headline. Lead with the central argument, then develop it with the specifics that make it credible — concrete claims, real numbers, named companies/people, and the mechanism or causal chain behind each point. Capture the genuine tension or disagreement between speakers (the bull case vs the bear case, what is contested, what is still uncertain), and surface the non-obvious, second-order insight a sharp listener takes away — not a generic recap anyone could write from the title. Every sentence must carry specific, episode-grounded content; cut filler like "the market is maturing" or "X is seeing significant growth". Emphasise only a FEW short key phrases (2-5 words each, at most ~3 per summary) by wrapping each in matched **double asterisks** — never bold whole sentences or clauses, and always close every ** you open.\n- qa: be EXHAUSTIVE — capture every substantive question the episode actually raises and answers, in the order it addresses them, not a curated handful. Exclude only trivial banter, logistics, and ad reads. Make every question specific and self-contained (it should read clearly on its own), and every answer thorough, concrete, and fully understandable without the audio — 2-4 real sentences that explain the "why" and the specifics, never one terse line, but never padded or invented either.\n- ideas: capture every CONCRETE, ACTIONABLE call the episode makes — investment/stock picks (name the ticker/company), trades, macro calls, or bold specific predictions — as a discrete item with who pitched it and the 2-4 key thesis points behind it. Shows with a dedicated pitch segment (e.g. All-In stock picks) must yield one entry per pick. Return an EMPTY list when nothing specific is pitched — never lower the bar to fill it with vague opinions or generic observations, and never invent a call that was not made.\n- highlights: be thorough — surface every genuinely interesting beat the episode delivers (bold claims, specific predictions or numbers, sharp disagreements, surprising data, memorable anecdotes), not just one or two, with each detail concrete about what was actually said — never a generic gloss. Then flag the 4-6 most important, non-obvious ones with key=true — the headline takeaways; a reader who only sees those must walk away with the episode\'s core. Never flag more than half the list.\n- tone: read the episode\'s sentiment from what is ACTUALLY said — never invent a feeling that was not expressed. Set "overall" to the net lean, write "rationale" as ONE grounded sentence, and list 3-6 "aspects": the specific companies/people/topics the episode is positive, negative, or neutral ABOUT, each with a short subject (1-4 words) and a one-clause "note" giving the real reason. Only include subjects the episode genuinely discusses.'
 
 const SYSTEM_TRANSCRIPT = `${SYSTEM_BASE}\n- You have the FULL transcript, annotated with [mm:ss] markers. Ground everything in what was actually said.\n- For "highlights", draw them from DIFFERENT parts of the episode — early, middle, and late, not all from the opening — and set each timestamp to the real [mm:ss] of the nearest marker. Never use 0:00.`
 const SYSTEM_NOTES = `${SYSTEM_BASE}\n- You only have the publisher's show-notes (not the audio). If they are thin or promotional, keep the summary brief and high-level rather than fabricating. Use "—" for highlight timestamps.`
@@ -138,8 +162,32 @@ const TONE_SENTIMENTS = new Set(['positive', 'negative', 'neutral'])
 type RawSummary = {
   synthesis?: string[]
   qa?: QAItem[]
+  ideas?: unknown
   highlights?: Array<{ title: string; timestamp: string; detail: string; key?: boolean }>
   tone?: unknown
+}
+
+const IDEA_KINDS = new Set(['stock', 'trade', 'macro', 'prediction'])
+
+// Validate the LLM's `ideas` at runtime (same untrusted-output discipline as tone):
+// drop any entry without a usable headline, coerce a missing proponent to "—", keep
+// only string thesis points (max 4), and accept `kind` only from the known set.
+function normalizeIdeas(raw: RawSummary | undefined): Idea[] {
+  const list = raw?.ideas
+  if (!Array.isArray(list)) return []
+  const out: Idea[] = []
+  for (const it of list as Array<{ idea?: unknown; proponent?: unknown; thesis?: unknown; kind?: unknown }>) {
+    if (!it || typeof it !== 'object') continue
+    const idea = typeof it.idea === 'string' ? it.idea.trim() : ''
+    if (!idea) continue // an idea with no headline is unusable
+    const thesis = Array.isArray(it.thesis)
+      ? (it.thesis.filter((t): t is string => typeof t === 'string' && !!t.trim()).map((t) => t.trim()).slice(0, 4))
+      : []
+    const proponent = typeof it.proponent === 'string' && it.proponent.trim() ? it.proponent.trim() : '—'
+    const kind = typeof it.kind === 'string' && IDEA_KINDS.has(it.kind) ? (it.kind as Idea['kind']) : undefined
+    out.push({ idea, proponent, thesis, ...(kind ? { kind } : {}) })
+  }
+  return out
 }
 
 function normalizeTone(raw: RawSummary | undefined): EpisodeTone | undefined {
@@ -157,6 +205,7 @@ function normalizeTone(raw: RawSummary | undefined): EpisodeTone | undefined {
 function normalize(raw: RawSummary | undefined): Summary {
   const r = raw ?? {}
   const tone = normalizeTone(raw)
+  const ideas = normalizeIdeas(raw)
   // Normalize each highlight timestamp to a clean "m:ss" (the model sometimes copies
   // the bracketed transcript marker, e.g. "[12:34]"), sort chronologically (it can
   // emit them out of order), then assign stable ids in display order. Clean timestamps
@@ -169,6 +218,7 @@ function normalize(raw: RawSummary | undefined): Summary {
     synthesis: r.synthesis ?? [],
     highlights,
     qa: r.qa ?? [],
+    ...(ideas.length ? { ideas } : {}),
     ...(tone ? { tone } : {}),
   }
 }

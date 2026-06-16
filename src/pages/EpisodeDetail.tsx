@@ -266,6 +266,46 @@ function SummaryTab({ episode }: { episode: Episode }) {
             className="mt-lg border-t border-outline-variant pt-lg"
           />
         )}
+
+        {/* Ideas pitched — concrete stock/macro/trade calls + the thesis behind each.
+            Only shown when the episode actually pitched something specific. */}
+        {s.ideas && s.ideas.length > 0 && (
+          <div className="mt-lg border-t border-outline-variant pt-lg">
+            <div className="mb-md flex items-center gap-2 text-primary">
+              <Icon name="trending_up" size={20} />
+              <h3 className="text-[17px] font-semibold text-on-surface">Ideas Pitched</h3>
+            </div>
+            <ul className="space-y-2.5">
+              {s.ideas.map((idea, i) => (
+                <li key={i} className="rounded-xl border border-outline-variant bg-surface-container-low p-md">
+                  <p className="text-body-md font-semibold text-on-surface">
+                    {idea.kind && (
+                      <span className="mr-2 inline-block rounded bg-primary-fixed/70 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase tracking-wide text-primary">
+                        {idea.kind}
+                      </span>
+                    )}
+                    <RichText text={idea.idea} terms={terms} />
+                  </p>
+                  {idea.proponent && idea.proponent !== '—' && (
+                    <p className="mt-1 text-metadata text-secondary">Pitched by {idea.proponent}</p>
+                  )}
+                  {idea.thesis.length > 0 && (
+                    <ul className="mt-2 space-y-1">
+                      {idea.thesis.map((t, j) => (
+                        <li key={j} className="flex gap-2 text-[13.5px] leading-snug text-on-surface-variant">
+                          <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-secondary" />
+                          <span>
+                            <RichText text={t} terms={terms} />
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </section>
 
       <aside className="col-span-12 md:col-span-4">

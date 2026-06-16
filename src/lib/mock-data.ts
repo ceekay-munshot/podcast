@@ -487,6 +487,26 @@ export const EPISODES: Episode[] = [
         { q: `Is nuclear actually back?`, a: `For data centers, yes — as a procurement strategy. Restarting shuttered plants and signing behind-the-meter deals is faster than waiting on the public interconnection queue.` },
         { q: `What's the most underpriced asset here?`, a: `An already-permitted site with a signed interconnection agreement. It's effectively an option on the entire AI buildout.` },
       ],
+      ideas: [
+        {
+          idea: `Own the firm-power and grid-equipment names, not the chipmakers`,
+          proponent: 'The guest',
+          thesis: [
+            `Power, not silicon, is the **binding constraint** on the AI buildout`,
+            `Transformer and transmission supply is sold out years ahead with no quick fix`,
+          ],
+          kind: 'stock',
+        },
+        {
+          idea: `Buy already-permitted sites with signed interconnection agreements`,
+          proponent: 'The guest',
+          thesis: [
+            `An interconnection agreement is effectively a call option on the entire AI buildout`,
+            `The public interconnection queue can take a decade — permitted capacity is scarce today`,
+          ],
+          kind: 'trade',
+        },
+      ],
     },
     transcript: [
       {
@@ -606,6 +626,45 @@ export const EPISODES: Episode[] = [
       qa: [
         { q: `Is this a bubble?`, a: `Sacks says no — the revenue is real and power-constrained. Friedberg is more cautious, flagging depreciation and vendor financing as the tells to watch.` },
         { q: `What reopens for founders?`, a: `Late-stage secondary and a credible IPO path, which changes how long you'd rationally stay private.` },
+      ],
+      ideas: [
+        {
+          idea: `Long Nvidia (NVDA) into the capex supercycle`,
+          proponent: 'David Sacks',
+          thesis: [
+            `End-demand is real and **power-constrained**, not vendor-manufactured`,
+            `A 6-year useful life on GPUs keeps infra margins durable, not fictional`,
+            `Every hyperscaler is still guiding capex up, not down`,
+          ],
+          kind: 'stock',
+        },
+        {
+          idea: `Buy the clean AI-infrastructure IPOs as the window reopens`,
+          proponent: 'Jason Calacanis',
+          thesis: [
+            `A few clean listings have reset comps and proven there's a clearing price`,
+            `Late-stage names finally have liquidity, pulling venture distributions forward`,
+          ],
+          kind: 'stock',
+        },
+        {
+          idea: `Fade the most levered AI names on circular financing`,
+          proponent: 'David Friedberg',
+          thesis: [
+            `When the chip vendor funds the cloud that buys its chips, reported demand is flattered`,
+            `If GPUs depreciate over 3 years instead of 6, much of the reported margin is fiction`,
+          ],
+          kind: 'trade',
+        },
+        {
+          idea: `The Fed cuts twice more in 2026`,
+          proponent: 'Chamath Palihapitiya',
+          thesis: [
+            `Disinflation is back on trend and the labor market is softening at the edges`,
+            `A reopening IPO window is itself evidence that financial conditions are easing`,
+          ],
+          kind: 'macro',
+        },
       ],
     },
   },
@@ -897,6 +956,95 @@ export const WEEKLY: WeeklySummary = {
     `The throughline across the week was unmistakable: the AI debate has moved from "which model wins" to "what physically constrains the buildout." Stratechery reframed models as a commoditizing cost center while distribution stays scarce; Odd Lots put hard numbers on the real bottleneck — power, interconnection queues, and transformer lead times; and All-In turned both threads into a markets question about whether AI capex is a supercycle or a bubble.`,
     `On the investing side, Invest Like the Best and In Good Company circled the same idea from opposite ends of the size spectrum: durable returns come from owning the right thing for a very long time and staying liquid when others are forced to sell. Acquired's TSMC deep-dive supplied the concrete case study — process leadership that compounds, wrapped in geopolitical concentration risk.`,
     `If there's one synthesis: the market is repricing the un-sexy layer of the stack — power, foundries, distribution — and discounting the layer everyone was excited about a year ago, the models themselves.`,
+  ],
+  shows: [
+    {
+      show: 'All-In',
+      podcastId: 'allin',
+      episodeIds: ['ep-allin-e184'],
+      episodeCount: 1,
+      ideas: [
+        {
+          idea: 'Long Nvidia (NVDA) into the capex supercycle',
+          proponent: 'David Sacks',
+          thesis: [`End-demand is real and **power-constrained**, not vendor-manufactured`, `A 6-year GPU life keeps infra margins durable`],
+          kind: 'stock',
+          episodeId: 'ep-allin-e184',
+        },
+        {
+          idea: 'Fade the most levered AI names on circular financing',
+          proponent: 'David Friedberg',
+          thesis: [`Vendor-funded demand flatters the real end-market`, `A 3-year depreciation schedule would gut reported margins`],
+          kind: 'trade',
+          episodeId: 'ep-allin-e184',
+        },
+        {
+          idea: 'The Fed cuts twice more in 2026',
+          proponent: 'Chamath Palihapitiya',
+          thesis: [`Disinflation is back on trend`, `A reopening IPO window signals easing financial conditions`],
+          kind: 'macro',
+          episodeId: 'ep-allin-e184',
+        },
+      ],
+      takeaways: [
+        { title: 'The depreciation argument', detail: `If GPUs are 6-year assets the AI-infra margin math works; if 3-year, much of the reported margin is fiction.` },
+        { title: 'The IPO window is genuinely open', detail: `A handful of clean listings reset comps and pulled venture distributions forward for the first time in two years.` },
+      ],
+      questions: [`Is AI capex a supercycle or a bubble?`, `What depreciation schedule are hyperscalers really using for GPUs?`],
+    },
+    {
+      show: 'Odd Lots',
+      podcastId: 'oddlots',
+      episodeIds: ['ep-oddlots-grid'],
+      episodeCount: 1,
+      ideas: [
+        {
+          idea: 'Own firm-power and grid-equipment names, not the chipmakers',
+          proponent: 'Brian Janous',
+          thesis: [`Power is the **binding constraint** on the buildout`, `Transformer and transmission supply is sold out for years`],
+          kind: 'stock',
+          episodeId: 'ep-oddlots-grid',
+        },
+        {
+          idea: 'Buy already-permitted sites with signed interconnection agreements',
+          proponent: 'Brian Janous',
+          thesis: [`An interconnection agreement is a call option on the AI buildout`, `The public interconnection queue can take a decade`],
+          kind: 'trade',
+          episodeId: 'ep-oddlots-grid',
+        },
+      ],
+      takeaways: [
+        { title: 'Power, not chips, is the binding constraint', detail: `Electricity, interconnection queues, and transformer lead times — not silicon — gate the buildout.` },
+      ],
+      questions: [`Which permitted-site / interconnection owners are mispriced today?`],
+    },
+    {
+      show: 'Stratechery',
+      podcastId: 'stratechery',
+      episodeIds: ['ep-stratechery-agg'],
+      episodeCount: 1,
+      ideas: [],
+      takeaways: [{ title: 'Models are commoditizing', detail: `Durable value accrues to whoever owns distribution, not whoever owns the frontier model.` }],
+      questions: [`Is "distribution beats models" already priced into the incumbents?`],
+    },
+    {
+      show: 'Invest Like the Best',
+      podcastId: 'iltb',
+      episodeIds: ['ep-iltb-compounders'],
+      episodeCount: 1,
+      ideas: [],
+      takeaways: [{ title: 'Permanent capital turns time into alpha', detail: `Owning the right business for a very long time — and staying liquid when others are forced sellers — is the edge.` }],
+      questions: [],
+    },
+    {
+      show: 'Acquired',
+      podcastId: 'acquired',
+      episodeIds: ['ep-acquired-tsmc'],
+      episodeCount: 1,
+      ideas: [],
+      takeaways: [{ title: 'Concentration risk is structural', detail: `TSMC is a single-point-of-failure for the entire AI economy that reshoring won't fix quickly.` }],
+      questions: [],
+    },
   ],
   topThemes: [
     { label: 'Power & the grid', momentum: 64 },

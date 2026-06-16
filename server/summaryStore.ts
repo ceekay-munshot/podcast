@@ -19,7 +19,8 @@ import type { SummarizeResult } from './summarize' // type-only → erased at ru
 // cache can outlive a deploy) AND the shared store never serve a summary written
 // by the previous prompt — the revision is part of every cache key.
 // r5: takeaways + moments merged into one `highlights` list (key-flagged).
-export const SUMMARY_REVISION = 5
+// r6: added structured `ideas` (concrete pitches/calls + thesis) extraction.
+export const SUMMARY_REVISION = 6
 
 /** The shared cache key for an episode. The episode id is stable across all users
  *  of the same feed (`live-${podcastId}-${hash(guid|link|title+date)}`), so this is

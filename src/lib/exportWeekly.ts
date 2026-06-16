@@ -1,11 +1,36 @@
-import type { Episode, Podcast, WeeklySummary } from './types'
+import type { Episode, Podcast, WeeklyIdea, WeeklyShowDigest, WeeklySummary } from './types'
 import { brandHeader, chips, docFooter, downloadWord, esc, inline, sanitizeFilename, section, wordShell } from './exportDoc'
 
-// Builds a clean, well-formatted Weekly Summary Word document — every section the
-// page shows (Overview · Top Themes · Key Takeaways · Interesting Ideas ·
-// Contradictions · Mentions · Questions) plus source-episode citations.
+// Builds a clean, well-formatted Weekly Summary Word document. The primary body is
+// organized BY SHOW (each show's pitched ideas · key takeaways · questions), with
+// cross-show Themes, Mentions, and the curated "interesting" moment after it, plus
+// source-episode citations.
 
 type ById<T> = (id: string) => T | undefined
+
+// One pitched idea: the call (with an optional category badge), who pitched it, and
+// the thesis bullets behind it.
+function ideaBlock(idea: WeeklyIdea): string {
+  const kind = idea.kind ? `<span class="idea-kind">${esc(idea.kind)}</span>` : ''
+  const who = idea.proponent && idea.proponent !== '—' ? `<p class="idea-who">Pitched by ${esc(idea.proponent)}</p>` : ''
+  const thesis = idea.thesis.length ? `<ul class="thesis">${idea.thesis.map((t) => `<li>${inline(t)}</li>`).join('')}</ul>` : ''
+  return `<div class="idea"><p class="idea-title">${kind}${esc(idea.idea)}</p>${who}${thesis}</div>`
+}
+
+// One show's mini-digest: ideas pitched, then key takeaways, then open questions.
+function showBlock(d: WeeklyShowDigest): string {
+  const count = `${d.episodeCount} episode${d.episodeCount === 1 ? '' : 's'}`
+  const ideas = d.ideas.length ? `<p class="subhead">Ideas Pitched</p>${d.ideas.map(ideaBlock).join('')}` : ''
+  const takeaways = d.takeaways.length
+    ? `<p class="subhead">Key Takeaways</p><ul class="tlist">${d.takeaways
+        .map((t) => `<li><b>${esc(t.title)}.</b> ${inline(t.detail)}</li>`)
+        .join('')}</ul>`
+    : ''
+  const questions = d.questions.length
+    ? `<p class="subhead">Questions</p><ul class="tlist">${d.questions.map((q) => `<li>${inline(q)}</li>`).join('')}</ul>`
+    : ''
+  return `<div class="show-block"><p class="show-head">${esc(d.show)} <span class="show-count">${esc(count)}</span></p>${ideas}${takeaways}${questions}</div>`
+}
 
 export function weeklyToWord(weekly: WeeklySummary, episodeById: ById<Episode>, podcastById: ById<Podcast>): string {
   const meta = [weekly.rangeLabel, `${weekly.episodeCount} episodes`, `${weekly.readMinutes} min read`]
@@ -16,23 +41,16 @@ export function weeklyToWord(weekly: WeeklySummary, episodeById: ById<Episode>, 
     ? `<div class="prose">${weekly.overview.map((p) => `<p>${inline(p)}</p>`).join('')}</div>`
     : ''
 
+  const showsBody = (weekly.shows ?? []).map(showBlock).join('')
+
   const themes = chips(weekly.topThemes.map((t) => t.label))
 
-  const takeaways = weekly.takeaways.length
-    ? weekly.takeaways
-        .map(
-          (t, i) =>
-            `<div class="tk"><p class="t-title"><span class="t-num">${String(i + 1).padStart(2, '0')}</span>&nbsp;&nbsp;${esc(
-              t.title,
-            )}</p><p class="t-detail">${inline(t.detail)}</p></div>`,
-        )
-        .join('')
-    : ''
-
   const interestingTitle = weekly.interesting.title ? `<p class="qt">${esc(weekly.interesting.title)}</p>` : ''
-  const interesting = `<div class="quote">${interestingTitle}<p class="ql">${esc(weekly.interesting.quote)}</p><p class="who">${esc(
-    weekly.interesting.speaker,
-  )} <span class="role">${esc(weekly.interesting.role)}</span></p></div>`
+  const interesting = weekly.interesting.quote
+    ? `<div class="quote">${interestingTitle}<p class="ql">${esc(weekly.interesting.quote)}</p><p class="who">${esc(
+        weekly.interesting.speaker,
+      )} <span class="role">${esc(weekly.interesting.role)}</span></p></div>`
+    : ''
 
   const contradictions = weekly.contradictions.length
     ? weekly.contradictions.map((c) => `<p class="callout">${inline(c)}</p>`).join('')
@@ -42,10 +60,6 @@ export function weeklyToWord(weekly: WeeklySummary, episodeById: ById<Episode>, 
       <td><p class="subhead">People</p>${chips(weekly.mentions.people)}</td>
       <td><p class="subhead">Companies</p>${chips(weekly.mentions.companies)}</td>
     </tr></table>`
-
-  const questions = weekly.questions.length
-    ? weekly.questions.map((q) => `<p class="callout">${inline(q)}</p>`).join('')
-    : ''
 
   const sources = weekly.sourceEpisodeIds.map(episodeById).filter((e): e is Episode => Boolean(e))
   const sourcesBody = sources.length
@@ -62,13 +76,12 @@ export function weeklyToWord(weekly: WeeklySummary, episodeById: ById<Episode>, 
       <p class="meta">${meta}</p>
       <hr class="rule" />
       ${section('01', 'This Week in Summary', overview)}
-      ${section('02', 'Top Themes', themes)}
-      ${section('03', 'Key Takeaways', takeaways)}
-      ${section('04', 'What Was Actually Interesting', interesting)}
-      ${section('05', 'Contradictions & Disagreements', contradictions)}
-      ${section('06', 'Mentions', mentions)}
-      ${section('07', 'Questions Worth Investigating', questions)}
-      ${section('08', 'Source Episodes', sourcesBody)}
+      ${section('02', 'By Show', showsBody)}
+      ${section('03', 'Top Themes', themes)}
+      ${section('04', 'Mentions', mentions)}
+      ${section('05', 'What Was Actually Interesting', interesting)}
+      ${section('06', 'Contradictions & Disagreements', contradictions)}
+      ${section('07', 'Source Episodes', sourcesBody)}
       ${docFooter('Generated by <b>Munshot</b> &middot; AI podcast intelligence', weekly.rangeLabel)}`
 
   return wordShell(`Munshot Weekly — ${weekly.rangeLabel}`, inner)
