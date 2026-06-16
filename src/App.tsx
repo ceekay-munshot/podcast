@@ -10,6 +10,7 @@ import Discover from './pages/Discover'
 import Episodes from './pages/Episodes'
 import EpisodeDetail from './pages/EpisodeDetail'
 import Weekly from './pages/Weekly'
+import WeeklyArchive from './pages/WeeklyArchive'
 import Search from './pages/Search'
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
                 <Route path="episodes" element={<Episodes />} />
                 <Route path="episodes/:id" element={<EpisodeDetail />} />
                 <Route path="weekly" element={<Weekly />} />
+                <Route path="weekly/archive" element={<WeeklyArchive />} />
                 <Route path="search" element={<Search />} />
                 <Route path="*" element={<NotFound />} />
               </Route>

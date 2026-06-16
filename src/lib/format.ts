@@ -40,6 +40,50 @@ export function longDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+// ── ISO-week helpers (Monday–Sunday), used to bucket episodes into weekly editions.
+//    All computed in UTC so date-only feed strings ("2026-06-01") bucket
+//    deterministically regardless of the viewer's timezone. ────────────────────
+
+/** ISO-8601 week-year + week number (week 1 holds the year's first Thursday). */
+function isoWeekParts(iso: string): { year: number; week: number } {
+  const src = new Date(iso)
+  const d = new Date(Date.UTC(src.getUTCFullYear(), src.getUTCMonth(), src.getUTCDate()))
+  const day = (d.getUTCDay() + 6) % 7 // 0 = Monday
+  d.setUTCDate(d.getUTCDate() - day + 3) // move to this week's Thursday
+  const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4))
+  const fday = (firstThursday.getUTCDay() + 6) % 7
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - fday + 3)
+  const week = 1 + Math.round((d.getTime() - firstThursday.getTime()) / (7 * DAY))
+  return { year: d.getUTCFullYear(), week }
+}
+
+/** Stable bucket key for the ISO week containing `iso`, e.g. "2026-W23". Sorts
+ *  chronologically as a string (year prefix + zero-padded week). */
+export function isoWeekKey(iso: string): string {
+  const { year, week } = isoWeekParts(iso)
+  return `${year}-W${String(week).padStart(2, '0')}`
+}
+
+/** The Monday→Sunday span (UTC) of the ISO week containing `iso`. */
+export function isoWeekRange(iso: string): { start: Date; end: Date } {
+  const src = new Date(iso)
+  const start = new Date(Date.UTC(src.getUTCFullYear(), src.getUTCMonth(), src.getUTCDate()))
+  const day = (start.getUTCDay() + 6) % 7 // 0 = Monday
+  start.setUTCDate(start.getUTCDate() - day)
+  const end = new Date(start)
+  end.setUTCDate(start.getUTCDate() + 6)
+  return { start, end }
+}
+
+/** "Jun 1 – 7, 2026" (same month) / "May 26 – Jun 1, 2026" (spanning months). */
+export function weekRangeLabel(start: Date, end: Date): string {
+  const fmt = (d: Date, opts: Intl.DateTimeFormatOptions) => d.toLocaleDateString('en-US', { timeZone: 'UTC', ...opts })
+  const sameMonth = start.getUTCMonth() === end.getUTCMonth() && start.getUTCFullYear() === end.getUTCFullYear()
+  const startStr = fmt(start, { month: 'short', day: 'numeric' })
+  const endStr = sameMonth ? `${end.getUTCDate()}, ${end.getUTCFullYear()}` : fmt(end, { month: 'short', day: 'numeric', year: 'numeric' })
+  return `${startStr} – ${endStr}`
+}
+
 function startOfDay(ms: number): number {
   const d = new Date(ms)
   d.setHours(0, 0, 0, 0)

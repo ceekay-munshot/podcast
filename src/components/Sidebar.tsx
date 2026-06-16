@@ -5,10 +5,13 @@ import type { Identity } from '../lib/munshot'
 import { Icon } from './Icon'
 import { WeeklySubscribe } from './WeeklySubscribe'
 
-const NAV = [
+type NavItem = { to: string; label: string; icon: string; end?: boolean; sub?: boolean }
+
+const NAV: NavItem[] = [
   { to: '/', label: 'Home', icon: 'home', end: true },
   { to: '/episodes', label: 'Episodes', icon: 'play_circle' },
-  { to: '/weekly', label: 'Weekly Summary', icon: 'bar_chart' },
+  { to: '/weekly', label: 'Weekly Summary', icon: 'bar_chart', end: true },
+  { to: '/weekly/archive', label: 'Past Editions', icon: 'history', sub: true },
   { to: '/discover', label: 'Discover', icon: 'explore' },
 ]
 
@@ -100,12 +103,12 @@ function SidebarContent({ onNavigate, onClose }: { onNavigate?: () => void; onCl
       {/* Primary nav */}
       <ul className="flex flex-col gap-1">
         {NAV.map((item) => (
-          <li key={item.to}>
+          <li key={item.to} className={item.sub ? 'ml-4 border-l border-outline-variant pl-1.5' : ''}>
             <NavLink to={item.to} end={item.end} onClick={onNavigate} className={navClass}>
               {({ isActive }) => (
                 <>
-                  <Icon name={item.icon} size={20} fill={isActive} />
-                  <span className="text-[14px]">{item.label}</span>
+                  <Icon name={item.icon} size={item.sub ? 18 : 20} fill={isActive} />
+                  <span className={item.sub ? 'text-[13px]' : 'text-[14px]'}>{item.label}</span>
                 </>
               )}
             </NavLink>

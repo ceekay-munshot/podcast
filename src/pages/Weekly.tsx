@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
 import { useSentiment } from '../store/Sentiment'
 import { downloadWeekly } from '../lib/exportWeekly'
 import { generateWeekly } from '../lib/weeklyApi'
+import { listEditions } from '../lib/weeklyEditions'
 import { weeklyToneView } from '../lib/tone'
 import type { WeeklyIdea, WeeklyShowDigest, WeeklySummary } from '../lib/types'
 import { Icon } from '../components/Icon'
+import { EditionSwitcher } from '../components/EditionSwitcher'
 import { RichText, entityTerms } from '../components/RichText'
 import { ToneMeter } from '../components/ToneMeter'
 
@@ -22,22 +24,56 @@ const THEME_STYLES = [
 export default function Weekly() {
   const { episodes, podcasts, episodeById, podcastById, loading } = useAppData()
   const { on: sentimentOn } = useSentiment()
+  const [params, setParams] = useSearchParams()
   const [weekly, setWeekly] = useState<WeeklySummary | null | undefined>(undefined) // undefined = generating
 
-  const ready = useMemo(() => episodes.filter((e) => e.status === 'ready' && e.summary), [episodes])
-  const readyKey = useMemo(() => ready.map((e) => e.id).sort().join(','), [ready])
+  // The history: ready episodes sliced into per-week editions (newest first).
+  const editions = useMemo(() => listEditions(episodes, podcastById), [episodes, podcastById])
+
+  // Selected edition: ?week=<key> | 'all', defaulting to the latest week.
+  const requested = params.get('week')
+  const currentKey =
+    requested === 'all' || (requested && editions.some((e) => e.weekKey === requested))
+      ? requested
+      : editions[0]?.weekKey ?? 'all'
+  const selected = currentKey === 'all' ? null : editions.find((e) => e.weekKey === currentKey)
+
+  // The episodes feeding the selected edition (a single week, or everything).
+  const editionEpisodes = useMemo(() => {
+    const isReady = (e: (typeof episodes)[number]) => e.status === 'ready' && e.summary
+    if (currentKey === 'all') return episodes.filter(isReady)
+    const ids = new Set(selected?.episodeIds ?? [])
+    return episodes.filter((e) => ids.has(e.id))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [episodes, currentKey, selected?.weekKey])
+
+  const genKey = useMemo(
+    () => `${currentKey}|${editionEpisodes.map((e) => e.id).sort().join(',')}`,
+    [currentKey, editionEpisodes],
+  )
 
   useEffect(() => {
     let alive = true
     setWeekly(undefined)
-    generateWeekly(episodes, podcastById)
+    if (!editionEpisodes.length) {
+      setWeekly(null)
+      return
+    }
+    generateWeekly(editionEpisodes, podcastById, { scope: currentKey, rangeLabel: selected?.rangeLabel })
       .then((w) => alive && setWeekly(w))
       .catch(() => alive && setWeekly(null))
     return () => {
       alive = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [readyKey])
+  }, [genKey])
+
+  function selectEdition(key: string) {
+    const next = new URLSearchParams(params)
+    if (key === (editions[0]?.weekKey ?? 'all')) next.delete('week') // latest → clean URL
+    else next.set('week', key)
+    setParams(next)
+  }
 
   return (
     <div className="animate-fade-up">
@@ -47,37 +83,40 @@ export default function Weekly() {
           <h1 className="text-display-lg tracking-tight text-on-surface">Weekly Summary</h1>
           <p className="mt-1 text-body-md text-secondary">
             {loading || weekly === undefined
-              ? 'Synthesising across your analysed episodes…'
+              ? 'Synthesising this edition…'
               : weekly
-                ? weekly.rangeLabel
+                ? `${weekly.episodeCount} episode${weekly.episodeCount === 1 ? '' : 's'} · ${weekly.readMinutes} min read`
                 : 'No episodes analysed yet'}
           </p>
           {weekly && sentimentOn && (
             <div className="mt-2 flex items-center gap-2 text-metadata text-secondary">
-              <span className="font-medium">This week's tone</span>
+              <span className="font-medium">This edition's tone</span>
               <ToneMeter tone={weeklyToneView(weekly, episodeById)} />
             </div>
           )}
         </div>
-        {weekly && (
-          <button
-            onClick={() => downloadWeekly(weekly, episodeById, podcastById)}
-            title="Download a formatted Word document (.doc)"
-            className="press inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary hover:bg-primary-container"
-          >
-            <Icon name="download" size={18} /> Download
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {editions.length > 0 && <EditionSwitcher editions={editions} currentKey={currentKey} onSelect={selectEdition} />}
+          {weekly && (
+            <button
+              onClick={() => downloadWeekly(weekly, episodeById, podcastById)}
+              title="Download a formatted Word document (.doc)"
+              className="press inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary hover:bg-primary-container"
+            >
+              <Icon name="download" size={18} /> Download
+            </button>
+          )}
+        </div>
       </div>
 
       {loading || weekly === undefined ? (
-        <GeneratingState count={ready.length} />
+        <GeneratingState count={editionEpisodes.length} />
       ) : weekly === null ? (
         <EmptyState />
       ) : (
         <WeeklyDoc
           weekly={weekly}
-          ready={ready}
+          ready={editionEpisodes}
           trackedCount={podcasts.filter((p) => p.tracked).length}
           episodeById={episodeById}
           podcastById={podcastById}

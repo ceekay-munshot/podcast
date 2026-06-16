@@ -33,13 +33,27 @@ const cacheKey = (key: string): string => scopedKey('munshot:weekly:v2') + `:${k
 const SHOW_TAKEAWAYS_CAP = 6
 const SHOW_QUESTIONS_CAP = 5
 
-export async function generateWeekly(episodes: Episode[], podcastById: ById): Promise<WeeklySummary | null> {
+export interface WeeklyOptions {
+  /** Disambiguates the cache entry — pass the ISO week key (or 'all'). Keeps two
+   *  different views over the same episode set (a single week vs. all-time) from
+   *  colliding on the content hash. */
+  scope?: string
+  /** Canonical label to use instead of the episodes' min/max range (e.g. the
+   *  week's Mon–Sun span for a per-week edition). */
+  rangeLabel?: string
+}
+
+export async function generateWeekly(
+  episodes: Episode[],
+  podcastById: ById,
+  opts: WeeklyOptions = {},
+): Promise<WeeklySummary | null> {
   const ready = episodes
     .filter((e) => e.status === 'ready' && e.summary)
     .sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt))
   if (!ready.length) return null
 
-  const key = hashKey(ready)
+  const key = hashKey(ready) + (opts.scope ? `:${opts.scope}` : '')
   const ck = cacheKey(key)
   const cached = SESSION.get(ck) ?? readCache(ck)
   if (cached) {
@@ -52,7 +66,7 @@ export async function generateWeekly(episodes: Episode[], podcastById: ById): Pr
   const topThemes = topTopics(ready, 6).map((t) => ({ label: t.label, momentum: t.count }))
   const mentions = aggregateMentions(ready)
   const interesting = pickInteresting(ready, podcastById)
-  const range = rangeLabel(ready)
+  const range = opts.rangeLabel ?? rangeLabel(ready)
 
   // AI narrative layer (overview, takeaways, questions) with a real fallback.
   const ai = await aiSynthesize(ready, range, podcastById)
@@ -109,11 +123,21 @@ async function aiSynthesize(
     `Base everything ONLY on the material below; do not invent.\n\n${body}`
 
   try {
-    const res = await apiFetch('/api/summary', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title: `Munshot Weekly Roundup — ${range}`, show: 'Munshot Weekly', notes }),
-    })
+    // Bound the call so the edition never hangs on a slow/stuck endpoint — on
+    // timeout we abort and fall through to the deterministic by-show layer.
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 20_000)
+    let res: Response
+    try {
+      res = await apiFetch('/api/summary', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: `Munshot Weekly Roundup — ${range}`, show: 'Munshot Weekly', notes }),
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
     if (!res.ok) return null
     const data = (await res.json()) as {
       summary?: { synthesis?: string[]; highlights?: { title?: string; detail?: string; key?: boolean }[]; qa?: { q: string; a: string }[] }
