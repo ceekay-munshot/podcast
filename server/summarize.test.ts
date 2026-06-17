@@ -84,12 +84,14 @@ describe('summarizeEpisode — shared store reuse', () => {
     expect(store.map.get(sharedSummaryKey('live-allin-fresh'))).toEqual(result) // reusable hereafter
   })
 
-  it('does not touch the store when no episode id is supplied (weekly roundup)', async () => {
+  it('does not touch the store when no id is supplied (an id-less request)', async () => {
+    // The weekly roundup now passes a content-derived `weekly:<hash>` id (so it IS
+    // shared); this pins the generic contract that an id-less call stays unshared.
     const store = memStore()
     fetchMock.mockResolvedValueOnce(okLLM())
 
     await summarizeEpisode(
-      { title: 'Munshot Weekly Roundup — unique', show: 'Munshot Weekly', notes: 'cross-episode notes' },
+      { title: 'Ad-hoc — unique', show: 'Munshot', notes: 'one-off notes' },
       { openaiKey: 'sk-test', store },
     )
 

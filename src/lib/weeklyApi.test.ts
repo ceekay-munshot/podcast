@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { buildShowDigests } from './weeklyApi'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { buildShowDigests, generateWeekly } from './weeklyApi'
 import type { Episode, Highlight, Idea, Podcast, Summary } from './types'
 
 // buildShowDigests is the deterministic heart of the by-show weekly: it groups the
@@ -115,5 +115,45 @@ describe('buildShowDigests', () => {
     expect(digest.takeaways).toHaveLength(6)
     // Questions deduped case-insensitively and capped at 5.
     expect(digest.questions).toEqual(['Shared question?', 'Unique A?', 'Unique B?'])
+  })
+})
+
+describe('generateWeekly — shared across users', () => {
+  const fetchMock = vi.fn()
+  beforeEach(() => {
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('posts a stable content-derived `weekly:` id (so the AI synthesis is shared, not per-user)', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ summary: { synthesis: ['overview'], highlights: [], qa: [] } }) })
+
+    // force:true so neither the in-memory nor localStorage L1 can shadow the request.
+    await generateWeekly([ep('sh-allin', 'allin', sum({ highlights: [hl('h', 'T', true)] }), '2026-06-01')], podcastById, {
+      scope: '2026-W23',
+      force: true,
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/summary')
+    const body = JSON.parse(init.body as string) as { id?: string; force?: boolean; show?: string }
+    expect(body.show).toBe('Munshot Weekly')
+    expect(typeof body.id).toBe('string')
+    expect(body.id?.startsWith('weekly:')).toBe(true) // → server stores it in the GLOBAL shared cache
+    expect(body.force).toBe(true) // Refresh bypasses + overwrites the shared entry
+  })
+
+  it('derives the same id for the same episode set (the basis for cross-user reuse)', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ summary: { synthesis: ['o'], highlights: [], qa: [] } }) })
+    const eps = [ep('sh-odd', 'oddlots', sum({ highlights: [hl('h', 'T', true)] }), '2026-06-02')]
+
+    await generateWeekly(eps, podcastById, { scope: '2026-W23', force: true })
+    await generateWeekly(eps, podcastById, { scope: '2026-W23', force: true })
+
+    const id1 = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string).id
+    const id2 = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string).id
+    expect(id1).toBe(id2)
   })
 })

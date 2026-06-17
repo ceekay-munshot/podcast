@@ -355,12 +355,13 @@ export async function summarizeEpisode(input: SummarizeInput, config: SummarizeC
   )
   const prompt = buildPrompt(input, transcript?.text ?? null)
 
-  // Key the in-process L1 cache by the STABLE episode id (globally unique), not the
-  // title: two different episodes that share a title ("Mailbag", "2024 Predictions",
-  // and across shows generally) would otherwise collide here and serve each other's
+  // Key the in-process L1 cache by the STABLE id (globally unique), not the title:
+  // two different episodes that share a title ("Mailbag", "2024 Predictions", and
+  // across shows generally) would otherwise collide here and serve each other's
   // summary — and since L1 is checked after the per-id L2 store, an L1 collision
-  // shadows the correct L2 entry. The id-less weekly roundup falls back to a hash of
-  // its show+notes so distinct weeks still get distinct slots.
+  // shadows the correct L2 entry. The weekly roundup passes a content-derived
+  // `weekly:<hash>` id (so it's shared like episodes); any truly id-less call falls
+  // back to a hash of its show+notes so distinct inputs still get distinct slots.
   const idPart = input.id ?? `n:${stableHash(`${input.show} ${input.notes ?? ''}`)}`
   const cacheKey = `${provider}:${model}:${transcript ? 't' : 'n'}:r${SUMMARY_REVISION}::${idPart}`
   const hit = input.force ? undefined : cache.get(cacheKey)

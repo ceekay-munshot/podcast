@@ -15,10 +15,12 @@ import { scopedKey } from './storageScope'
 //     /api/summary endpoint the episodes use (no new backend). Falls back to a
 //     faithful data-derived version when there's no key or the call fails.
 //
-// Cached per analysed-episode set (memory + localStorage), so it's generated
-// once and instant on return. Both cache layers are scoped per Munshot user
-// (scopedKey), so a mid-session user switch can never serve another user's
-// digest — even though the content hash alone would usually differ anyway.
+// Caching is layered. L1 (per browser): a memory map + user-scoped localStorage,
+// keyed by the analysed-episode set — instant on return, never crosses users. L2
+// (global): the AI synthesis posts a content-derived `id`, so the shared summary
+// store reuses it across ALL users and browsers — the same episode set is run
+// through the model ONCE total, not once per visitor. The deterministic layer is
+// free, so it's recomputed locally either way.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type ById = (id: string) => Podcast | undefined
@@ -74,8 +76,11 @@ export async function generateWeekly(
   const interesting = pickInteresting(ready, podcastById)
   const range = opts.rangeLabel ?? rangeLabel(ready)
 
-  // AI narrative layer (overview, takeaways, questions) with a real fallback.
-  const ai = await aiSynthesize(ready, range, podcastById)
+  // AI narrative layer (overview, takeaways, questions) with a real fallback. The
+  // shared id makes the result reusable across ALL users via the global summary
+  // store (same episode set ⇒ same id ⇒ one LLM call total), not just this browser.
+  const sharedId = `weekly:${key}`
+  const ai = await aiSynthesize(ready, range, podcastById, { id: sharedId, force: opts.force })
   const overview = ai?.overview.length ? ai.overview : derivedOverview(ready, topThemes, podcastById)
   const takeaways = ai?.takeaways.length ? ai.takeaways : derivedTakeaways(ready)
   const questions = ai?.questions ?? []
@@ -106,6 +111,7 @@ async function aiSynthesize(
   ready: Episode[],
   range: string,
   podcastById: ById,
+  opts: { id?: string; force?: boolean } = {},
 ): Promise<{ overview: string[]; takeaways: Takeaway[]; questions: string[] } | null> {
   const body = ready
     .map((e) => {
@@ -138,7 +144,7 @@ async function aiSynthesize(
       res = await apiFetch('/api/summary', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: `Munshot Weekly Roundup — ${range}`, show: 'Munshot Weekly', notes }),
+        body: JSON.stringify({ id: opts.id, title: `Munshot Weekly Roundup — ${range}`, show: 'Munshot Weekly', notes, force: opts.force }),
         signal: controller.signal,
       })
     } finally {
