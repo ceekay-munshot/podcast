@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
@@ -51,6 +51,11 @@ export default function Weekly() {
     () => `${currentKey}|${editionEpisodes.map((e) => e.id).sort().join(',')}`,
     [currentKey, editionEpisodes],
   )
+  // Latest genKey, so an in-flight refresh never applies its result to an edition
+  // the user has since switched away from.
+  const genKeyRef = useRef(genKey)
+  genKeyRef.current = genKey
+  const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -67,6 +72,28 @@ export default function Weekly() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [genKey])
+
+  // Force-regenerate the current edition, bypassing the memory + localStorage cache
+  // (and overwriting it). The escape hatch for "I shipped a new format — show me the
+  // latest, not the cached version."
+  async function refresh() {
+    if (!editionEpisodes.length || refreshing) return
+    const token = genKey
+    setRefreshing(true)
+    setWeekly(undefined)
+    try {
+      const w = await generateWeekly(editionEpisodes, podcastById, {
+        scope: currentKey,
+        rangeLabel: selected?.rangeLabel,
+        force: true,
+      })
+      if (genKeyRef.current === token) setWeekly(w)
+    } catch {
+      if (genKeyRef.current === token) setWeekly(null)
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   function selectEdition(key: string) {
     const next = new URLSearchParams(params)
@@ -97,6 +124,17 @@ export default function Weekly() {
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
           {editions.length > 0 && <EditionSwitcher editions={editions} currentKey={currentKey} onSelect={selectEdition} />}
+          {editionEpisodes.length > 0 && (
+            <button
+              onClick={refresh}
+              disabled={refreshing || weekly === undefined}
+              title="Regenerate this edition from scratch (skips the cache) — use after shipping a new format"
+              className="press inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-3 py-2.5 text-metadata font-semibold text-on-surface hover:bg-surface-container-low disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Icon name="refresh" size={18} className={refreshing ? 'motion-safe:animate-spin' : ''} />
+              <span className="hidden sm:inline">{refreshing ? 'Refreshing…' : 'Refresh'}</span>
+            </button>
+          )}
           {weekly && (
             <button
               onClick={() => downloadWeekly(weekly, episodeById, podcastById)}

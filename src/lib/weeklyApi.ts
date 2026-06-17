@@ -41,6 +41,10 @@ export interface WeeklyOptions {
   /** Canonical label to use instead of the episodes' min/max range (e.g. the
    *  week's Mon–Sun span for a per-week edition). */
   rangeLabel?: string
+  /** Skip the cache READ and regenerate from scratch (still overwrites the cache).
+   *  Powers the "Refresh" button: after a format/prompt change ships, a user can
+   *  force the latest version instead of being served the stale cached edition. */
+  force?: boolean
 }
 
 export async function generateWeekly(
@@ -55,10 +59,12 @@ export async function generateWeekly(
 
   const key = hashKey(ready) + (opts.scope ? `:${opts.scope}` : '')
   const ck = cacheKey(key)
-  const cached = SESSION.get(ck) ?? readCache(ck)
-  if (cached) {
-    SESSION.set(ck, cached)
-    return cached
+  if (!opts.force) {
+    const cached = SESSION.get(ck) ?? readCache(ck)
+    if (cached) {
+      SESSION.set(ck, cached)
+      return cached
+    }
   }
 
   // Always-real, deterministic layer.
