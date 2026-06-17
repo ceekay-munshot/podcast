@@ -1,5 +1,5 @@
 import type { Episode, Podcast, WeeklyIdea, WeeklyShowDigest, WeeklySummary } from './types'
-import { esc, inline } from './exportDoc'
+import { esc, inline, sanitizeFilename } from './exportDoc'
 import { formatDuration, longDate } from './format'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -374,9 +374,17 @@ export function summaryToPdfHtml(episode: Episode, podcast?: Podcast): string {
   return pdfShell(`${episode.title} — Munshot Summary`, inner)
 }
 
-// ── Print launcher ───────────────────────────────────────────────────────────
+// ── Print launcher (standalone) ──────────────────────────────────────────────
 // Render the styled HTML in a hidden, same-origin iframe (so /fonts and the logo
 // resolve), wait for fonts + images, then open the browser's print → Save as PDF.
+//
+// NOTE: this only works when the app is the TOP document. Inside the chat.muns.io
+// dashboard iframe — sandboxed `allow-scripts allow-same-origin allow-popups
+// allow-forms allow-downloads`, i.e. WITHOUT `allow-modals` — the HTML spec makes
+// every script-initiated window.print() a silent no-op for the whole frame tree
+// (a child iframe inherits its parent's sandbox; a popup can't escape it without
+// allow-popups-to-escape-sandbox). So when embedded we never call this; we hand
+// the user a real file instead (see downloadPrintablePdf below).
 export function printDocument(html: string): void {
   const iframe = document.createElement('iframe')
   iframe.setAttribute('aria-hidden', 'true')
@@ -419,10 +427,150 @@ export function printDocument(html: string): void {
   document.body.appendChild(iframe)
 }
 
-export function downloadWeeklyPdf(weekly: WeeklySummary, episodeById: ById<Episode>, podcastById: ById<Podcast>): void {
-  printDocument(weeklyToPdfHtml(weekly, episodeById, podcastById))
+// ── Embedded-safe delivery (download → Save as PDF) ──────────────────────────
+// When the app runs inside the dashboard iframe, window.print() is blocked (see
+// printDocument's note), but file downloads are NOT — `allow-downloads` is set,
+// which is exactly how the Word export reaches the user. So instead of printing
+// we DOWNLOAD the same styled document as a fully self-contained, print-ready
+// HTML file: fonts + logo inlined as data URIs (so it renders 1:1 even opened
+// from disk, offline) and a tiny launcher that pops Save-as-PDF the moment it's
+// opened — with an always-visible "Save as PDF" button as a guaranteed fallback.
+// This path cannot be silently blocked, so the PDF always reaches the user.
+
+function isEmbedded(): boolean {
+  try {
+    return window.self !== window.top
+  } catch {
+    return true // cross-origin window.top access throws → we ARE embedded
+  }
 }
 
-export function downloadSummaryPdf(episode: Episode, podcast?: Podcast): void {
-  printDocument(summaryToPdfHtml(episode, podcast))
+// The woff2 files PDF_CSS references, by the exact URL used in the @font-face src.
+const FONT_FILES = [
+  'Fraunces-400', 'Fraunces-500', 'Fraunces-600', 'Fraunces-900',
+  'Inter-400', 'Inter-500', 'Inter-600', 'Inter-700', 'Inter-800',
+  'IBMPlexMono-400', 'IBMPlexMono-500', 'IBMPlexMono-600',
+].map((n) => `/fonts/${n}.woff2`)
+
+function bufToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf)
+  const chunks: string[] = []
+  const SIZE = 0x8000 // chunk the spread so we never blow the argument limit
+  for (let i = 0; i < bytes.length; i += SIZE) chunks.push(String.fromCharCode(...bytes.subarray(i, i + SIZE)))
+  return btoa(chunks.join(''))
+}
+
+async function toDataUri(url: string, mime: string, f: typeof fetch): Promise<string | null> {
+  try {
+    const res = await f(url)
+    if (!res.ok) return null
+    return `data:${mime};base64,${bufToBase64(await res.arrayBuffer())}`
+  } catch {
+    return null // a missing asset just falls back to its CSS generic — never throw
+  }
+}
+
+// Replace every same-origin /fonts/*.woff2 reference with an inlined data URI so
+// the downloaded file carries its own fonts. Assets that fail to fetch are left
+// as-is (graceful: the doc still opens; that family falls back to its generic).
+export async function inlineFonts(html: string, f: typeof fetch = fetch): Promise<string> {
+  const uris = await Promise.all(FONT_FILES.map(async (url) => [url, await toDataUri(url, 'font/woff2', f)] as const))
+  let out = html
+  for (const [url, uri] of uris) if (uri) out = out.split(url).join(uri)
+  return out
+}
+
+// Floating "Save as PDF" button (hidden in the printout) + an auto-print on open.
+// As a TOP-level document the file may freely call print(), so opening it lands
+// the user straight on Save-as-PDF; the button is the manual guarantee.
+const PRINT_LAUNCHER = `
+<div class="pdf-actionbar" role="toolbar" aria-label="Save this document">
+  <button type="button" class="pdf-savebtn" onclick="window.print()">Save as PDF</button>
+</div>
+<style>
+@media screen{
+ .pdf-actionbar{position:fixed;top:14px;right:14px;z-index:2147483647;}
+ .pdf-savebtn{font-family:'Inter',system-ui,-apple-system,sans-serif;font-weight:700;font-size:13px;letter-spacing:.01em;
+  color:#fff;background:#b8902f;border:0;border-radius:9px;padding:11px 18px;cursor:pointer;box-shadow:0 8px 22px rgba(184,144,47,.4);}
+ .pdf-savebtn:hover{background:#a37e26;}
+}
+@media print{.pdf-actionbar{display:none!important;}}
+</style>
+<script>
+(function(){
+ var done=false;
+ function go(){if(done)return;done=true;try{window.focus();window.print();}catch(e){}}
+ var fonts=(document.fonts&&document.fonts.ready)?document.fonts.ready:Promise.resolve();
+ var imgs=Promise.all([].map.call(document.images,function(i){return i.complete?0:new Promise(function(r){i.onload=i.onerror=r;});}));
+ Promise.all([fonts,imgs]).then(function(){setTimeout(go,180);});
+ setTimeout(go,2600); // hard fallback if fonts/images never settle
+})();
+</script>`
+
+export function injectPrintLauncher(html: string): string {
+  return html.includes('</body>') ? html.replace('</body>', `${PRINT_LAUNCHER}</body>`) : html + PRINT_LAUNCHER
+}
+
+// Inlining 12 woff2 files is a network hop the download must wait on; cap it so
+// the <a>.click() still fires while the click's user-activation is fresh. If the
+// budget blows, we ship the doc with absolute /fonts URLs — it still opens and
+// prints (and the fonts resolve too whenever it's opened online).
+const FONT_INLINE_BUDGET_MS = 2000
+
+function withBudget<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    let settled = false
+    const done = (v: T) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(v)
+    }
+    const timer = setTimeout(() => done(fallback), ms)
+    p.then(done, () => done(fallback))
+  })
+}
+
+// Build the self-contained file and trigger a download (the proven allow-downloads
+// path the Word export uses), then revoke the object URL. Font inlining and the
+// logo import run in parallel to keep the gap before the click minimal.
+async function downloadPrintablePdf(html: string, baseName: string): Promise<void> {
+  const [withFonts, { MUNSHOT_LOGO }] = await Promise.all([
+    withBudget(inlineFonts(html), FONT_INLINE_BUDGET_MS, html),
+    import('./brandLogo'),
+  ])
+  const doc = injectPrintLauncher(withFonts.split(LOGO).join(MUNSHOT_LOGO))
+  const blob = new Blob([doc], { type: 'text/html;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${sanitizeFilename(baseName)}.html`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 10_000)
+}
+
+// Deliver a document as PDF, the right way for the context: a real Save-as-PDF
+// dialog when standalone, a self-contained download when embedded (where print is
+// blocked). If the download ever throws, fall back to a print attempt — so a PDF
+// is always offered, never a dead button.
+async function deliverPdf(html: string, baseName: string): Promise<void> {
+  if (!isEmbedded()) {
+    printDocument(html)
+    return
+  }
+  try {
+    await downloadPrintablePdf(html, baseName)
+  } catch {
+    printDocument(html)
+  }
+}
+
+export function downloadWeeklyPdf(weekly: WeeklySummary, episodeById: ById<Episode>, podcastById: ById<Podcast>): Promise<void> {
+  return deliverPdf(weeklyToPdfHtml(weekly, episodeById, podcastById), `Munshot Weekly — ${weekly.rangeLabel}`)
+}
+
+export function downloadSummaryPdf(episode: Episode, podcast?: Podcast): Promise<void> {
+  return deliverPdf(summaryToPdfHtml(episode, podcast), `${episode.title} — Munshot Summary`)
 }

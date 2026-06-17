@@ -175,7 +175,7 @@ export default function EpisodeDetail() {
           )}
           <DownloadMenu
             disabled={!episode.summary}
-            onPdf={() => downloadSummaryPdf(episode, podcast)}
+            onPdf={() => void downloadSummaryPdf(episode, podcast)}
             onWord={() => void downloadSummary(episode, podcast)}
           />
         </div>

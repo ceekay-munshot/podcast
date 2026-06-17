@@ -84,6 +84,20 @@ To rehearse the whole flow locally, open `localhost:5173/embed-harness.html`
 during `vite dev` — it simulates a correctly-behaving host, user switching
 included.
 
+### Downloads inside the iframe (PDF + Word)
+
+The dashboard iframe is sandboxed `allow-scripts allow-same-origin allow-popups
+allow-forms allow-downloads` — note **no `allow-modals`**, which per the HTML
+spec turns every script-initiated `window.print()` into a silent no-op for the
+whole frame tree. So the PDF export does **not** print when embedded; it
+downloads a fully self-contained, print-ready HTML (fonts + logo inlined) that
+pops _Save as PDF_ the moment it's opened, with a "Save as PDF" button as a
+guaranteed fallback (`src/lib/pdfDoc.ts`). This rides the same `allow-downloads`
+path the Word `.doc` export uses, so the download can never be silently blocked.
+On standalone (non-embedded) visits the PDF prints in place as before. If the
+host ever adds `allow-modals` to the iframe, the embedded path can be switched
+back to the in-place print for a one-click dialog.
+
 ## What's mocked vs. real
 
 - **Real:** every screen, route, interaction, status pipeline, search, settings, tracking toggles, the docked player UI, highlight ↔ summary linking.

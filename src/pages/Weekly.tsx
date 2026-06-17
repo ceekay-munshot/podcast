@@ -139,7 +139,7 @@ export default function Weekly() {
           )}
           {weekly && (
             <DownloadMenu
-              onPdf={() => downloadWeeklyPdf(weekly, episodeById, podcastById)}
+              onPdf={() => void downloadWeeklyPdf(weekly, episodeById, podcastById)}
               onWord={() => void downloadWeekly(weekly, episodeById, podcastById)}
             />
           )}
