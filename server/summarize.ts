@@ -21,6 +21,10 @@ export interface SummarizeInput {
   notes?: string
   transcriptUrl?: string
   audioUrl?: string
+  /** Skip the cache READS (shared store + in-process) and recompute from scratch,
+   *  still writing the fresh result back. Powers the "Refresh" button so a shipped
+   *  format/prompt change can replace a stale cached summary. */
+  force?: boolean
 }
 
 export interface SummarizeConfig {
@@ -339,7 +343,7 @@ export async function summarizeEpisode(input: SummarizeInput, config: SummarizeC
   // it. Checked before transcription so a hit skips that cost too. Only engaged
   // when an id is supplied; the weekly roundup posts no id and is never shared.
   const sharedKey = input.id ? sharedSummaryKey(input.id) : null
-  if (sharedKey && config.store) {
+  if (!input.force && sharedKey && config.store) {
     const shared = await config.store.get(sharedKey)
     if (shared) return shared
   }
@@ -359,7 +363,7 @@ export async function summarizeEpisode(input: SummarizeInput, config: SummarizeC
   // its show+notes so distinct weeks still get distinct slots.
   const idPart = input.id ?? `n:${stableHash(`${input.show} ${input.notes ?? ''}`)}`
   const cacheKey = `${provider}:${model}:${transcript ? 't' : 'n'}:r${SUMMARY_REVISION}::${idPart}`
-  const hit = cache.get(cacheKey)
+  const hit = input.force ? undefined : cache.get(cacheKey)
   if (hit) return hit
 
   const summary =

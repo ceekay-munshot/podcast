@@ -126,6 +126,7 @@ export async function generateSummary(input: {
   notes?: string
   transcriptUrl?: string
   audioUrl?: string
+  force?: boolean // bypass the server cache and regenerate (Refresh button)
 }): Promise<{ summary: Summary; transcript?: TranscriptSegment[] }> {
   const r = await apiFetch('/api/summary', {
     method: 'POST',

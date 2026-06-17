@@ -34,8 +34,10 @@ interface AppData {
   /** Track a podcast from a directory search result: merges it into the list,
    *  persists it (localStorage), and detects its recent episodes. */
   addPodcast: (podcast: Podcast) => void
-  /** Generate a real AI summary for an episode from its show-notes (idempotent). */
-  summarizeEpisode: (episode: Episode, podcast?: Podcast) => void
+  /** Generate a real AI summary for an episode from its show-notes (idempotent).
+   *  Pass `{ force: true }` to regenerate an already-summarized episode, bypassing
+   *  the server + client caches (the Refresh button). */
+  summarizeEpisode: (episode: Episode, podcast?: Podcast, opts?: { force?: boolean }) => Promise<void>
 }
 
 const Ctx = createContext<AppData | null>(null)
@@ -310,17 +312,20 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     [mergeEpisodes],
   )
 
-  const summarizeEpisode = useCallback(async (episode: Episode, podcast?: Podcast) => {
+  const summarizeEpisode = useCallback(async (episode: Episode, podcast?: Podcast, opts?: { force?: boolean }) => {
     // Two jobs, one path — both reuse /api/summary (on a shared-store hit the
     // server returns the full result with no LLM/transcription cost):
     //  • generate — a new episode with no summary yet, or
     //  • hydrate  — a SHARED episode whose summary arrived via the feed overlay but
     //    whose (bulky) transcript wasn't included; fetch it now from the store.
+    const force = !!opts?.force
     const needsSummary = !episode.summary
     const needsTranscript = !!episode.summary && !episode.transcript?.length && !!(episode.transcriptUrl || episode.audioUrl)
+    // A forced refresh regenerates even an already-summarized episode (Refresh button).
+    const willGenerate = needsSummary || force
     // audioUrl counts: Groq/Deepgram can transcribe it even with no notes or feed transcript.
     if (
-      (!needsSummary && !needsTranscript) ||
+      (!willGenerate && !needsTranscript) ||
       (!episode.notes && !episode.transcriptUrl && !episode.audioUrl) ||
       summarizing.current.has(episode.id)
     )
@@ -343,6 +348,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         notes: episode.notes,
         transcriptUrl: episode.transcriptUrl,
         audioUrl: episode.audioUrl,
+        force, // Refresh: skip the server cache and regenerate (overwrites the shared entry)
       })
       if (identityEpoch.current !== epoch) return
       const ready: Partial<Episode> = { summary, ...(transcript?.length ? { transcript } : {}) }
@@ -351,11 +357,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       // of a shared-overlay episode (processed by some OTHER user) must not
       // enter this user's history — "processed" means episodes YOU ran, and the
       // hydrate refetches free from the shared store on any later visit anyway.
-      if (needsSummary) {
+      if (willGenerate) {
         // Locally so it survives a reload / redeploy (see processedStore) — and,
         // when signed in, the lean entry goes to the durable per-user history so
         // it follows the user across devices (the summary itself lives once, in
-        // the global shared cache).
+        // the global shared cache). A forced refresh overwrites the prior entry.
         const done: Episode = { ...episode, status: 'ready', ...ready }
         saveProcessed(done)
         if (getIdentity()) void api.saveProcessedRemote(leanEpisode(done))

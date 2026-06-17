@@ -53,6 +53,23 @@ describe('summarizeEpisode — shared store reuse', () => {
     expect(fetchMock).not.toHaveBeenCalled() // no transcription, no LLM — pure reuse
   })
 
+  it('ignores the stored entry and overwrites it when force is set (Refresh)', async () => {
+    const store = memStore()
+    const stale: SummarizeResult = { summary: { synthesis: ['stale'], highlights: [], qa: [] }, transcript: [] }
+    store.map.set(sharedSummaryKey('live-allin-force'), stale)
+    fetchMock.mockResolvedValueOnce(okLLM())
+
+    const result = await summarizeEpisode(
+      { id: 'live-allin-force', title: 'Forced', show: 'All-In', notes: 'some notes', force: true },
+      { openaiKey: 'sk-test', store },
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1) // skipped the cache, recomputed
+    expect(result).not.toEqual(stale)
+    expect(store.put).toHaveBeenCalled() // overwrote the shared entry for everyone
+    expect(store.map.get(sharedSummaryKey('live-allin-force'))).toEqual(result)
+  })
+
   it('processes a fresh episode once and persists it for the next user', async () => {
     const store = memStore()
     fetchMock.mockResolvedValueOnce(okLLM())

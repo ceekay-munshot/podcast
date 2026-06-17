@@ -45,6 +45,7 @@ export default function EpisodeDetail() {
   const [jumpTick, setJumpTick] = useState(0) // re-fires the scroll even when re-jumping the same segment
   const [jumpLabel, setJumpLabel] = useState<string | undefined>(undefined) // the highlight we jumped from
   const [shared, setShared] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
 
   const episode = id ? episodeById(id) : undefined
   const podcast = episode ? podcastById(episode.podcastId) : undefined
@@ -116,6 +117,18 @@ export default function EpisodeDetail() {
     }
   }
 
+  // Force-regenerate this episode's summary, bypassing the server + client caches
+  // (and overwriting them). The content stays visible until the fresh version lands.
+  async function refreshSummary() {
+    if (!episode?.summary || refreshing) return
+    setRefreshing(true)
+    try {
+      await summarizeEpisode(episode, podcast, { force: true })
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   return (
     <div className="animate-fade-up">
       <button
@@ -148,6 +161,17 @@ export default function EpisodeDetail() {
         </div>
         <div className="flex items-center gap-2.5">
           <SourceLink episode={episode} podcast={podcast} />
+          {episode.summary && (
+            <button
+              onClick={refreshSummary}
+              disabled={refreshing}
+              title="Regenerate this summary from scratch (skips the cache) — use after shipping a new format"
+              className="press inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-3 py-2.5 text-metadata font-semibold text-on-surface hover:bg-surface-container-low disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Icon name="refresh" size={18} className={refreshing ? 'motion-safe:animate-spin' : ''} />
+              <span className="hidden sm:inline">{refreshing ? 'Refreshing…' : 'Refresh'}</span>
+            </button>
+          )}
           <button
             onClick={() => {
               downloadSummary(episode, podcast)
