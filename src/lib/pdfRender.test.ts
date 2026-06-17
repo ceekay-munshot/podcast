@@ -46,9 +46,15 @@ describe('weeklyBlocks — full house style', () => {
     expect(idea).toBeTruthy()
     expect(idea!.who).toBe('David Sacks')
     expect(blocks.some((b) => b.k === 'quote')).toBe(true)
-    expect(blocks.some((b) => b.k === 'sources' && b.rows.length > 0)).toBe(true)
     expect(blocks.some((b) => b.k === 'themes')).toBe(true)
     expect(blocks.some((b) => b.k === 'mentions')).toBe(true)
+  })
+
+  it('links every source episode to its origin (Apple / YouTube / RSS)', () => {
+    const src = blocks.find((b): b is Extract<Block, { k: 'sources' }> => b.k === 'sources')
+    expect(src).toBeTruthy()
+    expect(src!.rows.length).toBeGreaterThan(0)
+    for (const r of src!.rows) expect(r.url).toMatch(/^https?:\/\//)
   })
 
   it('generates a valid, non-trivial PDF', () => {
