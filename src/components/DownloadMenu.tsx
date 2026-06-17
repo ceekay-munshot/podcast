@@ -3,8 +3,25 @@ import { Icon } from './Icon'
 
 // The Download control: a primary button that drops down two formats — the
 // institution-grade PDF (full design, via the browser's Save-as-PDF) and the
-// editable Word .doc. Shared by the Weekly and Episode pages.
-export function DownloadMenu({ onPdf, onWord, disabled }: { onPdf: () => void; onWord: () => void; disabled?: boolean }) {
+// editable Word .doc. Shared by the Weekly and Episode pages. When `onEmail` is
+// provided, a third item delivers the same document to the user's inbox.
+export function DownloadMenu({
+  onPdf,
+  onWord,
+  onEmail,
+  emailSubtitle,
+  emailBusy,
+  disabled,
+}: {
+  onPdf: () => void
+  onWord: () => void
+  onEmail?: () => void
+  /** Caption under the "Email to me" item, e.g. the destination address. */
+  emailSubtitle?: string
+  /** Shows a sending state on the email item (and keeps the menu open). */
+  emailBusy?: boolean
+  disabled?: boolean
+}) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -52,18 +69,41 @@ export function DownloadMenu({ onPdf, onWord, disabled }: { onPdf: () => void; o
             onClick={() => pick(onPdf)}
           />
           <MenuItem icon="description" title="Word (.doc)" subtitle="Editable document" onClick={() => pick(onWord)} />
+          {onEmail && (
+            <MenuItem
+              icon={emailBusy ? 'hourglass_top' : 'mail'}
+              title={emailBusy ? 'Sending…' : 'Email to me'}
+              subtitle={emailBusy ? 'Delivering this edition' : emailSubtitle ?? 'Designed HTML to your inbox'}
+              disabled={emailBusy}
+              // Keep the menu open while sending so the status is visible.
+              onClick={() => (emailBusy ? undefined : pick(onEmail))}
+            />
+          )}
         </div>
       )}
     </div>
   )
 }
 
-function MenuItem({ icon, title, subtitle, onClick }: { icon: string; title: string; subtitle: string; onClick: () => void }) {
+function MenuItem({
+  icon,
+  title,
+  subtitle,
+  onClick,
+  disabled,
+}: {
+  icon: string
+  title: string
+  subtitle: string
+  onClick: () => void
+  disabled?: boolean
+}) {
   return (
     <button
       role="menuitem"
       onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left hover:bg-surface-container-low"
+      disabled={disabled}
+      className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left hover:bg-surface-container-low disabled:cursor-default disabled:opacity-70 disabled:hover:bg-transparent"
     >
       <Icon name={icon} size={20} className="shrink-0 text-primary" />
       <span className="min-w-0">

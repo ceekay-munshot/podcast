@@ -1,22 +1,38 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { subscribeWeekly, unsubscribeWeekly } from '../lib/api'
+import { useAppData } from '../store/AppData'
 import { Icon } from './Icon'
 
 // Weekly-digest subscription as a compact sidebar bell + popover.
-// Persists locally; the actual send is wired through api.subscribeWeekly
-// (see the SEAM in lib/api.ts).
-const SUB_KEY = 'munshot:weekly-subscription'
+// Persists locally; subscribing sends a real confirmation email through
+// api.subscribeWeekly (which posts to the Munshot raw-email endpoint).
+export const WEEKLY_SUB_KEY = 'munshot:weekly-subscription'
+
+/** The address this browser subscribed the weekly brief with (or null). Shared
+ *  with the Weekly page so "Email this edition" can reuse it. */
+export function readSubscribedEmail(): string | null {
+  try {
+    return localStorage.getItem(WEEKLY_SUB_KEY)
+  } catch {
+    return null
+  }
+}
 
 export function WeeklySubscribe() {
+  const { identity } = useAppData()
   const [open, setOpen] = useState(false)
   const [stored, setStored] = useState<string | null>(null)
-  const [email, setEmail] = useState('ceekay@muns.io')
+  const [email, setEmail] = useState('')
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  // True once a saved subscription has been loaded (so the identity prefill
+  // below never clobbers an address the user already subscribed with).
+  const [hydrated, setHydrated] = useState(false)
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(SUB_KEY)
+      const saved = localStorage.getItem(WEEKLY_SUB_KEY)
       if (saved) {
         setStored(saved)
         setEmail(saved)
@@ -24,22 +40,32 @@ export function WeeklySubscribe() {
     } catch {
       /* localStorage unavailable — fine, just won't persist */
     }
+    setHydrated(true)
   }, [])
+
+  // Prefill the signed-in user's address once identity resolves — but only when
+  // there's no stored subscription and the user hasn't typed anything yet.
+  useEffect(() => {
+    if (hydrated && !stored && !email && identity?.email) setEmail(identity.email)
+  }, [hydrated, stored, email, identity])
 
   async function subscribe(e: FormEvent) {
     e.preventDefault()
     const addr = email.trim()
     if (!addr || busy) return
     setBusy(true)
+    setError(null)
     try {
-      const res = await subscribeWeekly(addr)
+      const res = await subscribeWeekly(addr, { name: identity?.name })
       if (res.subscribed) {
         try {
-          localStorage.setItem(SUB_KEY, res.email)
+          localStorage.setItem(WEEKLY_SUB_KEY, res.email)
         } catch {
           /* ignore */
         }
         setStored(res.email)
+      } else {
+        setError(res.message || "Couldn't send the confirmation — please try again.")
       }
     } finally {
       setBusy(false)
@@ -49,10 +75,11 @@ export function WeeklySubscribe() {
   async function unsubscribe() {
     if (busy) return
     setBusy(true)
+    setError(null)
     try {
       await unsubscribeWeekly(stored ?? email)
       try {
-        localStorage.removeItem(SUB_KEY)
+        localStorage.removeItem(WEEKLY_SUB_KEY)
       } catch {
         /* ignore */
       }
@@ -101,7 +128,7 @@ export function WeeklySubscribe() {
                     <p className="truncate text-[12px] text-secondary">{stored}</p>
                   </div>
                 </div>
-                <p className="mb-3 text-[12px] text-secondary">One email every Monday with the whole weekly summary.</p>
+                <p className="mb-3 text-[12px] text-secondary">A confirmation just landed in your inbox. Then one email every Monday with the whole weekly summary.</p>
                 <button
                   onClick={unsubscribe}
                   disabled={busy}
@@ -125,7 +152,10 @@ export function WeeklySubscribe() {
                   type="email"
                   required
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value)
+                    if (error) setError(null)
+                  }}
                   placeholder="you@example.com"
                   className="mb-2 w-full rounded-lg border border-outline-variant bg-surface px-3 py-2.5 text-[14px] outline-none focus:border-primary"
                 />
@@ -134,8 +164,14 @@ export function WeeklySubscribe() {
                   disabled={busy}
                   className="press flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-md py-2.5 text-[14px] font-semibold text-on-primary hover:bg-primary-container disabled:opacity-60"
                 >
-                  <Icon name="notifications_active" size={16} /> {busy ? 'Subscribing…' : 'Subscribe'}
+                  <Icon name="notifications_active" size={16} /> {busy ? 'Sending…' : 'Subscribe'}
                 </button>
+                {error && (
+                  <p className="mt-2 flex items-start gap-1.5 text-[12px] text-error" role="alert">
+                    <Icon name="error" size={14} className="mt-0.5 shrink-0" />
+                    <span>{error}</span>
+                  </p>
+                )}
               </form>
             )}
           </div>

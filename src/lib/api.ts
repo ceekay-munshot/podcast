@@ -2,6 +2,7 @@ import type { Episode, Podcast, PodcastSearchResult, Summary, TranscriptSegment,
 import { EPISODES, PODCASTS, WEEKLY } from './mock-data'
 import { stableHash } from './hash'
 import { apiFetch } from './apiFetch'
+import { sendRawEmail, weeklyBriefEmailHtml, welcomeEmailHtml, type EmailResult } from './email'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE SEAM.
@@ -138,16 +139,35 @@ export async function generateSummary(input: {
   return (await r.json()) as { summary: Summary; transcript?: TranscriptSegment[] }
 }
 
-// SEAM: weekly-digest email subscription. Wire your email-sending mechanism in
-// here (Cloudflare Email, Resend, SES, …); the server schedules one email a week.
-export function subscribeWeekly(email: string): Promise<{ subscribed: boolean; email: string }> {
-  // SEAM: POST /api/subscriptions/weekly
-  return delay({ subscribed: true, email })
+// Weekly-digest email subscription — wired to the Munshot raw-email endpoint
+// (src/lib/email.ts). Subscribing sends a real, designed HTML confirmation to
+// the address; `subscribed` reflects whether that email actually went out, so a
+// failed send can't masquerade as success in the UI. (A durable subscriber list
+// + the Monday cron remain server-side work; this delivers the user-facing half.)
+export async function subscribeWeekly(email: string, opts: { name?: string } = {}): Promise<{ subscribed: boolean; email: string; message: string }> {
+  const res = await sendRawEmail({ email, subject: "You're subscribed — Munshot Weekly Brief", html: welcomeEmailHtml({ name: opts.name }) })
+  return { subscribed: res.ok, email, message: res.message }
 }
 
 export function unsubscribeWeekly(email: string): Promise<{ subscribed: boolean; email: string }> {
-  // SEAM: DELETE /api/subscriptions/weekly
+  // Local opt-out — no email sent. (Server-side list removal lands with the cron.)
   return delay({ subscribed: false, email })
+}
+
+// Send ONE real weekly edition to an address on demand (the Weekly page's
+// "Email this edition"). Renders the actual generated summary as a designed
+// HTML email; `ok` is false on any delivery failure so the UI can say so.
+export async function emailWeeklyEdition(
+  email: string,
+  weekly: WeeklySummary,
+  episodeById: (id: string) => Episode | undefined,
+  podcastById: (id: string) => Podcast | undefined,
+): Promise<EmailResult> {
+  return sendRawEmail({
+    email,
+    subject: `Munshot Weekly — ${weekly.rangeLabel}`,
+    html: weeklyBriefEmailHtml(weekly, episodeById, podcastById),
+  })
 }
 
 // Search a real podcast directory, or resolve a pasted RSS / Apple-show /
