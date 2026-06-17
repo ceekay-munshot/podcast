@@ -11,6 +11,10 @@ import { handleChannels } from './server/channelStore'
 import { fileChannelStore } from './server/channelStore.node'
 import { handleProcessed } from './server/processedStore'
 import { fileProcessedStore } from './server/processedStore.node'
+import { handleSubscribers } from './server/subscriberStore'
+import { fileSubscriberStore } from './server/subscriberStore.node'
+import { checkCronAuth, runWeeklyDigest } from './server/weeklyDigest'
+import { sendRawEmail } from './src/lib/email'
 import { USER_HEADER, userKeyFrom } from './server/identity'
 import { resolveVideoId } from './server/resolveVideo'
 
@@ -46,6 +50,8 @@ function liveApiPlugin(config: {
   deepgramKey?: string
   deepgramModel?: string
   groqKey?: string
+  cronSecret?: string
+  emailToken?: string
 }): Plugin {
   // Shared summary store for dev: a filesystem mirror of the prod KV namespace, so
   // a summary generated once is reused across reloads and across every browser that
@@ -63,6 +69,9 @@ function liveApiPlugin(config: {
   // where anonymous history lives only in the browser).
   const processedStoreFor = (uid: string | null) =>
     uid ? fileProcessedStore(path.resolve(process.cwd(), '.cache/processed', `u-${uid}.json`)) : null
+  // The weekly-brief subscriber list for dev (one global file, mirroring the
+  // single prod KV value the Monday digest reads).
+  const subscribers = fileSubscriberStore(path.resolve(process.cwd(), '.cache/weekly-subscribers.json'))
   return {
     name: 'munshot-live-api',
     configureServer(server) {
@@ -90,6 +99,38 @@ function liveApiPlugin(config: {
         } catch {
           if (req.method === 'GET') json(res, 200, [])
           else json(res, 500, { error: 'processed_failed' })
+        }
+      })
+
+      server.middlewares.use('/api/subscriptions/weekly', async (req, res) => {
+        try {
+          const method = req.method ?? 'GET'
+          const { status, body } = await handleSubscribers(subscribers, method, method === 'GET' ? '' : await readBody(req), userOf(req))
+          json(res, status, body)
+        } catch {
+          json(res, 500, { error: 'subscribers_failed' })
+        }
+      })
+
+      // The Monday digest, on demand in dev. Mirrors the Pages Function: guarded by
+      // CRON_SECRET when one is configured; if none is set locally, it's open (dev
+      // only) so you can hit it without ceremony. Sends through the real raw-email
+      // endpoint using MUNSHOT_EMAIL_TOKEN when present.
+      server.middlewares.use('/api/cron/weekly-digest', async (req, res) => {
+        if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' })
+        if (config.cronSecret && !checkCronAuth(req.headers.authorization ?? null, config.cronSecret)) {
+          return json(res, 401, { error: 'unauthorized' })
+        }
+        try {
+          const result = await runWeeklyDigest({
+            getEpisodes: getLiveEpisodes,
+            summaryStore: store,
+            subscriberStore: subscribers,
+            sendEmail: (msg) => sendRawEmail(msg, { token: config.emailToken }),
+          })
+          json(res, result.status, result.body)
+        } catch (e) {
+          json(res, 500, { error: 'digest_failed', detail: String(e).slice(0, 200) })
         }
       })
 
@@ -152,6 +193,8 @@ export default defineConfig(({ mode }) => {
     deepgramKey: pick('DEEPGRAM_API_KEY'), // transcription for long episodes
     deepgramModel: pick('DEEPGRAM_MODEL') || undefined,
     groqKey: pick('GROQ_API_KEY'), // free-tier Whisper (short episodes)
+    cronSecret: pick('CRON_SECRET') || undefined, // guards /api/cron/weekly-digest (open locally if unset)
+    emailToken: pick('MUNSHOT_EMAIL_TOKEN') || undefined, // service token for server-side sends
   }
 
   return {

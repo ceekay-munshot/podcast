@@ -146,12 +146,29 @@ export async function generateSummary(input: {
 // + the Monday cron remain server-side work; this delivers the user-facing half.)
 export async function subscribeWeekly(email: string, opts: { name?: string } = {}): Promise<{ subscribed: boolean; email: string; message: string }> {
   const res = await sendRawEmail({ email, subject: "You're subscribed — Munshot Weekly Brief", html: welcomeEmailHtml({ name: opts.name }) })
+  // Only register on the durable list once the confirmation actually sent, so the
+  // Monday digest's recipients match who got a working welcome. Best-effort.
+  if (res.ok) void persistSubscription('POST', email)
   return { subscribed: res.ok, email, message: res.message }
 }
 
 export function unsubscribeWeekly(email: string): Promise<{ subscribed: boolean; email: string }> {
-  // Local opt-out — no email sent. (Server-side list removal lands with the cron.)
+  void persistSubscription('DELETE', email) // remove from the durable list (best-effort)
   return delay({ subscribed: false, email })
+}
+
+// Add/remove this address on the server-side subscriber list (/api/subscriptions/
+// weekly) that the scheduled Monday digest reads. Fire-and-forget: the local
+// localStorage mirror is the source of truth for the UI, and a missed write
+// self-heals on the next subscribe.
+function persistSubscription(method: 'POST' | 'DELETE', email: string): Promise<void> {
+  return apiFetch('/api/subscriptions/weekly', {
+    method,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email }),
+  })
+    .then(() => undefined)
+    .catch(() => undefined)
 }
 
 // Send ONE real weekly edition to an address on demand (the Weekly page's

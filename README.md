@@ -100,6 +100,37 @@ zebra source table — with real, selectable text. Fonts follow the same serif/
 sans/mono split as the `.doc` (Times / Helvetica / Courier ≈ Georgia / Calibri /
 Consolas), the standard PDF families, so nothing needs embedding.
 
+## Weekly email digest (the Monday send)
+
+Subscribing to the weekly brief (the sidebar bell) sends a real, designed HTML
+confirmation via the Munshot raw-email endpoint and registers the address on a
+durable, server-side list (`/api/subscriptions/weekly`, KV in prod / a `.cache`
+file in dev). Every Monday, one **shared edition** goes out to that whole list.
+
+Because Cloudflare Pages can't run cron itself, the timer is a scheduled
+**GitHub Actions** workflow ([`.github/workflows/weekly-digest.yml`](./.github/workflows/weekly-digest.yml))
+that POSTs `/api/cron/weekly-digest`. That endpoint assembles the edition
+entirely server-side — `getLiveEpisodes` (the curated shows' episodes, summaries
+overlaid from the shared cache) → the pure deterministic engine
+(`src/lib/weeklyAssemble.ts`, shared with the on-screen Weekly page) → the HTML
+email template (`src/lib/email.ts`) — and mails every subscriber. It includes
+only episodes summarised **and** published in the last 7 days; with none, it
+skips (never an empty email). No browser is involved, so the send never depends
+on anyone having opened the app.
+
+**Setup — one Pages env block + two repo secrets:**
+
+| Where | Name | Purpose |
+|-------|------|---------|
+| Pages project (Settings → Variables) | `CRON_SECRET` | Bearer token guarding `/api/cron/weekly-digest`. |
+| Pages project | `MUNSHOT_EMAIL_TOKEN` | **Service** token for server-to-server email. A cron has no user session, so the raw-email endpoint must accept this token; without it, sends are rejected. |
+| GitHub repo (Settings → Secrets → Actions) | `SITE_URL` | Deployed origin, e.g. `https://podcast.pages.dev`. |
+| GitHub repo | `CRON_SECRET` | Same value as the Pages var above. |
+
+Trigger it by hand any time from the Actions tab (**workflow_dispatch**) to test.
+Locally, `POST http://localhost:5173/api/cron/weekly-digest` works during
+`vite dev` (open if no `CRON_SECRET` is set in `.env`).
+
 ## What's mocked vs. real
 
 - **Real:** every screen, route, interaction, status pipeline, search, settings, tracking toggles, the docked player UI, highlight ↔ summary linking.
@@ -111,4 +142,4 @@ Consolas), the standard PDF families, so nothing needs embedding.
 2. RSS/YouTube polling worker → writes `detected` episodes.
 3. Transcript ingest endpoint (the customer supplies the transcription API).
 4. Claude summarization pass → fills `synthesis / takeaways / qa / moments`, returning quoted spans for the transcript highlights.
-5. Weekly aggregation job (summary-of-summaries) + email digest.
+5. Weekly aggregation job (summary-of-summaries) + email digest. ✅ **Done** — see [Weekly email digest](#weekly-email-digest-the-monday-send).
