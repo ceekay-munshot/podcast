@@ -4,10 +4,12 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
 import { useSentiment } from '../store/Sentiment'
 import { downloadSummary } from '../lib/exportSummary'
+import { downloadSummaryPdf } from '../lib/pdfDoc'
 import { formatDuration, longDate, statusMeta } from '../lib/format'
 import type { Episode, ProcessingStatus, Takeaway, TranscriptSegment } from '../lib/types'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
+import { DownloadMenu } from '../components/DownloadMenu'
 import { RichText, entityTerms } from '../components/RichText'
 import { analyzeSentiment, findSentimentSpans, sentimentClass, sentimentTitle } from '../lib/sentiment'
 import { keyHighlights } from '../lib/highlights'
@@ -44,7 +46,6 @@ export default function EpisodeDetail() {
   const [jumpTo, setJumpTo] = useState<string | null>(null)
   const [jumpTick, setJumpTick] = useState(0) // re-fires the scroll even when re-jumping the same segment
   const [jumpLabel, setJumpLabel] = useState<string | undefined>(undefined) // the highlight we jumped from
-  const [shared, setShared] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
 
   const episode = id ? episodeById(id) : undefined
@@ -172,18 +173,11 @@ export default function EpisodeDetail() {
               <span className="hidden sm:inline">{refreshing ? 'Refreshing…' : 'Refresh'}</span>
             </button>
           )}
-          <button
-            onClick={() => {
-              downloadSummary(episode, podcast)
-              setShared(true)
-              setTimeout(() => setShared(false), 2500)
-            }}
+          <DownloadMenu
             disabled={!episode.summary}
-            title="Download a formatted Word document (.doc)"
-            className="press inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary hover:bg-primary-container disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Icon name={shared ? 'check' : 'download'} size={18} /> {shared ? 'Downloaded' : 'Download'}
-          </button>
+            onPdf={() => downloadSummaryPdf(episode, podcast)}
+            onWord={() => void downloadSummary(episode, podcast)}
+          />
         </div>
       </div>
 

@@ -4,11 +4,13 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
 import { useSentiment } from '../store/Sentiment'
 import { downloadWeekly } from '../lib/exportWeekly'
+import { downloadWeeklyPdf } from '../lib/pdfDoc'
 import { generateWeekly } from '../lib/weeklyApi'
 import { listEditions } from '../lib/weeklyEditions'
 import { weeklyToneView } from '../lib/tone'
 import type { WeeklyIdea, WeeklyShowDigest, WeeklySummary } from '../lib/types'
 import { Icon } from '../components/Icon'
+import { DownloadMenu } from '../components/DownloadMenu'
 import { EditionSwitcher } from '../components/EditionSwitcher'
 import { RichText, entityTerms } from '../components/RichText'
 import { ToneMeter } from '../components/ToneMeter'
@@ -136,13 +138,10 @@ export default function Weekly() {
             </button>
           )}
           {weekly && (
-            <button
-              onClick={() => downloadWeekly(weekly, episodeById, podcastById)}
-              title="Download a formatted Word document (.doc)"
-              className="press inline-flex items-center gap-2 rounded-lg bg-primary px-md py-2.5 text-metadata font-semibold text-on-primary hover:bg-primary-container"
-            >
-              <Icon name="download" size={18} /> Download
-            </button>
+            <DownloadMenu
+              onPdf={() => downloadWeeklyPdf(weekly, episodeById, podcastById)}
+              onWord={() => void downloadWeekly(weekly, episodeById, podcastById)}
+            />
           )}
         </div>
       </div>
