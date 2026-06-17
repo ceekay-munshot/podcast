@@ -48,7 +48,7 @@ export function DownloadMenu({ onPdf, onWord, disabled }: { onPdf: () => void; o
           <MenuItem
             icon="picture_as_pdf"
             title="PDF"
-            subtitle="Full design · opens Save as PDF"
+            subtitle="Full design · downloads a .pdf"
             onClick={() => pick(onPdf)}
           />
           <MenuItem icon="description" title="Word (.doc)" subtitle="Editable document" onClick={() => pick(onWord)} />
