@@ -20,7 +20,9 @@ import type { SummarizeResult } from './summarize' // type-only → erased at ru
 // by the previous prompt — the revision is part of every cache key.
 // r5: takeaways + moments merged into one `highlights` list (key-flagged).
 // r6: added structured `ideas` (concrete pitches/calls + thesis) extraction.
-export const SUMMARY_REVISION = 6
+// r7: added investable `insight` (what changed / why / who benefits / who's at
+//     risk / diligence questions) + `quantData` (hard numbers) extraction.
+export const SUMMARY_REVISION = 7
 
 /** The shared cache key for an episode. The episode id is stable across all users
  *  of the same feed (`live-${podcastId}-${hash(guid|link|title+date)}`), so this is
@@ -39,7 +41,8 @@ export interface SummaryStore {
 // declaration is just for editor sanity — the real binding is provided at runtime.
 export interface KVNamespace {
   get(key: string, type: 'json'): Promise<unknown>
-  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>
+  get(key: string, type: 'arrayBuffer'): Promise<ArrayBuffer | null>
+  put(key: string, value: string | ArrayBuffer, options?: { expirationTtl?: number }): Promise<void>
 }
 
 // 90 days: long enough that popular episodes effectively never re-process, short

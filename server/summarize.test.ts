@@ -13,10 +13,17 @@ function okLLM() {
   const args = JSON.stringify({
     synthesis: ['point'],
     qa: [{ q: 'Q', a: 'A' }],
+    insight: { whatChanged: 'shift', whyItMatters: 'consequence', beneficiaries: [{ name: 'ACME', why: 'tailwind' }], atRisk: [], diligenceQuestions: ['check the margin trend'] },
+    quantData: [{ metric: 'Revenue', value: '$10M', context: 'vs $6M a year ago' }],
     highlights: [{ title: 'H', timestamp: '—', detail: 'why', key: true }],
     tone: { overall: 'neutral', rationale: 'r', aspects: [{ subject: 'S', sentiment: 'neutral', note: 'n' }] },
   })
   return { ok: true, json: async () => ({ choices: [{ message: { tool_calls: [{ function: { arguments: args } }] } }] }) }
+}
+
+// Build a forced-function-call response from an arbitrary summary args object.
+function llmWith(args: Record<string, unknown>) {
+  return { ok: true, json: async () => ({ choices: [{ message: { tool_calls: [{ function: { arguments: JSON.stringify(args) } }] } }] }) }
 }
 
 // An in-memory SummaryStore spy standing in for KV / the filesystem.
@@ -130,11 +137,90 @@ describe('summarizeEpisode — ideas extraction', () => {
   })
 
   it('omits the ideas field entirely when nothing is pitched', async () => {
-    fetchMock.mockResolvedValueOnce(okLLM()) // okLLM() carries no ideas
+    fetchMock.mockResolvedValueOnce(llmWith({ synthesis: ['point'], qa: [], highlights: [], tone: { overall: 'neutral', rationale: 'r', aspects: [] } }))
     const { summary } = await summarizeEpisode(
       { id: 'live-allin-noideas', title: 'No Pitch', show: 'All-In', notes: 'notes' },
       { openaiKey: 'sk-test', store: memStore() },
     )
     expect(summary.ideas).toBeUndefined()
+  })
+})
+
+describe('summarizeEpisode — investable insight + quant extraction', () => {
+  it('passes through a valid insight and drops malformed parties / questions', async () => {
+    fetchMock.mockResolvedValueOnce(
+      llmWith({
+        synthesis: ['point'],
+        qa: [],
+        insight: {
+          whatChanged: '  Amazon DSP took share  ',
+          whyItMatters: 'Budgets shift to closed-loop measurement',
+          beneficiaries: [
+            { name: 'Amazon (AMZN)', why: 'closed-loop data advantage' },
+            { name: 'NoWhy' }, // dropped: missing why
+            { name: '', why: 'orphan' }, // dropped: missing name
+          ],
+          atRisk: [{ name: 'The Trade Desk (TTD)', why: 'losing OTT budget' }],
+          diligenceQuestions: ['Confirm the spend-shift magnitude', '   ', 42],
+        },
+        highlights: [],
+        tone: { overall: 'neutral', rationale: 'r', aspects: [] },
+      }),
+    )
+
+    const { summary } = await summarizeEpisode(
+      { id: 'live-allin-insight', title: 'Insight Episode', show: 'All-In', notes: 'notes' },
+      { openaiKey: 'sk-test', store: memStore() },
+    )
+
+    expect(summary.insight).toEqual({
+      whatChanged: 'Amazon DSP took share',
+      whyItMatters: 'Budgets shift to closed-loop measurement',
+      beneficiaries: [{ name: 'Amazon (AMZN)', why: 'closed-loop data advantage' }],
+      atRisk: [{ name: 'The Trade Desk (TTD)', why: 'losing OTT budget' }],
+      diligenceQuestions: ['Confirm the spend-shift magnitude'],
+    })
+  })
+
+  it('drops the insight when it has neither whatChanged nor whyItMatters', async () => {
+    fetchMock.mockResolvedValueOnce(
+      llmWith({
+        synthesis: ['point'],
+        qa: [],
+        insight: { whatChanged: '', whyItMatters: '', beneficiaries: [{ name: 'X', why: 'y' }], atRisk: [], diligenceQuestions: [] },
+        highlights: [],
+        tone: { overall: 'neutral', rationale: 'r', aspects: [] },
+      }),
+    )
+    const { summary } = await summarizeEpisode(
+      { id: 'live-allin-emptyinsight', title: 'Empty', show: 'All-In', notes: 'notes' },
+      { openaiKey: 'sk-test', store: memStore() },
+    )
+    expect(summary.insight).toBeUndefined()
+  })
+
+  it('keeps valid quant rows and drops rows missing a metric or value', async () => {
+    fetchMock.mockResolvedValueOnce(
+      llmWith({
+        synthesis: ['point'],
+        qa: [],
+        quantData: [
+          { metric: 'Amazon DSP spend', value: '$50M', context: 'first 5 months of 2026' },
+          { metric: '', value: '$1', context: 'x' }, // dropped: no metric
+          { metric: 'Bare', value: '', context: '' }, // dropped: no value
+          { metric: 'Truckload pricing', value: 'up 20-30%' }, // context → ''
+        ],
+        highlights: [],
+        tone: { overall: 'neutral', rationale: 'r', aspects: [] },
+      }),
+    )
+    const { summary } = await summarizeEpisode(
+      { id: 'live-allin-quant', title: 'Quant', show: 'All-In', notes: 'notes' },
+      { openaiKey: 'sk-test', store: memStore() },
+    )
+    expect(summary.quantData).toEqual([
+      { metric: 'Amazon DSP spend', value: '$50M', context: 'first 5 months of 2026' },
+      { metric: 'Truckload pricing', value: 'up 20-30%', context: '' },
+    ])
   })
 })

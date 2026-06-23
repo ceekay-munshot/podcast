@@ -6,7 +6,7 @@ import { useSentiment } from '../store/Sentiment'
 import { downloadSummary } from '../lib/exportSummary'
 import { downloadSummaryPdf } from '../lib/pdfRender'
 import { formatDuration, longDate, statusMeta } from '../lib/format'
-import type { Episode, ProcessingStatus, Takeaway, TranscriptSegment } from '../lib/types'
+import type { Episode, EpisodeInsight, ProcessingStatus, QuantPoint, Takeaway, TranscriptSegment } from '../lib/types'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
 import { DownloadMenu } from '../components/DownloadMenu'
@@ -265,10 +265,12 @@ function SummaryTab({ episode }: { episode: Episode }) {
           ))}
         </div>
 
-        {/* Structured breakdown — bull / bear when there's signal, else a clean
-            bulleted read of the key points. Surfaces the key takeaways the summary
-            already has instead of leaving them buried in another tab. */}
-        {split ? (
+        {/* Investable insight — the analyst read (what changed / why it matters /
+            who benefits / who's at risk / diligence) when the summary has it. It
+            supersedes the heuristic bull-bear split below. */}
+        {s.insight ? (
+          <InsightCard insight={s.insight} quantData={s.quantData} terms={terms} />
+        ) : split ? (
           <div className="mt-lg border-t border-outline-variant pt-lg">
             <div className="grid gap-3 sm:grid-cols-2">
               <SignalPanel kind="pos" items={groups.pos} terms={terms} />
@@ -347,6 +349,111 @@ function SummaryTab({ episode }: { episode: Episode }) {
           </ul>
         </div>
       </aside>
+    </div>
+  )
+}
+
+// Investable-insight card — the five-part analyst read. Leads with what changed /
+// why it matters, then named winners vs at-risk parties (icon + label, never color
+// alone), the hard numbers, and the diligence questions to chase next. Each section
+// is omitted when empty so a thin episode never shows hollow scaffolding.
+function InsightCard({ insight, quantData, terms }: { insight: EpisodeInsight; quantData?: QuantPoint[]; terms: string[] }) {
+  const hasParties = insight.beneficiaries.length > 0 || insight.atRisk.length > 0
+  return (
+    <div className="mt-lg border-t border-outline-variant pt-lg">
+      <div className="mb-md flex items-center gap-2 text-primary">
+        <Icon name="insights" size={20} />
+        <h3 className="text-[17px] font-semibold text-on-surface">Investable Insight</h3>
+      </div>
+      <div className="space-y-3.5">
+        {insight.whatChanged && (
+          <div>
+            <p className="text-label-caps uppercase text-secondary">What changed</p>
+            <p className="mt-1 text-body-md leading-relaxed text-on-surface">
+              <RichText text={insight.whatChanged} terms={terms} />
+            </p>
+          </div>
+        )}
+        {insight.whyItMatters && (
+          <div>
+            <p className="text-label-caps uppercase text-secondary">Why it matters</p>
+            <p className="mt-1 text-body-md leading-relaxed text-on-surface-variant">
+              <RichText text={insight.whyItMatters} terms={terms} />
+            </p>
+          </div>
+        )}
+      </div>
+
+      {hasParties && (
+        <div className="mt-md grid gap-3 sm:grid-cols-2">
+          <PartyPanel kind="pos" items={insight.beneficiaries} terms={terms} />
+          <PartyPanel kind="neg" items={insight.atRisk} terms={terms} />
+        </div>
+      )}
+
+      {quantData && quantData.length > 0 && (
+        <div className="mt-md">
+          <p className="mb-2 text-label-caps uppercase text-secondary">Key numbers</p>
+          <div className="overflow-hidden rounded-xl border border-outline-variant">
+            <table className="w-full border-collapse text-[13.5px]">
+              <tbody>
+                {quantData.map((q, i) => (
+                  <tr key={i} className="border-b border-outline-variant last:border-0 even:bg-surface-container-low">
+                    <td className="px-3 py-2 align-top text-on-surface">{q.metric}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right align-top font-semibold tabular-nums text-on-surface">{q.value}</td>
+                    <td className="px-3 py-2 align-top text-on-surface-variant">{q.context}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {insight.diligenceQuestions.length > 0 && (
+        <div className="mt-md">
+          <p className="mb-2 text-label-caps uppercase text-secondary">Diligence questions</p>
+          <ul className="space-y-2">
+            {insight.diligenceQuestions.map((q, i) => (
+              <li key={i} className="flex gap-2.5 text-body-md text-on-surface-variant">
+                <Icon name="help" size={16} className="mt-0.5 shrink-0 text-secondary" />
+                <span>{q}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Named winners / at-risk parties — name + the specific mechanism. Mirrors
+// SignalPanel's green/red treatment with an icon + label (not color alone).
+function PartyPanel({ kind, items, terms }: { kind: 'pos' | 'neg'; items: { name: string; why: string }[]; terms: string[] }) {
+  const pos = kind === 'pos'
+  return (
+    <div className={`rounded-xl border p-md ${pos ? 'border-[#d6efdf] bg-[#f5fbf7]' : 'border-[#f3d8d8] bg-[#fdf6f6]'}`}>
+      <div className="mb-2.5 flex items-center gap-1.5">
+        <Icon name={pos ? 'trending_up' : 'warning'} size={18} className={pos ? 'text-[#15803d]' : 'text-[#b91c1c]'} />
+        <h4 className={`text-[14px] font-semibold ${pos ? 'text-[#15803d]' : 'text-[#b91c1c]'}`}>{pos ? 'Who benefits' : "Who's at risk"}</h4>
+      </div>
+      {items.length ? (
+        <ul className="space-y-2.5">
+          {items.map((p, i) => (
+            <li key={i} className="flex gap-2">
+              <span className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${pos ? 'bg-[#16a34a]' : 'bg-[#dc2626]'}`} />
+              <div className="min-w-0">
+                <p className="text-[14px] font-semibold text-on-surface">{p.name}</p>
+                <p className="mt-0.5 text-[13px] leading-snug text-on-surface-variant">
+                  <RichText text={p.why} terms={terms} />
+                </p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-[13px] text-secondary">{pos ? 'No clear beneficiary named.' : 'No party flagged at risk.'}</p>
+      )}
     </div>
   )
 }

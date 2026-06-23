@@ -100,36 +100,54 @@ zebra source table — with real, selectable text. Fonts follow the same serif/
 sans/mono split as the `.doc` (Times / Helvetica / Courier ≈ Georgia / Calibri /
 Consolas), the standard PDF families, so nothing needs embedding.
 
-## Weekly email digest (the Monday send)
+## Weekly email digest (the Monday send) + the PDF report
 
-Subscribing to the weekly brief (the sidebar bell) sends a real, designed HTML
-confirmation via the Munshot raw-email endpoint and registers the address on a
-durable, server-side list (`/api/subscriptions/weekly`, KV in prod / a `.cache`
-file in dev). Every Monday, one **shared edition** goes out to that whole list.
+The weekly brief is **investable-research-grade**, modelled on Guidepoint AskGP:
+a synthesised cross-episode **Overview** (with `[n]` citations), thematic
+**Key Points**, a **Quantitative Summary** table, a **Comparison Across Sources**
+table, and grouped **Sources**. Each episode also carries an *investable insight*
+(what changed · why it matters · who benefits · who's at risk · diligence
+questions — `server/summarize.ts`, `SUMMARY_REVISION` r7), which the weekly
+synthesis (`synthesizeWeekly`) rolls up across the week. The on-screen Weekly
+page, the emailed brief, the PDF, and the Word export all render this one shape.
 
-Because Cloudflare Pages can't run cron itself, the timer is a scheduled
+**The email is a brief that links to a hosted PDF.** The raw-email endpoint can't
+carry attachments, so the cron renders the edition to a real `.pdf` (jsPDF —
+`weeklyPdfBytes` in `src/lib/pdfRender.ts`), stores the bytes in KV keyed by a
+content hash (`server/reportStore.ts`, served at `GET /api/report/:id`, 30-day
+TTL), and sends a polished HTML brief with a prominent **Download full PDF
+report** button.
+
+**All sends route through our own origin.** The app is a partitioned iframe, so a
+cross-origin browser send to the raw-email endpoint can't carry the muns.io
+session cookie (this was the *"Couldn't reach the email service"* bug). Instead,
+subscribe-welcome and "Email this edition" POST to `POST /api/email/send`
+(`functions/api/email/send.ts`), which holds the service token server-side and
+relays it — the browser never sees the token.
+
+Because Cloudflare Pages can't run cron itself, the Monday timer is a scheduled
 **GitHub Actions** workflow ([`.github/workflows/weekly-digest.yml`](./.github/workflows/weekly-digest.yml))
-that POSTs `/api/cron/weekly-digest`. That endpoint assembles the edition
-entirely server-side — `getLiveEpisodes` (the curated shows' episodes, summaries
-overlaid from the shared cache) → the pure deterministic engine
-(`src/lib/weeklyAssemble.ts`, shared with the on-screen Weekly page) → the HTML
-email template (`src/lib/email.ts`) — and mails every subscriber. It includes
-only episodes summarised **and** published in the last 7 days; with none, it
-skips (never an empty email). No browser is involved, so the send never depends
-on anyone having opened the app.
+that POSTs `/api/cron/weekly-digest`. It assembles the edition server-side
+(`server/weeklyDigest.ts` → `assembleWeekly` + `synthesizeWeekly` with a
+deterministic fallback), renders + hosts the PDF, and mails every subscriber.
+Only episodes summarised **and** published in the last 7 days are included; with
+none, it skips (never an empty email).
 
-**Setup — one Pages env block + two repo secrets:**
+**Setup — Pages env + repo secrets:**
 
 | Where | Name | Purpose |
 |-------|------|---------|
-| Pages project (Settings → Variables) | `CRON_SECRET` | Bearer token guarding `/api/cron/weekly-digest`. |
-| Pages project | `MUNSHOT_EMAIL_TOKEN` | **Service** token for server-to-server email. A cron has no user session, so the raw-email endpoint must accept this token; without it, sends are rejected. |
-| GitHub repo (Settings → Secrets → Actions) | `SITE_URL` | Deployed origin, e.g. `https://podcast.pages.dev`. |
-| GitHub repo | `CRON_SECRET` | Same value as the Pages var above. |
+| Pages project (Settings → Variables) | `MUNSHOT_EMAIL_TOKEN` | **Service** token authorizing server-to-server sends (the "god token"). Used by the cron *and* the `/api/email/send` proxy. Store as an **encrypted secret** — never commit it. |
+| Pages project | `CRON_SECRET` | Bearer token guarding `/api/cron/weekly-digest`. |
+| Pages project | `SITE_URL` | Deployed origin, e.g. `https://podcast-afg.pages.dev` — required to build an absolute link to the hosted PDF (a cron has no request). |
+| Pages project | `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`) + optional `SUMMARY_MODEL` | The summariser. Use a strong model (e.g. `claude-opus-4-8`) — the investable-insight + quant extraction quality scales with model strength. |
+| GitHub repo (Settings → Secrets → Actions) | `SITE_URL`, `CRON_SECRET` | Same values as the Pages vars. |
 
 Trigger it by hand any time from the Actions tab (**workflow_dispatch**) to test.
-Locally, `POST http://localhost:5173/api/cron/weekly-digest` works during
-`vite dev` (open if no `CRON_SECRET` is set in `.env`).
+Locally, `vite dev` mirrors every route (`/api/email/send`, `/api/report/:id`,
+`/api/cron/weekly-digest`); set `MUNSHOT_EMAIL_TOKEN` + `SITE_URL` in `.env` /
+`.env.local` to exercise real sends. The cron is open locally when no
+`CRON_SECRET` is set.
 
 ## What's mocked vs. real
 

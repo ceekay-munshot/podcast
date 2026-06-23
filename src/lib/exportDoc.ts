@@ -224,6 +224,27 @@ const DOC_CSS = `
 
   .callout { border: 1px solid #e6eaf1; border-left: 3px solid #94a3b8; padding: 10pt 13pt; margin-bottom: 7pt; font-size: 10pt; color: #42506a; }
 
+  /* ===== Investable insight ===== */
+  .ins-label { font-family: Calibri, sans-serif; font-weight: 700; font-size: 8pt; letter-spacing: 2px; text-transform: uppercase; color: #b8902f; margin: 11pt 0 4pt; page-break-after: avoid; }
+  .ins-body { font-size: 10pt; line-height: 1.6; color: #2b3850; margin: 0 0 4pt; }
+  .ins-body strong { color: #b8902f; font-weight: 700; }
+  ul.parties { list-style: none; margin: 3pt 0 0; padding: 0; }
+  ul.parties li { font-size: 9.5pt; line-height: 1.5; color: #41506a; margin: 0 0 3pt; padding-left: 15px; text-indent: -15px; }
+  ul.parties li .di { font-size: 8pt; padding-right: 7px; }
+  ul.parties.pos li .di { color: #15803d; }
+  ul.parties.neg li .di { color: #b91c1c; }
+  ul.parties li b { color: #1a2b4a; font-weight: 700; }
+
+  /* ===== Data table (quant / comparison) ===== */
+  table.dt { width: 100%; border-collapse: collapse; page-break-inside: avoid; }
+  table.dt th { font-family: Calibri, sans-serif; font-weight: 700; font-size: 7pt; letter-spacing: 2px; text-transform: uppercase; color: #b8902f; text-align: left; padding: 0 9px 6pt; border-bottom: 1.5px solid #b8902f; }
+  table.dt th.r { text-align: right; }
+  table.dt td { font-family: Calibri, sans-serif; font-size: 9.5pt; color: #1a2b4a; padding: 6pt 9px; border-bottom: 1px solid #e6eaf1; vertical-align: top; line-height: 1.4; }
+  table.dt td.num { text-align: right; font-weight: 700; white-space: nowrap; }
+  table.dt td.ctx { color: #54606e; }
+  table.dt tr.zebra td { background: #fafbfd; }
+  .kpt-heading { font-family: Calibri, sans-serif; font-weight: 700; font-size: 11pt; color: #1a2b4a; margin: 12pt 0 5pt; page-break-after: avoid; }
+
   /* ===== Sources ===== */
   table.srcs { width: 100%; border-collapse: collapse; page-break-inside: avoid; }
   table.srcs th { font-family: Calibri, sans-serif; font-weight: 700; font-size: 7pt; letter-spacing: 2px; text-transform: uppercase; color: #b8902f; text-align: left; padding: 0 9px 6pt; border-bottom: 1.5px solid #b8902f; }

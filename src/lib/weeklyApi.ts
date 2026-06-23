@@ -1,8 +1,7 @@
-import type { Episode, Podcast, Takeaway, WeeklySummary } from './types'
-import { keyHighlights } from './highlights'
+import type { Episode, Podcast, WeeklyAi, WeeklySummary } from './types'
 import { apiFetch } from './apiFetch'
 import { scopedKey } from './storageScope'
-import { assembleWeekly, buildShowDigests, hashKey, rangeLabel } from './weeklyAssemble'
+import { assembleWeekly, buildCitations, buildShowDigests, buildWeeklySources, hashKey, mergeWeeklyAi, rangeLabel } from './weeklyAssemble'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Real Weekly Summary — a "summary of summaries" built ONLY from analysed
@@ -31,9 +30,10 @@ export { buildShowDigests }
 
 const SESSION = new Map<string, WeeklySummary>()
 
-// One user-scoped cache key for both layers (memory map + localStorage). The `:v2`
-// namespace retires the pre-by-show digest shape, so stale entries are never read.
-const cacheKey = (key: string): string => scopedKey('munshot:weekly:v2') + `:${key}`
+// One user-scoped cache key for both layers (memory map + localStorage). The `:v3`
+// namespace retires the pre-Guidepoint shape (no keyThemes/quantTable/comparison),
+// so a stale cached edition is never read after this format change.
+const cacheKey = (key: string): string => scopedKey('munshot:weekly:v3') + `:${key}`
 
 export interface WeeklyOptions {
   /** Disambiguates the cache entry — pass the ISO week key (or 'all'). Keeps two
@@ -73,86 +73,50 @@ export async function generateWeekly(
   const range = opts.rangeLabel ?? rangeLabel(ready)
   const base = assembleWeekly(ready, podcastById, { rangeLabel: range, id: `wk-${key}` })
 
-  // AI narrative layer (overview, takeaways, questions) with a real fallback. The
-  // shared id makes the result reusable across ALL users via the global summary
-  // store (same episode set ⇒ same id ⇒ one LLM call total), not just this browser.
+  // Guidepoint AI layer (overview, key themes, quant table, comparison, questions)
+  // with the deterministic fallback baked into mergeWeeklyAi. The shared id makes
+  // the result reusable across ALL users via the global summary store (same episode
+  // set ⇒ same id ⇒ one LLM call total), not just this browser.
   const ai = await aiSynthesize(ready, range, podcastById, { id: `weekly:${key}`, force: opts.force })
-  const overview = ai?.overview.length ? ai.overview : base.overview
-  const takeaways = ai?.takeaways.length ? ai.takeaways : base.takeaways
-  const questions = ai?.questions ?? []
+  const weekly = ai ? mergeWeeklyAi(base, ai) : base
 
-  const words = [...overview, ...takeaways.flatMap((t) => [t.title, t.detail])].join(' ').trim().split(/\s+/).length
-  const weekly: WeeklySummary = {
-    ...base,
-    overview,
-    takeaways,
-    questions,
-    readMinutes: Math.max(1, Math.round(words / 200)),
-  }
   SESSION.set(ck, weekly)
   writeCache(ck, weekly)
   return weekly
 }
 
-// ── AI narrative via the shared /api/summary endpoint ────────────────────────
+// ── AI narrative via the shared /api/summary endpoint (weekly mode) ───────────
+// Builds the numbered source payload from the per-episode insights, posts it to
+// /api/summary with mode:'weekly', and returns the WeeklyAi narrative (or null on
+// timeout / no-key / failure, so the caller keeps the deterministic base).
 async function aiSynthesize(
   ready: Episode[],
   range: string,
   podcastById: ById,
   opts: { id?: string; force?: boolean } = {},
-): Promise<{ overview: string[]; takeaways: Takeaway[]; questions: string[] } | null> {
-  const body = ready
-    .map((e) => {
-      const s = e.summary!
-      const show = podcastById(e.podcastId)?.title ?? 'Unknown show'
-      const syn = s.synthesis.join(' ').replace(/\*\*/g, '')
-      const tk = keyHighlights(s).map((h) => `- ${h.title}: ${h.detail}`).join('\n')
-      const ideas = (s.ideas ?? [])
-        .map((i) => `- ${i.idea}${i.proponent && i.proponent !== '—' ? ` (${i.proponent})` : ''}: ${i.thesis.join('; ')}`)
-        .join('\n')
-      const ideasBlock = ideas ? `\nIdeas pitched:\n${ideas}` : ''
-      return `### ${show} — ${e.title}\n${syn}\nKey points:\n${tk}${ideasBlock}`
-    })
-    .join('\n\n')
-
-  const notes =
-    `This is a WEEKLY ROUNDUP across ${ready.length} podcast episode${ready.length === 1 ? '' : 's'} from ${range}. ` +
-    `Your job is to PRESERVE and ORGANISE the specific substance of the week — NOT to abstract it into generic themes. ` +
-    `Write a tight 2-3 paragraph overview that LEADS with the most important concrete ideas and calls actually pitched this week: name them, name who made them, and name the real numbers, companies, and people involved. ` +
-    `Never write generic filler like "the market is maturing" or "AI continues to grow". In "qa", put the sharpest open QUESTIONS the week raises (with a one-line answer if known). ` +
-    `Base everything ONLY on the material below; do not invent.\n\n${body}`
+): Promise<WeeklyAi | null> {
+  const citations = buildCitations(ready, podcastById)
+  const sources = buildWeeklySources(ready, citations, podcastById)
 
   try {
     // Bound the call so the edition never hangs on a slow/stuck endpoint — on
-    // timeout we abort and fall through to the deterministic by-show layer.
+    // timeout we abort and fall through to the deterministic Guidepoint layer.
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 20_000)
+    const timer = setTimeout(() => controller.abort(), 25_000)
     let res: Response
     try {
       res = await apiFetch('/api/summary', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id: opts.id, title: `Munshot Weekly Roundup — ${range}`, show: 'Munshot Weekly', notes, force: opts.force }),
+        body: JSON.stringify({ mode: 'weekly', id: opts.id, range, sources, force: opts.force }),
         signal: controller.signal,
       })
     } finally {
       clearTimeout(timer)
     }
     if (!res.ok) return null
-    const data = (await res.json()) as {
-      summary?: { synthesis?: string[]; highlights?: { title?: string; detail?: string; key?: boolean }[]; qa?: { q: string; a: string }[] }
-    }
-    const sum = data.summary
-    if (!sum) return null
-    // The endpoint returns episode-shaped highlights; the weekly digest keeps the
-    // key ones (all, when none are flagged) as its plain cross-episode takeaways.
-    const hl = (sum.highlights ?? []).filter((h) => h?.title)
-    const keyed = hl.filter((h) => h.key)
-    return {
-      overview: (sum.synthesis ?? []).filter(Boolean),
-      takeaways: (keyed.length ? keyed : hl).map((h) => ({ title: h.title!, detail: h.detail ?? '' })),
-      questions: (sum.qa ?? []).map((x) => x.q).filter(Boolean),
-    }
+    const data = (await res.json()) as { weekly?: WeeklyAi }
+    return data.weekly ?? null
   } catch {
     return null
   }

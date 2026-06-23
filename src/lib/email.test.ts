@@ -85,14 +85,27 @@ describe('welcomeEmailHtml', () => {
 describe('weeklyBriefEmailHtml — real edition rendering', () => {
   const html = weeklyBriefEmailHtml(WEEKLY, episodeById, podcastById)
 
-  it('renders the header, date range, and by-show content from the real summary', () => {
+  it('renders the header, date range, and the synthesised Guidepoint sections', () => {
     expect(html).toContain('Weekly Summary')
     expect(html).toContain(WEEKLY.rangeLabel)
-    expect(html).toContain('By Show')
-    expect(html).toContain('All-In')
-    expect(html).toContain('Ideas Pitched')
-    expect(html).toContain('Long Nvidia (NVDA) into the capex supercycle')
-    expect(html).toContain('David Sacks')
+    expect(html).toContain('Overview')
+    expect(html).toContain('Key Points') // synthesised cross-episode body
+    expect(html).toContain('Quantitative Summary') // the hard-numbers table
+    expect(html).toContain('Power, not silicon, is the binding constraint') // a key theme heading
+  })
+
+  it('shows the Download PDF button only when a report URL is provided', () => {
+    expect(html).not.toContain('Download full PDF report')
+    const withPdf = weeklyBriefEmailHtml(WEEKLY, episodeById, podcastById, { pdfUrl: 'https://example.test/api/report/abc.pdf' })
+    expect(withPdf).toContain('Download full PDF report')
+    expect(withPdf).toContain('https://example.test/api/report/abc.pdf')
+  })
+
+  it('falls back to the by-show body when there are no synthesised key themes', () => {
+    const noThemes = weeklyBriefEmailHtml({ ...WEEKLY, keyThemes: [] }, episodeById, podcastById)
+    expect(noThemes).toContain('By Show')
+    expect(noThemes).toContain('All-In')
+    expect(noThemes).toContain('Long Nvidia (NVDA) into the capex supercycle')
   })
 
   it('promotes **bold** to gold <strong> and keeps everything inline (no class selectors)', () => {

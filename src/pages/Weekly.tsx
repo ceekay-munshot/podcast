@@ -229,6 +229,15 @@ function WeeklyDoc({
   const shows = weekly.shows ?? [] // older cached digests predate the by-show shape
   const ideaCount = shows.reduce((n, s) => n + s.ideas.length, 0)
 
+  // The synthesised Guidepoint layers (present once an LLM key has run). When they
+  // exist they ARE the body; the by-show breakdown demotes to the no-AI fallback.
+  const keyThemes = weekly.keyThemes ?? []
+  const quantTable = weekly.quantTable ?? []
+  const comparison = weekly.comparison ?? []
+  const citations = weekly.citations ?? []
+  const synthesised = keyThemes.length > 0
+  const epForCite = (index: number) => episodeById(citations.find((c) => c.index === index)?.episodeId ?? '')
+
   const stats = [
     { icon: 'play_circle', label: 'Episodes Processed', value: weekly.episodeCount, style: THEME_STYLES[0] },
     { icon: 'trending_up', label: 'Ideas Pitched', value: ideaCount, style: THEME_STYLES[1] },
@@ -237,13 +246,17 @@ function WeeklyDoc({
   ]
 
   // Only nav to sections that actually have content (zero empty/fake sections). The
-  // per-show digests are the primary body, so each show gets its own jump target.
+  // synthesised Key Points / Quant / Comparison lead; by-show is the fallback body.
   const nav = [
     { id: 'overview', label: 'Overview', icon: 'play_circle', show: weekly.overview.length > 0 },
-    ...shows.map((s) => ({ id: `show-${s.podcastId}`, label: s.show, icon: 'podcasts', show: true })),
-    { id: 'themes', label: 'Top Themes', icon: 'sell', show: weekly.topThemes.length > 0 },
+    { id: 'key-points', label: 'Key Points', icon: 'format_list_bulleted', show: synthesised },
+    { id: 'quant', label: 'Quantitative', icon: 'monitoring', show: quantTable.length > 0 },
+    { id: 'comparison', label: 'Comparison', icon: 'table_rows', show: comparison.length > 0 },
+    ...(synthesised ? [] : shows.map((s) => ({ id: `show-${s.podcastId}`, label: s.show, icon: 'podcasts', show: true }))),
+    { id: 'themes', label: 'Top Themes', icon: 'sell', show: !synthesised && weekly.topThemes.length > 0 },
     { id: 'mentions', label: 'Mentions', icon: 'alternate_email', show: hasMentions },
     { id: 'interesting', label: 'Interesting', icon: 'lightbulb', show: !!weekly.interesting.quote },
+    { id: 'sources', label: 'Sources', icon: 'menu_book', show: weekly.sourceEpisodeIds.length > 0 },
   ].filter((n) => n.show)
 
   function go(id: string) {
@@ -283,7 +296,7 @@ function WeeklyDoc({
               <div className="space-y-md text-body-md leading-relaxed text-on-surface-variant">
                 {weekly.overview.map((p, i) => (
                   <p key={i}>
-                    <RichText text={p} terms={terms} />
+                    <Cited text={p} terms={terms} epForCite={epForCite} />
                   </p>
                 ))}
               </div>
@@ -301,19 +314,78 @@ function WeeklyDoc({
             </section>
           )}
 
-          {/* By show — the primary body: each show's pitched ideas, takeaways, questions */}
-          {shows.map((digest, i) => (
-            <ShowDigest
-              key={digest.podcastId}
-              digest={digest}
-              first={i === 0 && weekly.overview.length === 0}
-              terms={terms}
-              episodeById={episodeById}
-            />
-          ))}
+          {/* Key Points — synthesised, claim-first, cross-episode (the primary body) */}
+          {synthesised && (
+            <Block id="wk-key-points" title="Key Points">
+              <div className="space-y-lg">
+                {keyThemes.map((t, i) => (
+                  <div key={i}>
+                    <h4 className="mb-2.5 text-[15px] font-semibold text-on-surface">{t.heading}</h4>
+                    <ul className="space-y-2">
+                      {t.points.map((p, j) => (
+                        <li key={j} className="flex gap-2.5 text-body-md text-on-surface-variant">
+                          <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                          <span>
+                            <Cited text={p} terms={terms} epForCite={epForCite} />
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </Block>
+          )}
 
-          {/* Themes (cross-show) */}
-          {weekly.topThemes.length > 0 && (
+          {/* Quantitative Summary — the hard numbers from across the week */}
+          {quantTable.length > 0 && (
+            <Block id="wk-quant" title="Quantitative Summary">
+              <DataTable
+                cols={[{ h: 'Metric' }, { h: 'Value', align: 'right' }, { h: 'Context' }]}
+                rows={quantTable.map((q) => [q.metric, q.value, q.context])}
+              />
+            </Block>
+          )}
+
+          {/* Comparison Across Sources — each episode's distinct stance, side by side */}
+          {comparison.length > 0 && (
+            <Block id="wk-comparison" title="Comparison Across Sources">
+              <DataTable
+                cols={[{ h: 'Transcript' }, { h: 'Voice' }, { h: 'Date', align: 'right' }, { h: 'Key Points' }]}
+                rows={comparison.map((c) => {
+                  const ep = c.episodeId ? episodeById(c.episodeId) : undefined
+                  const label = `${c.index ? `[${c.index}] ` : ''}${c.source}`
+                  return [
+                    ep ? (
+                      <Link to={`/episodes/${ep.id}`} className="press font-medium text-primary hover:underline">
+                        {label}
+                      </Link>
+                    ) : (
+                      label
+                    ),
+                    c.speaker,
+                    c.date,
+                    c.keyPoints,
+                  ]
+                })}
+              />
+            </Block>
+          )}
+
+          {/* By show — the no-AI fallback body (when no synthesised Key Points) */}
+          {!synthesised &&
+            shows.map((digest, i) => (
+              <ShowDigest
+                key={digest.podcastId}
+                digest={digest}
+                first={i === 0 && weekly.overview.length === 0}
+                terms={terms}
+                episodeById={episodeById}
+              />
+            ))}
+
+          {/* Themes (fallback only) */}
+          {!synthesised && weekly.topThemes.length > 0 && (
             <Block id="wk-themes" title="Top Themes">
               <div className="flex flex-wrap gap-2.5">
                 {weekly.topThemes.map((t, i) => {
@@ -370,8 +442,8 @@ function WeeklyDoc({
           )}
 
           {/* Source citations */}
-          <footer className="mt-lg border-t border-outline-variant pt-lg">
-            <h3 className="mb-md text-[17px] font-semibold text-on-surface">Source Episodes</h3>
+          <footer id="wk-sources" className="mt-lg scroll-mt-20 border-t border-outline-variant pt-lg">
+            <h3 className="mb-md text-[17px] font-semibold text-on-surface">Sources</h3>
             <div className="space-y-1">
               {weekly.sourceEpisodeIds.map(episodeById).map((ep) => {
                 if (!ep) return null
@@ -407,6 +479,73 @@ function Block({ id, title, first, children }: { id: string; title: string; firs
       <h3 className="mb-md text-[17px] font-semibold text-on-surface">{title}</h3>
       {children}
     </section>
+  )
+}
+
+// Render text with inline `[n]` citations turned into small gold superscript links
+// back to the source episode (matching the PDF's gold markers). Non-citation spans
+// keep the usual **bold** + entity-term treatment via RichText.
+function Cited({ text, terms, epForCite }: { text: string; terms: string[]; epForCite: (n: number) => ReturnType<ReturnType<typeof useAppData>['episodeById']> }) {
+  const parts = text.split(/(\[\d+\])/)
+  return (
+    <>
+      {parts.map((part, i) => {
+        const m = /^\[(\d+)\]$/.exec(part)
+        if (!m) return <RichText key={i} text={part} terms={terms} />
+        const n = Number(m[1])
+        const ep = epForCite(n)
+        const marker = (
+          <sup className="text-[0.7em] font-semibold text-primary">{part}</sup>
+        )
+        return ep ? (
+          <Link key={i} to={`/episodes/${ep.id}`} className="hover:underline" aria-label={`Source ${n}: ${ep.title}`}>
+            {marker}
+          </Link>
+        ) : (
+          <span key={i}>{marker}</span>
+        )
+      })}
+    </>
+  )
+}
+
+// A clean data table shared by the Quantitative Summary + Comparison sections.
+// Cells accept ReactNode so a source cell can be a link; horizontal-scrolls on
+// mobile so wide tables never break the layout.
+function DataTable({ cols, rows }: { cols: { h: string; align?: 'right' }[]; rows: ReactNode[][] }) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-outline-variant">
+      <table className="w-full border-collapse text-[13.5px]">
+        <caption className="sr-only">{cols.map((c) => c.h).join(', ')}</caption>
+        <thead>
+          <tr className="border-b border-outline-variant bg-surface-container-low">
+            {cols.map((c, i) => (
+              <th
+                key={i}
+                scope="col"
+                className={`px-3 py-2 text-label-caps uppercase text-secondary ${c.align === 'right' ? 'text-right' : 'text-left'}`}
+              >
+                {c.h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, ri) => (
+            <tr key={ri} className="border-b border-outline-variant last:border-0 even:bg-surface-container-low/60">
+              {row.map((cell, ci) => (
+                <td
+                  key={ci}
+                  className={`px-3 py-2 align-top ${cols[ci]?.align === 'right' ? 'whitespace-nowrap text-right font-semibold tabular-nums text-on-surface' : 'text-on-surface-variant'}`}
+                >
+                  {cell}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }
 

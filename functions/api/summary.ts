@@ -1,4 +1,4 @@
-import { summarizeEpisode } from '../../server/summarize'
+import { summarizeEpisode, synthesizeWeekly, type SynthesizeWeeklyInput } from '../../server/summarize'
 import { kvSummaryStore, type KVNamespace } from '../../server/summaryStore'
 
 // Cloudflare Pages Function → POST /api/summary (production).
@@ -28,8 +28,14 @@ export const onRequestPost = async (context: {
   }
 
   try {
-    const input = (await context.request.json()) as { title: string; show: string; notes: string }
-    const result = await summarizeEpisode(input, config) // { summary, transcript, transcriptSource }
+    const input = (await context.request.json()) as ({ mode?: 'episode' | 'weekly' } & Record<string, unknown>)
+    // Weekly cross-episode synthesis (the Guidepoint layer) shares this endpoint —
+    // it just drives a different schema/prompt and returns { weekly: WeeklyAi }.
+    if (input.mode === 'weekly') {
+      const weekly = await synthesizeWeekly(input as unknown as SynthesizeWeeklyInput, config)
+      return new Response(JSON.stringify({ weekly }), { headers })
+    }
+    const result = await summarizeEpisode(input as unknown as { title: string; show: string; notes: string }, config) // { summary, transcript, transcriptSource }
     return new Response(JSON.stringify(result), { headers })
   } catch (e) {
     return new Response(JSON.stringify({ error: 'summarize_failed', detail: String(e).slice(0, 200) }), { status: 502, headers })

@@ -666,6 +666,27 @@ export const EPISODES: Episode[] = [
           kind: 'macro',
         },
       ],
+      insight: {
+        whatChanged: `The AI-capex debate moved from "is demand real?" to "what depreciation schedule are hyperscalers actually using?" — the panel reframed the bull/bear split as an accounting assumption, and a reopening IPO window gave late-stage names a clearing price for the first time in two years.`,
+        whyItMatters: `If GPUs are 3-year assets rather than 6, much of the reported AI-infrastructure margin is fiction — so the same revenue supports either a supercycle or a bubble. The IPO reopening pulls venture distributions forward and resets how long companies rationally stay private.`,
+        beneficiaries: [
+          { name: 'Nvidia (NVDA)', why: 'real, power-constrained end-demand and durable infra margins if the 6-year GPU life holds' },
+          { name: 'Late-stage venture / LPs', why: 'a credible IPO path pulls distributions forward after a two-year freeze' },
+        ],
+        atRisk: [
+          { name: 'Most-levered AI names', why: 'circular, vendor-funded demand flatters the real end-market and unwinds if financing tightens' },
+          { name: 'Holders assuming 6-year depreciation', why: 'a shift to a 3-year schedule guts reported margins' },
+        ],
+        diligenceQuestions: [
+          `What depreciation schedule are the top hyperscalers actually using for GPUs, and how would a 3-year assumption change reported cloud margins?`,
+          `How much of this quarter's AI revenue is vendor-financed versus organic end-demand?`,
+          `Which late-stage names have a genuine clearing price now, versus a liquidity-driven head-fake?`,
+        ],
+      },
+      quantData: [
+        { metric: 'GPU useful life (bull vs bear)', value: '6 years vs 3 years', context: 'The swing assumption behind AI-infra margins' },
+        { metric: 'Fed cuts expected in 2026', value: '2 more', context: "Chamath's macro call on disinflation + easing conditions" },
+      ],
     },
   },
 
@@ -956,6 +977,49 @@ export const WEEKLY: WeeklySummary = {
     `The throughline across the week was unmistakable: the AI debate has moved from "which model wins" to "what physically constrains the buildout." Stratechery reframed models as a commoditizing cost center while distribution stays scarce; Odd Lots put hard numbers on the real bottleneck — power, interconnection queues, and transformer lead times; and All-In turned both threads into a markets question about whether AI capex is a supercycle or a bubble.`,
     `On the investing side, Invest Like the Best and In Good Company circled the same idea from opposite ends of the size spectrum: durable returns come from owning the right thing for a very long time and staying liquid when others are forced to sell. Acquired's TSMC deep-dive supplied the concrete case study — process leadership that compounds, wrapped in geopolitical concentration risk.`,
     `If there's one synthesis: the market is repricing the un-sexy layer of the stack — power, foundries, distribution — and discounting the layer everyone was excited about a year ago, the models themselves.`,
+  ],
+  citations: [
+    { index: 1, episodeId: 'ep-oddlots-grid', label: 'Odd Lots — The Grid Is the AI Bottleneck' },
+    { index: 2, episodeId: 'ep-stratechery-agg', label: 'Stratechery — Aggregation Theory Meets AI' },
+    { index: 3, episodeId: 'ep-allin-e184', label: 'All-In — E184: Is AI Capex a Bubble?' },
+    { index: 4, episodeId: 'ep-iltb-compounders', label: 'Invest Like the Best — Compounders' },
+    { index: 5, episodeId: 'ep-acquired-tsmc', label: 'Acquired — TSMC' },
+  ],
+  keyThemes: [
+    {
+      heading: 'Power, not silicon, is the binding constraint',
+      points: [
+        `**Interconnection queues gate the buildout**: permitted sites with signed interconnection agreements behave like call options on AI capacity, while the public queue can run a decade [1].`,
+        `**Transformer and transmission supply is sold out for years**, so firm-power and grid-equipment names capture the scarcity the chipmakers can't [1] [3].`,
+      ],
+    },
+    {
+      heading: 'AI capex: supercycle or depreciation-driven mirage',
+      points: [
+        `**The depreciation schedule decides the debate**: at a 6-year GPU life the infra-margin math works; at 3 years much of the reported margin is fiction [3].`,
+        `**Circular, vendor-funded demand flatters the real end-market**, the core of the bear case on the most levered names [3].`,
+      ],
+    },
+    {
+      heading: 'Value migrates to distribution and foundries',
+      points: [
+        `**Models are commoditizing** — durable value accrues to whoever owns distribution, not the frontier model [2].`,
+        `**Process leadership compounds**: TSMC's ~90% leading-edge share is a moat and a single-point-of-failure the AI economy can't quickly diversify [5].`,
+      ],
+    },
+  ],
+  quantTable: [
+    { metric: 'Interconnection queue', value: '~2,000 days', context: 'Time to connect new load in constrained regions [1]' },
+    { metric: 'GPU useful life (bull vs bear)', value: '6 yrs vs 3 yrs', context: 'The swing factor in AI-infra margins [3]' },
+    { metric: 'Transformer lead times', value: '2–3 years', context: 'Grid-equipment supply sold out [1]' },
+    { metric: 'TSMC leading-edge share', value: '~90%', context: 'Concentration + single-point-of-failure risk [5]' },
+  ],
+  comparison: [
+    { index: 1, episodeId: 'ep-oddlots-grid', source: 'Odd Lots — The Grid Is the AI Bottleneck', speaker: 'Brian Janous', date: '2026-06-03', keyPoints: 'Power, interconnection queues, and transformer lead times — not chips — gate the buildout; own permitted sites and grid equipment.' },
+    { index: 2, episodeId: 'ep-stratechery-agg', source: 'Stratechery — Aggregation Theory Meets AI', speaker: 'Ben Thompson', date: '2026-06-02', keyPoints: 'Models commoditize toward a cost center; distribution stays scarce and captures the value.' },
+    { index: 3, episodeId: 'ep-allin-e184', source: 'All-In — Is AI Capex a Bubble?', speaker: 'The hosts', date: '2026-06-04', keyPoints: 'Split panel: rational supercycle (Sacks) vs depreciation-driven bubble (Friedberg) on the same data.' },
+    { index: 4, episodeId: 'ep-iltb-compounders', source: 'Invest Like the Best — Compounders', speaker: 'Patrick OShaughnessy', date: '2026-06-01', keyPoints: 'Permanent capital turns time into alpha; stay liquid when others are forced sellers.' },
+    { index: 5, episodeId: 'ep-acquired-tsmc', source: 'Acquired — TSMC', speaker: 'Ben & David', date: '2026-05-31', keyPoints: 'Process leadership compounds; geopolitical concentration is the structural risk.' },
   ],
   shows: [
     {

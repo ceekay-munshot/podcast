@@ -1,4 +1,4 @@
-import type { EpisodeTone, Highlight, Idea, QAItem, Summary, TranscriptSegment } from '../src/lib/types'
+import type { EpisodeInsight, EpisodeTone, Highlight, Idea, InsightParty, QAItem, QuantPoint, Summary, TranscriptSegment, WeeklyAi, WeeklyComparisonRow, WeeklySource, WeeklyTheme } from '../src/lib/types'
 import { stableHash } from '../src/lib/hash'
 import { transcribeEpisode } from './transcribe'
 import { SUMMARY_REVISION, sharedSummaryKey, type SummaryStore } from './summaryStore'
@@ -47,6 +47,10 @@ export interface SummarizeResult {
   summary: Summary
   transcript: TranscriptSegment[]
   transcriptSource?: 'feed' | 'groq' | 'deepgram'
+  /** Present only for weekly-synthesis results (synthesizeWeekly), so the shared
+   *  store can cache the cross-episode narrative under the `weekly:<hash>` id and
+   *  reuse it across users — the episode `summary` field is then just a stub. */
+  weekly?: WeeklyAi
 }
 
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini'
@@ -106,6 +110,72 @@ const SCHEMA = {
       },
       description: 'COMPREHENSIVE coverage of the episode\'s highlights — the beats a sharp listener would revisit: bold claims, specific predictions or numbers, sharp disagreements, surprising data, memorable anecdotes, or pivotal turns in the conversation. Capture EVERY such beat, not a fixed number; a dense 40-60 minute episode typically yields 7-12, spread across the whole episode (early, middle, AND late) rather than clustered at the opening. Each title names the specific beat; each detail is 1-2 concrete sentences stating what was actually said (the specific claim, number, or exchange, naming who said it when notable) and why it matters — never generic filler like "this highlights a key shift". Then set key=true on ONLY the 4-6 most important, non-obvious items — the headline takeaways a busy reader must not miss — and key=false on the rest.',
     },
+    insight: {
+      type: 'object',
+      additionalProperties: false,
+      description:
+        'The INVESTABLE read of the episode — the five-part lens a sharp analyst applies. Ground every field strictly in the material; never invent a party, a mechanism, or a shift that was not actually expressed.',
+      properties: {
+        whatChanged: {
+          type: 'string',
+          description:
+            'The single most important NEW development or shift versus the prior state of the world — the concrete fact (the number, the company, the move, the data point), NOT the topic. If the episode is purely evergreen with no real shift, state its central claim instead of inventing a "change". One or two sentences.',
+        },
+        whyItMatters: {
+          type: 'string',
+          description:
+            'The second-order, investable consequence — the mechanism and who/what it moves. Causal and specific (the transmission from the development to a price, a market, a decision); never generic filler like "this is significant for the industry".',
+        },
+        beneficiaries: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              name: { type: 'string', description: 'The specific company / person / asset / cohort that benefits — include the ticker when stated.' },
+              why: { type: 'string', description: 'The SPECIFIC mechanism by which they benefit, drawn from the material.' },
+            },
+            required: ['name', 'why'],
+          },
+          description: 'Who stands to BENEFIT, each a named party with the concrete mechanism. Return an EMPTY array when the episode names no clear winner — never invent or pad with "the broader market".',
+        },
+        atRisk: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              name: { type: 'string', description: 'The specific company / person / asset / cohort at risk — include the ticker when stated.' },
+              why: { type: 'string', description: 'The SPECIFIC mechanism by which they are threatened, drawn from the material.' },
+            },
+            required: ['name', 'why'],
+          },
+          description: 'Who is AT RISK, each a named party with the concrete mechanism. Return an EMPTY array when the episode names no clear loser — never invent or pad.',
+        },
+        diligenceQuestions: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            '2-5 FORWARD-LOOKING, checkable research questions whose answers would confirm or kill the thesis — the things a diligent investor would now go verify. NOT a restatement of the episode\'s own Q&A, and not vague ("is this a good investment?"). Each names its specific subject. EMPTY only when the episode genuinely raises none.',
+        },
+      },
+      required: ['whatChanged', 'whyItMatters', 'beneficiaries', 'atRisk', 'diligenceQuestions'],
+    },
+    quantData: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          metric: { type: 'string', description: 'What the number measures, e.g. "Amazon DSP spend", "Truckload pricing", "Prime Day discount".' },
+          value: { type: 'string', description: 'The value EXACTLY as stated, keeping the unit/qualifier, e.g. "$50M in first 5 months of 2026", "up 20-30%", "close to 200".' },
+          context: { type: 'string', description: 'The source / comparison / period that makes the number meaningful, e.g. "vs $11.5M in the same period a year prior".' },
+        },
+        required: ['metric', 'value', 'context'],
+      },
+      description:
+        'Every HARD NUMBER actually stated in the episode — dollar figures, percentages, multiples, counts, dates, growth rates — the data points that feed the Quantitative Summary table. If the material contains ANY numbers, this MUST be non-empty (one row per figure). Quote each value EXACTLY as spoken (never round-to-invent, never infer a figure that was not said). Only return an empty array for an episode with genuinely no figures.',
+    },
     tone: {
       type: 'object',
       additionalProperties: false,
@@ -139,14 +209,21 @@ const SCHEMA = {
       required: ['overall', 'rationale', 'aspects'],
     },
   },
-  required: ['synthesis', 'qa', 'ideas', 'highlights', 'tone'],
+  required: ['synthesis', 'qa', 'ideas', 'insight', 'quantData', 'highlights', 'tone'],
 }
 
+// The investable-insight rules, kept in a template literal (real newlines, no
+// escaping) and appended to SYSTEM_BASE so the giant single-quoted string above
+// stays untouched.
+const INSIGHT_RULES = `
+- insight: this is the INVESTABLE read — what busy investors care most about. whatChanged = the single most important NEW development or shift (the concrete fact: the number, the company, the move), not the topic; if the episode is purely evergreen, state its central claim instead. whyItMatters = the second-order consequence and the mechanism (the transmission to a price/market/decision), never generic filler like "this is significant for the industry". beneficiaries / atRisk = the NAMED winners and losers (include tickers when stated), each with the specific mechanism — return an EMPTY array when none is named, never pad with "the broader market". diligenceQuestions = 2-5 forward-looking, checkable questions a diligent investor would now go verify (NOT a restatement of the episode's own Q&A) — empty only when the episode genuinely raises none.
+- quantData: extract every HARD NUMBER actually stated — dollar figures, percentages, multiples, counts, dates, growth rates. If the material contains ANY numbers, quantData MUST be non-empty (one row per figure). Quote each value EXACTLY as spoken (keep the unit/qualifier) with the comparison/period that makes it meaningful. NEVER invent, round-to-invent, or infer a figure that was not said. Only an episode with genuinely no figures may return an empty array. These feed the Quantitative Summary table.`
+
 const SYSTEM_BASE =
-  'You are Munshot, an AI that writes sharp one-page intelligence summaries of podcast episodes for busy operators and investors. Produce the summary by calling the emit_summary tool/function. Rules:\n- Base everything ONLY on the provided material. Do NOT invent facts, quotes, names, or numbers.\n- synthesis: go deeper than the headline. Lead with the central argument, then develop it with the specifics that make it credible — concrete claims, real numbers, named companies/people, and the mechanism or causal chain behind each point. Capture the genuine tension or disagreement between speakers (the bull case vs the bear case, what is contested, what is still uncertain), and surface the non-obvious, second-order insight a sharp listener takes away — not a generic recap anyone could write from the title. Every sentence must carry specific, episode-grounded content; cut filler like "the market is maturing" or "X is seeing significant growth". Emphasise only a FEW short key phrases (2-5 words each, at most ~3 per summary) by wrapping each in matched **double asterisks** — never bold whole sentences or clauses, and always close every ** you open.\n- qa: be EXHAUSTIVE — capture every substantive question the episode actually raises and answers, in the order it addresses them, not a curated handful. Exclude only trivial banter, logistics, and ad reads. Make every question specific and self-contained (it should read clearly on its own), and every answer thorough, concrete, and fully understandable without the audio — 2-4 real sentences that explain the "why" and the specifics, never one terse line, but never padded or invented either.\n- ideas: capture every CONCRETE, ACTIONABLE call the episode makes — investment/stock picks (name the ticker/company), trades, macro calls, or bold specific predictions — as a discrete item with who pitched it and the 2-4 key thesis points behind it. Shows with a dedicated pitch segment (e.g. All-In stock picks) must yield one entry per pick. Return an EMPTY list when nothing specific is pitched — never lower the bar to fill it with vague opinions or generic observations, and never invent a call that was not made.\n- highlights: be thorough — surface every genuinely interesting beat the episode delivers (bold claims, specific predictions or numbers, sharp disagreements, surprising data, memorable anecdotes), not just one or two, with each detail concrete about what was actually said — never a generic gloss. Then flag the 4-6 most important, non-obvious ones with key=true — the headline takeaways; a reader who only sees those must walk away with the episode\'s core. Never flag more than half the list.\n- tone: read the episode\'s sentiment from what is ACTUALLY said — never invent a feeling that was not expressed. Set "overall" to the net lean, write "rationale" as ONE grounded sentence, and list 3-6 "aspects": the specific companies/people/topics the episode is positive, negative, or neutral ABOUT, each with a short subject (1-4 words) and a one-clause "note" giving the real reason. Only include subjects the episode genuinely discusses.'
+  'You are Munshot, an AI that writes sharp one-page intelligence summaries of podcast episodes for busy operators and investors. Produce the summary by calling the emit_summary tool/function. Rules:\n- Base everything ONLY on the provided material. Do NOT invent facts, quotes, names, or numbers.\n- synthesis: go deeper than the headline. Lead with the central argument, then develop it with the specifics that make it credible — concrete claims, real numbers, named companies/people, and the mechanism or causal chain behind each point. Capture the genuine tension or disagreement between speakers (the bull case vs the bear case, what is contested, what is still uncertain), and surface the non-obvious, second-order insight a sharp listener takes away — not a generic recap anyone could write from the title. Every sentence must carry specific, episode-grounded content; cut filler like "the market is maturing" or "X is seeing significant growth". Emphasise only a FEW short key phrases (2-5 words each, at most ~3 per summary) by wrapping each in matched **double asterisks** — never bold whole sentences or clauses, and always close every ** you open.\n- qa: be EXHAUSTIVE — capture every substantive question the episode actually raises and answers, in the order it addresses them, not a curated handful. Exclude only trivial banter, logistics, and ad reads. Make every question specific and self-contained (it should read clearly on its own), and every answer thorough, concrete, and fully understandable without the audio — 2-4 real sentences that explain the "why" and the specifics, never one terse line, but never padded or invented either.\n- ideas: capture every CONCRETE, ACTIONABLE call the episode makes — investment/stock picks (name the ticker/company), trades, macro calls, or bold specific predictions — as a discrete item with who pitched it and the 2-4 key thesis points behind it. Shows with a dedicated pitch segment (e.g. All-In stock picks) must yield one entry per pick. Return an EMPTY list when nothing specific is pitched — never lower the bar to fill it with vague opinions or generic observations, and never invent a call that was not made.\n- highlights: be thorough — surface every genuinely interesting beat the episode delivers (bold claims, specific predictions or numbers, sharp disagreements, surprising data, memorable anecdotes), not just one or two, with each detail concrete about what was actually said — never a generic gloss. Then flag the 4-6 most important, non-obvious ones with key=true — the headline takeaways; a reader who only sees those must walk away with the episode\'s core. Never flag more than half the list.\n- tone: read the episode\'s sentiment from what is ACTUALLY said — never invent a feeling that was not expressed. Set "overall" to the net lean, write "rationale" as ONE grounded sentence, and list 3-6 "aspects": the specific companies/people/topics the episode is positive, negative, or neutral ABOUT, each with a short subject (1-4 words) and a one-clause "note" giving the real reason. Only include subjects the episode genuinely discusses.' + INSIGHT_RULES
 
 const SYSTEM_TRANSCRIPT = `${SYSTEM_BASE}\n- You have the FULL transcript, annotated with [mm:ss] markers. Ground everything in what was actually said.\n- For "highlights", draw them from DIFFERENT parts of the episode — early, middle, and late, not all from the opening — and set each timestamp to the real [mm:ss] of the nearest marker. Never use 0:00.`
-const SYSTEM_NOTES = `${SYSTEM_BASE}\n- You only have the publisher's show-notes (not the audio). If they are thin or promotional, keep the summary brief and high-level rather than fabricating. Use "—" for highlight timestamps.`
+const SYSTEM_NOTES = `${SYSTEM_BASE}\n- You only have the publisher's show-notes (not the audio). If they are thin or promotional, keep the summary brief and high-level rather than fabricating. Use "—" for highlight timestamps.\n- With show-notes only, base insight strictly on what the notes assert, and leave beneficiaries, atRisk, and quantData EMPTY rather than guessing.`
 
 function buildPrompt(input: SummarizeInput, transcript: string | null): { system: string; user: string } {
   if (transcript) {
@@ -167,6 +244,8 @@ type RawSummary = {
   synthesis?: string[]
   qa?: QAItem[]
   ideas?: unknown
+  insight?: unknown
+  quantData?: unknown
   highlights?: Array<{ title: string; timestamp: string; detail: string; key?: boolean }>
   tone?: unknown
 }
@@ -194,6 +273,59 @@ function normalizeIdeas(raw: RawSummary | undefined): Idea[] {
   return out
 }
 
+// Validate the LLM's named-party lists (beneficiaries / atRisk). Drop any entry
+// missing a name or a why; trim; cap so one runaway field can't bloat the doc.
+function normalizeParties(v: unknown): InsightParty[] {
+  if (!Array.isArray(v)) return []
+  const out: InsightParty[] = []
+  for (const it of v as Array<{ name?: unknown; why?: unknown }>) {
+    if (!it || typeof it !== 'object') continue
+    const name = typeof it.name === 'string' ? it.name.trim() : ''
+    const why = typeof it.why === 'string' ? it.why.trim() : ''
+    if (!name || !why) continue
+    out.push({ name, why })
+  }
+  return out.slice(0, 6)
+}
+
+// Validate the LLM's `insight` (same untrusted-output discipline as tone/ideas).
+// Returns undefined unless there's a real what-changed or why-it-matters — an
+// insight with neither is empty noise, so drop the whole object.
+function normalizeInsight(raw: RawSummary | undefined): EpisodeInsight | undefined {
+  const i = raw?.insight as { whatChanged?: unknown; whyItMatters?: unknown; beneficiaries?: unknown; atRisk?: unknown; diligenceQuestions?: unknown } | undefined
+  if (!i || typeof i !== 'object') return undefined
+  const whatChanged = typeof i.whatChanged === 'string' ? i.whatChanged.trim() : ''
+  const whyItMatters = typeof i.whyItMatters === 'string' ? i.whyItMatters.trim() : ''
+  if (!whatChanged && !whyItMatters) return undefined
+  const diligenceQuestions = Array.isArray(i.diligenceQuestions)
+    ? (i.diligenceQuestions.filter((q): q is string => typeof q === 'string' && !!q.trim()).map((q) => q.trim()).slice(0, 6))
+    : []
+  return {
+    whatChanged,
+    whyItMatters,
+    beneficiaries: normalizeParties(i.beneficiaries),
+    atRisk: normalizeParties(i.atRisk),
+    diligenceQuestions,
+  }
+}
+
+// Validate the LLM's `quantData`. Drop rows missing a metric or value; coerce a
+// missing context to ""; cap so the quant table stays scannable.
+function normalizeQuant(raw: RawSummary | undefined): QuantPoint[] {
+  const list = raw?.quantData
+  if (!Array.isArray(list)) return []
+  const out: QuantPoint[] = []
+  for (const it of list as Array<{ metric?: unknown; value?: unknown; context?: unknown }>) {
+    if (!it || typeof it !== 'object') continue
+    const metric = typeof it.metric === 'string' ? it.metric.trim() : ''
+    const value = typeof it.value === 'string' ? it.value.trim() : ''
+    if (!metric || !value) continue
+    const context = typeof it.context === 'string' ? it.context.trim() : ''
+    out.push({ metric, value, context })
+  }
+  return out.slice(0, 20)
+}
+
 function normalizeTone(raw: RawSummary | undefined): EpisodeTone | undefined {
   const t = raw?.tone as unknown as { overall?: unknown; rationale?: unknown; aspects?: unknown } | undefined
   if (!t || typeof t !== 'object') return undefined
@@ -210,6 +342,8 @@ function normalize(raw: RawSummary | undefined): Summary {
   const r = raw ?? {}
   const tone = normalizeTone(raw)
   const ideas = normalizeIdeas(raw)
+  const insight = normalizeInsight(raw)
+  const quantData = normalizeQuant(raw)
   // Normalize each highlight timestamp to a clean "m:ss" (the model sometimes copies
   // the bracketed transcript marker, e.g. "[12:34]"), sort chronologically (it can
   // emit them out of order), then assign stable ids in display order. Clean timestamps
@@ -223,6 +357,8 @@ function normalize(raw: RawSummary | undefined): Summary {
     highlights,
     qa: r.qa ?? [],
     ...(ideas.length ? { ideas } : {}),
+    ...(insight ? { insight } : {}),
+    ...(quantData.length ? { quantData } : {}),
     ...(tone ? { tone } : {}),
   }
 }
@@ -367,10 +503,11 @@ export async function summarizeEpisode(input: SummarizeInput, config: SummarizeC
   const hit = input.force ? undefined : cache.get(cacheKey)
   if (hit) return hit
 
-  const summary =
+  const raw =
     provider === 'openai'
-      ? await viaOpenAI(prompt, config.openaiKey as string, model)
-      : await viaAnthropic(prompt, config.anthropicKey as string, model)
+      ? await viaOpenAI(prompt, config.openaiKey as string, model, SCHEMA)
+      : await viaAnthropic(prompt, config.anthropicKey as string, model, SCHEMA)
+  const summary = normalize(raw as RawSummary)
 
   // Bundle the real transcript (the same one the summary was built from) so the
   // Transcript tab renders it — no second transcription, no extra cost.
@@ -391,20 +528,23 @@ export async function summarizeEpisode(input: SummarizeInput, config: SummarizeC
 }
 
 // ── OpenAI (Chat Completions + forced function call) ─────────────────────────
-async function viaOpenAI(prompt: { system: string; user: string }, apiKey: string, model: string): Promise<Summary> {
+// Returns the RAW parsed tool-call args (caller normalizes). `schema` lets the
+// same transport drive both the episode summary and the weekly synthesis.
+async function viaOpenAI(prompt: { system: string; user: string }, apiKey: string, model: string, schema: object): Promise<unknown> {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
       model,
-      // 8192 leaves room for richer synthesis + comprehensive Q&A. Keep it under
-      // ~16K: this is a non-streaming raw fetch, and larger outputs risk HTTP timeouts.
-      max_completion_tokens: 8192,
+      // 12288 leaves room for the richer schema (synthesis + comprehensive Q&A +
+      // the investable insight + quant table). Keep it under ~16K: this is a
+      // non-streaming raw fetch, and larger outputs risk HTTP timeouts.
+      max_completion_tokens: 12288,
       messages: [
         { role: 'system', content: prompt.system },
         { role: 'user', content: prompt.user },
       ],
-      tools: [{ type: 'function', function: { name: 'emit_summary', description: 'Emit the structured one-page summary.', parameters: SCHEMA } }],
+      tools: [{ type: 'function', function: { name: 'emit_summary', description: 'Emit the structured summary.', parameters: schema } }],
       tool_choice: { type: 'function', function: { name: 'emit_summary' } },
     }),
   })
@@ -415,20 +555,22 @@ async function viaOpenAI(prompt: { system: string; user: string }, apiKey: strin
   const data: { choices?: Array<{ message?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }> } = await res.json()
   const args = data.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments
   if (!args) throw new Error('openai: no function call in response')
-  return normalize(JSON.parse(args) as RawSummary)
+  return JSON.parse(args)
 }
 
 // ── Anthropic (Messages API + forced tool use) ───────────────────────────────
-async function viaAnthropic(prompt: { system: string; user: string }, apiKey: string, model: string): Promise<Summary> {
+// Returns the RAW tool-use input (caller normalizes).
+async function viaAnthropic(prompt: { system: string; user: string }, apiKey: string, model: string, schema: object): Promise<unknown> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
     body: JSON.stringify({
       model,
-      // Room for comprehensive Q&A; <~16K keeps this non-streaming request under HTTP timeouts.
-      max_tokens: 8192,
+      // Room for the richer schema (comprehensive Q&A + insight + quant); <~16K keeps
+      // this non-streaming request under HTTP timeouts.
+      max_tokens: 12288,
       system: prompt.system,
-      tools: [{ name: 'emit_summary', description: 'Emit the structured one-page summary.', input_schema: SCHEMA }],
+      tools: [{ name: 'emit_summary', description: 'Emit the structured summary.', input_schema: schema }],
       tool_choice: { type: 'tool', name: 'emit_summary' },
       messages: [{ role: 'user', content: prompt.user }],
     }),
@@ -440,5 +582,181 @@ async function viaAnthropic(prompt: { system: string; user: string }, apiKey: st
   const data: { content?: Array<{ type: string; name?: string; input?: unknown }> } = await res.json()
   const toolUse = (data.content ?? []).find((b) => b.type === 'tool_use' && b.name === 'emit_summary')
   if (!toolUse?.input) throw new Error('anthropic: no emit_summary tool_use in response')
-  return normalize(toolUse.input as RawSummary)
+  return toolUse.input
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WEEKLY cross-episode synthesis — the Guidepoint layer. Reuses the same forced-
+// tool transport (viaOpenAI/viaAnthropic) with a different schema. Synthesises a
+// set of per-episode insights into ONE institutional-style edition: a narrative
+// overview, thematic claim-first Key Points, an aggregated quantitative table, a
+// comparison-across-sources table, and open questions — all cited [n] against the
+// numbered source order the caller passes in (so markers line up with the
+// deterministic citation registry). Cached in the shared store under the
+// weekly:<hash> id so one episode-set is run through the model once, for everyone.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const WEEKLY_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    overview: {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        '2-3 synthesized paragraphs that LEAD with the most important concrete developments of the week — name the real numbers, companies, and people. State the genuine CONSENSUS across sources AND explicitly call out the OUTLIERS / disagreements. Attach inline citations like [1] [2] to the sources each claim draws on (use the source numbers given in the input). Never write generic filler ("the market is maturing", "AI keeps growing").',
+    },
+    keyThemes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          heading: { type: 'string', description: 'A specific theme cutting ACROSS episodes (e.g. "Ad budgets shifting to closed-loop measurement"), not a show name.' },
+          points: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Claim-first bullets: lead with the conclusion in **double asterisks**, then the specifics (numbers, names, mechanism) and a citation [n]. e.g. "**Amazon DSP is taking share**: first-five-month spend rose to $50M from $11.5M as budgets move to OTT [1] [3]".',
+          },
+        },
+        required: ['heading', 'points'],
+      },
+      description: 'The Key Points — 2-5 themes that synthesise the week ACROSS sources (never one cluster per show). Group related claims from different episodes under one theme.',
+    },
+    quantTable: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          metric: { type: 'string' },
+          value: { type: 'string', description: 'The value EXACTLY as stated in the material.' },
+          context: { type: 'string', description: 'The source/comparison/period — append the citation [n].' },
+        },
+        required: ['metric', 'value', 'context'],
+      },
+      description: 'The Quantitative Summary — the hard numbers from across the week. Use ONLY figures that appear in the input material; never invent, round-to-invent, or infer. EMPTY when the week states no figures.',
+    },
+    comparison: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          index: { type: 'number', description: 'The SOURCE NUMBER this row is about (matches the [n] in the input).' },
+          source: { type: 'string', description: 'Show — episode title.' },
+          speaker: { type: 'string', description: 'The lead voice, or "—".' },
+          date: { type: 'string' },
+          keyPoints: { type: 'string', description: '1-3 sentences: this source\'s distinct stance/contribution.' },
+        },
+        required: ['index', 'source', 'speaker', 'date', 'keyPoints'],
+      },
+      description: 'Comparison Across Sources — one row PER source episode, in the input order, capturing each source\'s distinct take so they can be read side by side.',
+    },
+    questions: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'The sharpest OPEN questions the week raises — forward-looking and checkable, each naming its subject. EMPTY when none stand out.',
+    },
+  },
+  required: ['overview', 'keyThemes', 'quantTable', 'comparison', 'questions'],
+}
+
+const WEEKLY_SYSTEM =
+  'You are Munshot, an AI that writes institutional-grade weekly intelligence briefs for investors, in the style of a sell-side cross-call synthesis. You are given several podcast episodes, each already distilled to its investable insight, as NUMBERED sources. Produce the brief by calling the emit_summary tool/function. Rules:\n' +
+  '- SYNTHESISE ACROSS the sources — do NOT restate each one in turn. Find the through-lines: where sources agree, where they disagree, and what the week as a whole means.\n' +
+  '- Lead with substance: name the real numbers, companies, people, and calls. Cut generic filler ("the market is maturing", "AI keeps growing").\n' +
+  '- CITE everything with [n] markers using the source numbers given — every non-obvious claim, every number, every comparison row points back to its source(s).\n' +
+  '- overview: 2-3 paragraphs stating the consensus AND explicitly naming the outliers/disagreements.\n' +
+  '- keyThemes: 2-5 themes that cut across episodes (never one per show); each a list of claim-first bullets (the conclusion in **double asterisks**, then specifics + [n]).\n' +
+  '- quantTable: only numbers actually present in the material — never invent, round-to-invent, or infer. Append the [n] in context. EMPTY when there are none.\n' +
+  '- comparison: one row per source, capturing each source\'s distinct stance.\n' +
+  '- Base EVERYTHING only on the provided sources. Never fabricate a number, a citation, or a disagreement that is not supported by the material.'
+
+/** Render the numbered sources into the LLM user message. Kept here so both the
+ *  HTTP path and the cron build the prompt identically. */
+function buildWeeklyUser(range: string, sources: WeeklySource[]): string {
+  const blocks = sources.map((s) => {
+    const lines = [`[${s.index}] ${s.show} — "${s.title}" (${s.date})${s.speaker && s.speaker !== '—' ? `, lead voice: ${s.speaker}` : ''}`]
+    if (s.whatChanged) lines.push(`  What changed: ${s.whatChanged}`)
+    if (s.whyItMatters) lines.push(`  Why it matters: ${s.whyItMatters}`)
+    if (s.beneficiaries) lines.push(`  Beneficiaries: ${s.beneficiaries}`)
+    if (s.atRisk) lines.push(`  At risk: ${s.atRisk}`)
+    if (s.quant) lines.push(`  Numbers: ${s.quant}`)
+    if (s.keyPoints) lines.push(`  Key points: ${s.keyPoints}`)
+    return lines.join('\n')
+  })
+  return `Weekly cross-source synthesis across ${sources.length} podcast episode${sources.length === 1 ? '' : 's'} from ${range}.\n\nSources:\n${blocks.join('\n\n')}`
+}
+
+const strArr = (v: unknown, cap = 12): string[] =>
+  Array.isArray(v) ? (v.filter((x): x is string => typeof x === 'string' && !!x.trim()).map((x) => x.trim()).slice(0, cap)) : []
+
+// Validate the LLM's weekly output (untrusted — same discipline as normalize()).
+function normalizeWeeklyAi(raw: unknown): WeeklyAi {
+  const r = (raw ?? {}) as { overview?: unknown; keyThemes?: unknown; quantTable?: unknown; comparison?: unknown; questions?: unknown }
+  const keyThemes: WeeklyTheme[] = Array.isArray(r.keyThemes)
+    ? (r.keyThemes as Array<{ heading?: unknown; points?: unknown }>)
+        .map((t) => ({ heading: typeof t?.heading === 'string' ? t.heading.trim() : '', points: strArr(t?.points, 10) }))
+        .filter((t) => t.heading && t.points.length)
+        .slice(0, 8)
+    : []
+  const quantTable: QuantPoint[] = Array.isArray(r.quantTable)
+    ? (r.quantTable as Array<{ metric?: unknown; value?: unknown; context?: unknown }>)
+        .map((q) => ({ metric: typeof q?.metric === 'string' ? q.metric.trim() : '', value: typeof q?.value === 'string' ? q.value.trim() : '', context: typeof q?.context === 'string' ? q.context.trim() : '' }))
+        .filter((q) => q.metric && q.value)
+        .slice(0, 24)
+    : []
+  const comparison: WeeklyComparisonRow[] = Array.isArray(r.comparison)
+    ? (r.comparison as Array<{ index?: unknown; source?: unknown; speaker?: unknown; date?: unknown; keyPoints?: unknown }>)
+        .map((c) => ({
+          index: typeof c?.index === 'number' && Number.isFinite(c.index) ? c.index : 0,
+          source: typeof c?.source === 'string' ? c.source.trim() : '',
+          speaker: typeof c?.speaker === 'string' && c.speaker.trim() ? c.speaker.trim() : '—',
+          date: typeof c?.date === 'string' ? c.date.trim() : '',
+          keyPoints: typeof c?.keyPoints === 'string' ? c.keyPoints.trim() : '',
+        }))
+        .filter((c) => c.source && c.keyPoints)
+        .slice(0, 30)
+    : []
+  return { overview: strArr(r.overview, 6), keyThemes, quantTable, comparison, questions: strArr(r.questions, 10) }
+}
+
+export interface SynthesizeWeeklyInput {
+  /** Content-derived id (`weekly:<hash>`) → shared-store cache key. */
+  id?: string
+  range: string
+  sources: WeeklySource[]
+  /** Skip the cache read and regenerate (Refresh). */
+  force?: boolean
+}
+
+/** Run the weekly cross-episode synthesis. Returns the AI narrative, or null when
+ *  no LLM key is configured (callers fall back to the deterministic base). */
+export async function synthesizeWeekly(input: SynthesizeWeeklyInput, config: SummarizeConfig): Promise<WeeklyAi | null> {
+  const provider = config.openaiKey ? 'openai' : config.anthropicKey ? 'anthropic' : null
+  if (!provider) return null
+  if (!input.sources.length) return null
+  const model = config.model || (provider === 'openai' ? DEFAULT_OPENAI_MODEL : DEFAULT_ANTHROPIC_MODEL)
+
+  // Shared-store reuse: the SAME episode-set (same id) is synthesised once total —
+  // a browser visit and the Monday cron reuse each other's result.
+  const sharedKey = input.id ? sharedSummaryKey(input.id) : null
+  if (!input.force && sharedKey && config.store) {
+    const cached = await config.store.get(sharedKey)
+    if (cached?.weekly) return cached.weekly
+  }
+
+  const prompt = { system: WEEKLY_SYSTEM, user: buildWeeklyUser(input.range, input.sources) }
+  const raw =
+    provider === 'openai'
+      ? await viaOpenAI(prompt, config.openaiKey as string, model, WEEKLY_SCHEMA)
+      : await viaAnthropic(prompt, config.anthropicKey as string, model, WEEKLY_SCHEMA)
+  const ai = normalizeWeeklyAi(raw)
+
+  // Cache under the weekly id (stub `summary` — only `weekly` is read back for this key).
+  if (sharedKey && config.store) {
+    await config.store.put(sharedKey, { summary: { synthesis: [], highlights: [], qa: [] }, transcript: [], weekly: ai })
+  }
+  return ai
 }

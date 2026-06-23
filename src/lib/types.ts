@@ -131,6 +131,47 @@ export interface EpisodeTone {
   aspects: ToneAspect[]
 }
 
+/** One hard number actually stated in the material — the unit behind the
+ *  Quantitative Summary table (Metric / Value / Context). Numbers are quoted
+ *  EXACTLY as said (unit/qualifier kept); never invented, rounded-to-invent, or
+ *  inferred. */
+export interface QuantPoint {
+  /** What the number measures, e.g. "Amazon DSP spend", "Truckload pricing". */
+  metric: string
+  /** The value exactly as stated, e.g. "$50M in first 5 months of 2026", "up 20-30%". */
+  value: string
+  /** The source/comparison that makes the number meaningful, e.g. "vs $11.5M a year prior". */
+  context: string
+}
+
+/** A named party an episode's development moves — a company / person / asset /
+ *  cohort, with the SPECIFIC mechanism. Drives the "who benefits / who's at risk"
+ *  read. */
+export interface InsightParty {
+  /** The specific name (include a ticker when stated), e.g. "Old Dominion (ODFL)". */
+  name: string
+  /** The concrete mechanism, e.g. "share gainer on service reputation + low purchased-transport reliance". */
+  why: string
+}
+
+/** The investable read of an episode — the five-part lens an analyst applies:
+ *  what changed, why it matters, who benefits, who is at risk, and what to dig
+ *  into next. Grounded strictly in the material; arrays are EMPTY (never padded)
+ *  when the episode names no party / raises no question. */
+export interface EpisodeInsight {
+  /** The single most important NEW development or shift — the concrete fact. */
+  whatChanged: string
+  /** The second-order, investable consequence and who it moves. */
+  whyItMatters: string
+  /** Named winners + the mechanism. Empty when none is named. */
+  beneficiaries: InsightParty[]
+  /** Named losers + the mechanism. Empty when none is named. */
+  atRisk: InsightParty[]
+  /** 2-5 forward-looking, checkable research questions that would confirm or kill
+   *  the thesis — NOT a restatement of the episode's own Q&A. Empty when none. */
+  diligenceQuestions: string[]
+}
+
 /** The one-page AI summary — everything a single episode produces. */
 export interface Summary {
   /** The readable one-page synthesis, as paragraphs. */
@@ -145,6 +186,14 @@ export interface Summary {
   /** Context-aware tone read from the summarizer LLM. Optional: older cached
    *  summaries (and mock data) predate it and fall back to the lexicon roll-up. */
   tone?: EpisodeTone
+  /** The investable read — what changed / why it matters / who benefits / who's
+   *  at risk / diligence questions. Optional: older cached summaries (pre-r7) and
+   *  mock data predate it; renderers guard with `?.`. */
+  insight?: EpisodeInsight
+  /** Hard numbers stated in the episode — the feed for the Quantitative Summary
+   *  table (per-episode + aggregated into the weekly). Optional/empty when the
+   *  episode states no figures. */
+  quantData?: QuantPoint[]
 }
 
 export interface EpisodeEntities {
@@ -195,14 +244,77 @@ export interface WeeklyShowDigest {
   questions: string[]
 }
 
+/** A thematic Key-Points cluster in the weekly — the Guidepoint "Key Points"
+ *  unit. `points` are claim-first bullets ("**claim**: specifics [n]"), grouped
+ *  by THEME across episodes (not per-show). */
+export interface WeeklyTheme {
+  heading: string
+  points: string[]
+}
+
+/** One row of the weekly "Comparison Across Sources" table — one episode's stance
+ *  in a side-by-side. `index` is the citation `[n]`; `episodeId` links the row. */
+export interface WeeklyComparisonRow {
+  index: number
+  source: string // show — episode title
+  speaker: string // lead voice, or "—"
+  date: string
+  keyPoints: string
+  /** Resolved during merge so the renderer can link the row to its episode. */
+  episodeId?: string
+}
+
+/** The `[n]` → episode registry that backs every inline citation in the weekly. */
+export interface WeeklyCitation {
+  index: number
+  episodeId: string
+  label: string // "Show — Episode title"
+}
+
+/** One episode rendered as a numbered source for the weekly synthesis prompt —
+ *  the per-episode insight flattened into the LLM's input so it can synthesize
+ *  ACROSS sources and cite them by `[index]`. */
+export interface WeeklySource {
+  index: number
+  show: string
+  title: string
+  date: string
+  speaker: string
+  whatChanged?: string
+  whyItMatters?: string
+  beneficiaries?: string
+  atRisk?: string
+  quant?: string
+  keyPoints?: string
+}
+
+/** The cross-episode narrative the weekly synthesis LLM produces (the layer on
+ *  top of the deterministic base). Citations use `[n]` against the source order. */
+export interface WeeklyAi {
+  overview: string[]
+  keyThemes: WeeklyTheme[]
+  quantTable: QuantPoint[]
+  comparison: WeeklyComparisonRow[]
+  questions: string[]
+}
+
 export interface WeeklySummary {
   id: string
   rangeLabel: string // "May 19 – May 25, 2026"
   episodeCount: number
   readMinutes: number
-  /** "This week in summary" prose. */
+  /** "This week in summary" prose — synthesized, with inline `[n]` citations. */
   overview: string[]
-  /** The week organized by show — the primary body. Each show is a mini-digest. */
+  /** The Guidepoint "Key Points" — thematic, claim-first, cross-episode. The
+   *  PRIMARY body when present; falls back to `shows` (by-show) when absent. */
+  keyThemes?: WeeklyTheme[]
+  /** Aggregated hard numbers — the Quantitative Summary table. */
+  quantTable?: QuantPoint[]
+  /** The Comparison Across Sources table. */
+  comparison?: WeeklyComparisonRow[]
+  /** The `[n]` → episode registry backing the citations in overview/keyThemes. */
+  citations?: WeeklyCitation[]
+  /** The week organized by show — secondary appendix (and the no-AI fallback body). */
   shows: WeeklyShowDigest[]
   topThemes: { label: string; momentum: number }[]
   /** "What was actually interesting" — a curated moment: a headline + the insight. */

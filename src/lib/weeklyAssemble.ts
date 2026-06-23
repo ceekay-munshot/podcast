@@ -1,4 +1,4 @@
-import type { Episode, Podcast, Takeaway, WeeklyIdea, WeeklyShowDigest, WeeklySummary } from './types'
+import type { Episode, Podcast, QuantPoint, Takeaway, WeeklyAi, WeeklyCitation, WeeklyComparisonRow, WeeklyIdea, WeeklyShowDigest, WeeklySource, WeeklySummary, WeeklyTheme } from './types'
 import { keyHighlights } from './highlights'
 import { topTopics } from './topics'
 
@@ -33,6 +33,15 @@ export function assembleWeekly(episodes: Episode[], podcastById: ById, opts: { r
   const overview = derivedOverview(ready, topThemes, podcastById)
   const takeaways = derivedTakeaways(ready)
 
+  // Guidepoint-shaped layers — built deterministically so the no-key path (and the
+  // cron without an LLM key) still produces a synthesised-looking edition. The AI
+  // layer (weeklyApi / weeklyDigest) OVERWRITES keyThemes/quantTable/comparison/
+  // overview when a key is present, reusing this same citation order so [n] lines up.
+  const citations = buildCitations(ready, podcastById)
+  const quantTable = aggregateQuant(ready, citations)
+  const comparison = buildComparison(ready, citations, podcastById)
+  const keyThemes = derivedKeyThemes(ready, citations)
+
   const words = [...overview, ...takeaways.flatMap((t) => [t.title, t.detail])].join(' ').trim().split(/\s+/).length
   return {
     id: opts.id ?? `wk-${hashKey(ready)}`,
@@ -40,6 +49,10 @@ export function assembleWeekly(episodes: Episode[], podcastById: ById, opts: { r
     episodeCount: ready.length,
     readMinutes: Math.max(1, Math.round(words / 200)),
     overview,
+    keyThemes,
+    quantTable,
+    comparison,
+    citations,
     shows,
     topThemes,
     interesting,
@@ -49,6 +62,141 @@ export function assembleWeekly(episodes: Episode[], podcastById: ById, opts: { r
     questions: [], // the AI layer (client only) fills these; deterministic base leaves them empty
     sourceEpisodeIds: ready.map((e) => e.id),
   }
+}
+
+/** Strip any `[n]` citation marker whose number is outside the registry — the LLM
+ *  occasionally cites a source that doesn't exist; never show a dangling marker. */
+function clampCitations(s: string, max: number): string {
+  return s.replace(/\[(\d+)\]/g, (m, d) => (Number(d) >= 1 && Number(d) <= max ? m : ''))
+}
+
+/** Overlay the AI narrative onto the deterministic base — the single merge used by
+ *  BOTH the client (weeklyApi) and the server cron (weeklyDigest), so the on-screen
+ *  and emailed editions are assembled identically. Falls back field-by-field to the
+ *  deterministic layer when the AI omitted something. Reuses `base.citations` as the
+ *  canonical [n] map: attaches episodeId to each comparison row and strips any
+ *  out-of-range marker from the prose. */
+export function mergeWeeklyAi(base: WeeklySummary, ai: WeeklyAi): WeeklySummary {
+  const cites = base.citations ?? []
+  const max = cites.length
+  const epById = new Map(cites.map((c) => [c.index, c.episodeId]))
+
+  const overview = ai.overview.length ? ai.overview.map((p) => clampCitations(p, max)) : base.overview
+  const keyThemes = ai.keyThemes.length
+    ? ai.keyThemes.map((t) => ({ heading: t.heading, points: t.points.map((p) => clampCitations(p, max)) }))
+    : base.keyThemes ?? []
+  const quantTable = ai.quantTable.length ? ai.quantTable : base.quantTable
+  const comparison = ai.comparison.length
+    ? ai.comparison.map((r) => ({ ...r, episodeId: epById.get(r.index) ?? r.episodeId }))
+    : base.comparison
+  const questions = ai.questions.length ? ai.questions : base.questions
+
+  const words = [...overview, ...keyThemes.flatMap((t) => [t.heading, ...t.points])].join(' ').trim().split(/\s+/).length
+  return { ...base, overview, keyThemes, quantTable, comparison, questions, readMinutes: Math.max(1, Math.round(words / 200)) }
+}
+
+// ── Guidepoint-shaped deterministic builders ─────────────────────────────────
+// All derived ONLY from the per-episode summaries, in the canonical newest-first
+// `ready` order, so the [n] citation numbers are stable and the AI layer can reuse
+// the exact same ordering. Exported so weeklyApi/weeklyDigest share one source of
+// truth for the citation map + the source payload fed to the LLM.
+
+/** The canonical `[n]` → episode registry: 1-based, in `ready` (newest-first) order. */
+export function buildCitations(ready: Episode[], podcastById: ById): WeeklyCitation[] {
+  return ready.map((e, i) => ({
+    index: i + 1,
+    episodeId: e.id,
+    label: `${podcastById(e.podcastId)?.title ?? 'Unknown show'} — ${e.title}`,
+  }))
+}
+
+/** Aggregate the per-episode `quantData` into the weekly Quantitative Summary,
+ *  de-duped by metric+value, with the source citation appended to the context. */
+export function aggregateQuant(ready: Episode[], citations: WeeklyCitation[]): QuantPoint[] {
+  const idxById = new Map(citations.map((c) => [c.episodeId, c.index]))
+  const seen = new Set<string>()
+  const out: QuantPoint[] = []
+  for (const e of ready) {
+    const n = idxById.get(e.id)
+    for (const q of e.summary?.quantData ?? []) {
+      const dedupe = `${q.metric.toLowerCase()}|${q.value.toLowerCase()}`
+      if (seen.has(dedupe)) continue
+      seen.add(dedupe)
+      const cite = n ? ` [${n}]` : ''
+      out.push({ metric: q.metric, value: q.value, context: `${q.context}${cite}`.trim() })
+      if (out.length >= 16) return out
+    }
+  }
+  return out
+}
+
+/** One comparison row per episode (the deterministic fallback for the table). */
+export function buildComparison(ready: Episode[], citations: WeeklyCitation[], podcastById: ById): WeeklyComparisonRow[] {
+  const idxById = new Map(citations.map((c) => [c.episodeId, c.index]))
+  return ready.map((e) => {
+    const s = e.summary
+    const point =
+      (s?.insight?.whatChanged && s.insight.whatChanged) ||
+      (s ? keyHighlights(s)[0]?.detail : '') ||
+      (s?.synthesis?.[0] ?? e.blurb ?? '')
+    return {
+      index: idxById.get(e.id) ?? 0,
+      episodeId: e.id,
+      source: `${podcastById(e.podcastId)?.title ?? 'Unknown show'} — ${e.title}`,
+      speaker: e.entities?.people?.[0] ?? '—',
+      date: new Date(e.publishedAt).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }),
+      keyPoints: trim((point || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim(), 280),
+    }
+  })
+}
+
+/** A deterministic Key-Points fallback: cluster by top theme, each point a
+ *  claim-first highlight with its source citation. Overwritten by the AI layer. */
+export function derivedKeyThemes(ready: Episode[], citations: WeeklyCitation[]): WeeklyTheme[] {
+  const idxById = new Map(citations.map((c) => [c.episodeId, c.index]))
+  const themes = topTopics(ready, 4)
+  const out: WeeklyTheme[] = []
+  for (const t of themes) {
+    const points: string[] = []
+    for (const e of ready) {
+      const hay = `${e.title} ${e.summary?.synthesis?.join(' ') ?? ''} ${e.entities?.themes?.join(' ') ?? ''}`.toLowerCase()
+      if (!hay.includes(t.label.toLowerCase())) continue
+      const h = e.summary ? keyHighlights(e.summary)[0] : undefined
+      if (!h) continue
+      const n = idxById.get(e.id)
+      points.push(`**${h.title.replace(/\*\*/g, '').trim()}**: ${h.detail.replace(/\*\*/g, '').trim()}${n ? ` [${n}]` : ''}`)
+      if (points.length >= 4) break
+    }
+    if (points.length) out.push({ heading: t.label, points })
+  }
+  return out
+}
+
+/** Flatten the per-episode insights into the numbered `WeeklySource[]` the
+ *  synthesis LLM consumes — shared by the client and the cron so the prompt (and
+ *  thus the [n] alignment) is identical everywhere. */
+export function buildWeeklySources(ready: Episode[], citations: WeeklyCitation[], podcastById: ById): WeeklySource[] {
+  const idxById = new Map(citations.map((c) => [c.episodeId, c.index]))
+  const parties = (list?: { name: string; why: string }[]): string | undefined =>
+    list && list.length ? list.map((p) => `${p.name} — ${p.why}`).join('; ') : undefined
+  return ready.map((e) => {
+    const s = e.summary
+    const quant = (s?.quantData ?? []).slice(0, 6).map((q) => `${q.metric}: ${q.value}${q.context ? ` (${q.context})` : ''}`).join('; ')
+    const keyPoints = s ? keyHighlights(s).slice(0, 4).map((h) => h.title.replace(/\*\*/g, '').trim()).join('; ') : ''
+    return {
+      index: idxById.get(e.id) ?? 0,
+      show: podcastById(e.podcastId)?.title ?? 'Unknown show',
+      title: e.title,
+      date: new Date(e.publishedAt).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }),
+      speaker: e.entities?.people?.[0] ?? '—',
+      whatChanged: s?.insight?.whatChanged || undefined,
+      whyItMatters: s?.insight?.whyItMatters || undefined,
+      beneficiaries: parties(s?.insight?.beneficiaries),
+      atRisk: parties(s?.insight?.atRisk),
+      quant: quant || undefined,
+      keyPoints: keyPoints || undefined,
+    }
+  })
 }
 
 // ── Deterministic builders (real data, no fabrication) ───────────────────────

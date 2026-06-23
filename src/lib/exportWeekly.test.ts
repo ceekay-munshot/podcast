@@ -24,28 +24,28 @@ describe('weeklyToWord — institution-grade weekly doc', () => {
     expect(html).toContain('Georgia')
   })
 
-  it('renders the By Show body with each show as a sub-block', () => {
-    expect(html).toContain('By Show')
-    expect(html).toContain('class="show-head"')
-    expect(html).toContain('All-In')
-    expect(html).toContain('Odd Lots')
+  it('leads with the synthesised Guidepoint body: Key Points + the data tables', () => {
+    expect(html).toContain('Key Points')
+    expect(html).toContain('Power, not silicon, is the binding constraint') // a key-theme heading
+    expect(html).toContain('Quantitative Summary')
+    expect(html).toContain('Comparison Across Sources')
+    expect(html).toContain('class="dt"') // the data tables
+    expect(html).toContain('<strong>') // **bold** claim leads promoted to gold
   })
 
-  it('surfaces the pitched ideas with proponent and thesis', () => {
-    expect(html).toContain('Ideas Pitched')
-    expect(html).toContain('Long Nvidia (NVDA) into the capex supercycle')
-    expect(html).toContain('Pitched by <b>David Sacks</b>')
-    expect(html).toContain('<ul class="thesis">')
-    expect(html).toContain('<strong>power-constrained</strong>') // gold emphasis from **bold**
-    expect(html).toContain('class="idea-kind">stock</span>') // category badge
-  })
-
-  it('keeps cross-show themes/mentions, the dark quote panel, and a sources table', () => {
-    expect(html).toContain('Top Themes')
+  it('keeps mentions, the dark quote panel, and a sources table', () => {
     expect(html).toContain('Mentions')
     expect(html).toContain('class="interesting"') // dark navy quote panel
     expect(html).toContain('class="srcs"') // sources table
     expect(html).toContain('tag-') // colour-coded show tags
+  })
+
+  it('falls back to the By-Show body when there are no synthesised key themes', () => {
+    const noThemes = weeklyToWord({ ...WEEKLY, keyThemes: [] }, episodeById, podcastById)
+    expect(noThemes).toContain('By Show')
+    expect(noThemes).toContain('class="show-head"')
+    expect(noThemes).toContain('Long Nvidia (NVDA) into the capex supercycle')
+    expect(noThemes).toContain('Pitched by <b>David Sacks</b>')
   })
 })
 

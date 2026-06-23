@@ -76,13 +76,20 @@ export async function sendRawEmail(message: RawEmail, opts: { token?: string } =
       /* non-JSON (e.g. an HTML error page) — fall back to status below */
     }
     if (res.ok && payload?.success) {
-      return { ok: true, message: payload.data?.message || payload.message || 'Email sent.' }
+      return { ok: true, message: str(payload.data?.message) || str(payload.message) || 'Email sent.' }
     }
-    return { ok: false, message: payload?.message || payload?.data?.message || `Send failed (${res.status}).` }
+    // The endpoint sometimes nests a non-string error (e.g. { message: { statusCode } }),
+    // so coerce to a clean string — never let an object reach the UI as "[object Object]".
+    return { ok: false, message: str(payload?.message) || str(payload?.data?.message) || `Send failed (${res.status}).` }
   } catch {
     // Network down, blocked by CORS, or offline — degrade quietly.
     return { ok: false, message: "Couldn't reach the email service." }
   }
+}
+
+/** Only a non-empty string survives — guards the UI from a nested error object. */
+function str(v: unknown): string {
+  return typeof v === 'string' && v.trim() ? v : ''
 }
 
 // ── HTML email templates (email-client-safe) ────────────────────────────────
@@ -270,34 +277,6 @@ function showBlock(d: WeeklyShowDigest): string {
   return `<div style="margin:0 0 22px;">${head}${ideas}${takeaways}${questions}</div>`
 }
 
-function chipsRow(items: string[]): string {
-  if (!items.length) return ''
-  return items
-    .map(
-      (i) =>
-        `<span style="display:inline-block;font-family:${MONO};font-size:12px;letter-spacing:1px;text-transform:uppercase;color:${C.ink};background:${C.cream};border:1px solid #e2cf95;padding:4px 10px;margin:0 6px 6px 0;">${esc(
-          i,
-        )}</span>`,
-    )
-    .join('')
-}
-
-function mentionsCol(label: string, items: string[]): string {
-  const chips = items.length
-    ? items
-        .map(
-          (it) =>
-            `<span style="display:inline-block;font-family:${SANS};font-weight:700;font-size:12px;color:${C.ink};background:#eef2f7;border:1px solid #d4dbe6;padding:3px 9px;margin:0 5px 5px 0;">${esc(
-              it,
-            )}</span>`,
-        )
-        .join('')
-    : `<span style="font-family:${SANS};color:#828c99;">&mdash;</span>`
-  return `<div style="font-family:${SANS};font-weight:700;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:${C.ink};border-bottom:1px solid ${C.gold};padding-bottom:5px;margin:0 0 9px;">${esc(
-    label,
-  )}</div>${chips}`
-}
-
 type ById<T> = (id: string) => T | undefined
 
 /** Render a real Weekly edition as a designed HTML email (mirrors the Word/PDF). */
@@ -305,9 +284,19 @@ export function weeklyBriefEmailHtml(
   weekly: WeeklySummary,
   episodeById: ById<Episode>,
   podcastById: ById<Podcast>,
+  opts: { pdfUrl?: string } = {},
 ): string {
+  // The brief is the envelope; the hosted PDF is the deliverable. Lead with a
+  // prominent download button when a report URL is available.
+  const pdfButton = opts.pdfUrl
+    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0 4px;"><tr><td align="center">
+        <a href="${esc(opts.pdfUrl)}" style="display:inline-block;background:${C.navy};color:#ffffff;font-family:${SANS};font-weight:700;font-size:14px;text-decoration:none;padding:13px 26px;border-radius:6px;border:1px solid #6b5a2e;">&#11015;&nbsp; Download full PDF report</a>
+        <div style="font-family:${SANS};font-size:11px;color:#8794a8;margin-top:7px;">The complete edition — formatted as a PDF</div>
+      </td></tr></table>`
+    : ''
+
   const overview = weekly.overview.length
-    ? `${sectionLabel('This Week in Summary')}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.cream};border-left:3px solid ${C.gold};"><tr><td style="padding:14px 18px;">${weekly.overview
+    ? `${sectionLabel('Overview')}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.cream};border-left:3px solid ${C.gold};"><tr><td style="padding:14px 18px;">${weekly.overview
         .map(
           (p, i) =>
             `<p style="font-family:${SANS};font-size:14px;line-height:1.62;color:${C.prose};margin:0 0 ${
@@ -317,17 +306,39 @@ export function weeklyBriefEmailHtml(
         .join('')}</td></tr></table>`
     : ''
 
-  const shows = (weekly.shows ?? []).length ? sectionLabel('By Show') + (weekly.shows ?? []).map(showBlock).join('') : ''
+  // Key Points — the synthesised, claim-first cross-episode body (primary). Falls
+  // back to the by-show digest when no AI synthesis ran.
+  const keyThemes = weekly.keyThemes ?? []
+  const keyPoints = keyThemes.length
+    ? sectionLabel('Key Points') +
+      keyThemes
+        .map(
+          (t) =>
+            `<div style="font-family:${SANS};font-weight:700;font-size:14px;color:${C.ink};margin:14px 0 6px;">${esc(t.heading)}</div>` +
+            `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${t.points
+              .map(
+                (p) =>
+                  `<tr><td style="padding:0 0 8px;font-family:${SANS};font-size:13.5px;line-height:1.55;color:${C.body};"><span style="color:${C.gold};font-weight:700;">&#9670;</span> ${richInline(p)}</td></tr>`,
+              )
+              .join('')}</table>`,
+        )
+        .join('')
+    : ''
 
-  const themes = weekly.topThemes.length ? sectionLabel('Top Themes') + chipsRow(weekly.topThemes.map((t) => t.label)) : ''
+  const shows = !keyThemes.length && (weekly.shows ?? []).length ? sectionLabel('By Show') + (weekly.shows ?? []).map(showBlock).join('') : ''
 
-  const hasMentions = weekly.mentions.people.length > 0 || weekly.mentions.companies.length > 0
-  const mentions = hasMentions
-    ? sectionLabel('Mentions') +
-      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${C.line};"><tr>
-        <td width="50%" valign="top" style="padding:12px 14px;border-right:1px solid ${C.line};">${mentionsCol('People', weekly.mentions.people)}</td>
-        <td width="50%" valign="top" style="padding:12px 14px;">${mentionsCol('Companies', weekly.mentions.companies)}</td>
-      </tr></table>`
+  const quant = (weekly.quantTable ?? []).length
+    ? sectionLabel('Quantitative Summary') +
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${C.line};">${(weekly.quantTable ?? [])
+        .map(
+          (q, i) =>
+            `<tr${i % 2 ? ` style="background:#fafbfd;"` : ''}>
+              <td style="font-family:${SANS};font-size:13px;color:${C.ink};padding:7px 12px;border-bottom:1px solid ${C.line};">${esc(q.metric)}</td>
+              <td align="right" style="font-family:${SANS};font-size:13px;font-weight:700;color:${C.ink};white-space:nowrap;padding:7px 12px;border-bottom:1px solid ${C.line};">${esc(q.value)}</td>
+              <td style="font-family:${SANS};font-size:12px;color:#7d8ba3;padding:7px 12px;border-bottom:1px solid ${C.line};">${esc(q.context)}</td>
+            </tr>`,
+        )
+        .join('')}</table>`
     : ''
 
   const interesting = weekly.interesting.quote
@@ -361,7 +372,7 @@ export function weeklyBriefEmailHtml(
         .join('')}</table>`
     : ''
 
-  const bodyRow = `<tr><td style="padding:8px 36px 30px;">${overview}${shows}${themes}${mentions}${interesting}${sourcesBody}</td></tr>`
+  const bodyRow = `<tr><td style="padding:8px 36px 30px;">${pdfButton}${overview}${keyPoints}${shows}${quant}${interesting}${sourcesBody}</td></tr>`
 
   return shell(
     `Munshot Weekly — ${weekly.rangeLabel}`,

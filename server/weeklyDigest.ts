@@ -1,7 +1,8 @@
-import type { Episode, Podcast } from '../src/lib/types'
+import type { Episode, Podcast, WeeklySummary } from '../src/lib/types'
 import { PODCASTS } from '../src/lib/mock-data'
-import { assembleWeekly } from '../src/lib/weeklyAssemble'
+import { assembleWeekly, buildCitations, buildWeeklySources, hashKey, mergeWeeklyAi } from '../src/lib/weeklyAssemble'
 import { weeklyBriefEmailHtml } from '../src/lib/email'
+import { synthesizeWeekly, type SummarizeConfig } from './summarize'
 import type { SummaryStore } from './summaryStore'
 import type { SubscriberStore } from './subscriberStore'
 
@@ -42,6 +43,15 @@ export interface DigestDeps {
   subscriberStore: SubscriberStore | null
   /** Sends one email; returns whether it went out. Injected so tests don't hit the wire. */
   sendEmail: (msg: { email: string; subject: string; html: string }) => Promise<{ ok: boolean; message: string }>
+  /** LLM config for the cross-episode synthesis. When present (a key is set), the
+   *  emailed edition gets the SAME Guidepoint AI layer as the on-screen one; absent,
+   *  it falls back to the deterministic base. */
+  summarizeConfig?: SummarizeConfig
+  /** Render the weekly edition to PDF bytes (jsPDF). Optional — paired with
+   *  storePdf; when either is absent or throws, the brief sends without a link. */
+  generatePdf?: (weekly: WeeklySummary, episodeById: (id: string) => Episode | undefined, podcastById: (id: string) => Podcast | undefined) => Promise<ArrayBuffer>
+  /** Store the rendered PDF and return its hosted URL (the brief's download link). */
+  storePdf?: (bytes: ArrayBuffer) => Promise<string>
   /** Overridable clock for tests. */
   now?: number
 }
@@ -75,9 +85,31 @@ export async function runWeeklyDigest(deps: DigestDeps): Promise<{ status: numbe
     return { status: 200, body: { ok: true, sent: 0, failed: 0, recipients: 0, skipped: 'no_subscribers' } }
   }
 
-  const weekly = assembleWeekly(ready, podcastById)
+  // Deterministic base, then the SAME cross-episode AI synthesis the on-screen
+  // weekly uses (so the emailed edition isn't a poorer relation). The shared id
+  // means a browser visit this week and this cron reuse each other's one LLM call.
+  let weekly = assembleWeekly(ready, podcastById)
+  const cfg = deps.summarizeConfig
+  if (cfg && (cfg.openaiKey || cfg.anthropicKey)) {
+    const citations = buildCitations(ready, podcastById)
+    const sources = buildWeeklySources(ready, citations, podcastById)
+    const ai = await synthesizeWeekly({ id: `weekly:${hashKey(ready)}`, range: weekly.rangeLabel, sources }, { ...cfg, store: deps.summaryStore }).catch(() => null)
+    if (ai) weekly = mergeWeeklyAi(weekly, ai)
+  }
   const episodeById = (id: string): Episode | undefined => ready.find((e) => e.id === id)
-  const html = weeklyBriefEmailHtml(weekly, episodeById, podcastById)
+
+  // Generate + host the PDF once per edition (reused across every subscriber), then
+  // link it from the brief. Best-effort: a render/store failure just drops the link.
+  let pdfUrl: string | undefined
+  if (deps.generatePdf && deps.storePdf) {
+    try {
+      pdfUrl = await deps.storePdf(await deps.generatePdf(weekly, episodeById, podcastById))
+    } catch {
+      pdfUrl = undefined
+    }
+  }
+
+  const html = weeklyBriefEmailHtml(weekly, episodeById, podcastById, { pdfUrl })
   const subject = `Munshot Weekly — ${weekly.rangeLabel}`
 
   let sent = 0

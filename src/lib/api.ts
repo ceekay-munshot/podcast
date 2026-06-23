@@ -2,7 +2,8 @@ import type { Episode, Podcast, PodcastSearchResult, Summary, TranscriptSegment,
 import { EPISODES, PODCASTS, WEEKLY } from './mock-data'
 import { stableHash } from './hash'
 import { apiFetch } from './apiFetch'
-import { sendRawEmail, weeklyBriefEmailHtml, welcomeEmailHtml, type EmailResult } from './email'
+import { weeklyBriefEmailHtml, welcomeEmailHtml, type EmailResult } from './email'
+import { weeklyPdfBytes } from './pdfRender'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE SEAM.
@@ -145,11 +146,40 @@ export async function generateSummary(input: {
 // failed send can't masquerade as success in the UI. (A durable subscriber list
 // + the Monday cron remain server-side work; this delivers the user-facing half.)
 export async function subscribeWeekly(email: string, opts: { name?: string } = {}): Promise<{ subscribed: boolean; email: string; message: string }> {
-  const res = await sendRawEmail({ email, subject: "You're subscribed — Munshot Weekly Brief", html: welcomeEmailHtml({ name: opts.name }) })
+  const res = await postEmail({ to: email, subject: "You're subscribed — Munshot Weekly Brief", html: welcomeEmailHtml({ name: opts.name }) })
   // Only register on the durable list once the confirmation actually sent, so the
   // Monday digest's recipients match who got a working welcome. Best-effort.
   if (res.ok) void persistSubscription('POST', email)
   return { subscribed: res.ok, email, message: res.message }
+}
+
+// Send through the same-origin proxy (/api/email/send), which holds the service
+// token server-side and relays to the raw-email endpoint. This is what fixes the
+// partitioned-iframe failure: a same-origin call needs no cross-origin cookie.
+async function postEmail(msg: { to: string; subject: string; html: string }): Promise<EmailResult> {
+  try {
+    const r = await apiFetch('/api/email/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(msg) })
+    const data = (await r.json().catch(() => null)) as EmailResult | null
+    if (data && typeof data.ok === 'boolean') return data
+    return { ok: r.ok, message: r.ok ? 'Email sent.' : `Send failed (${r.status}).` }
+  } catch {
+    return { ok: false, message: "Couldn't reach the email service." }
+  }
+}
+
+// Generate the weekly PDF in the browser (jsPDF already runs client-side), upload
+// the bytes to the hosted-report store, and return a public URL — or null on any
+// failure, so the edition still sends as a brief without the download link.
+async function hostWeeklyPdf(weekly: WeeklySummary, episodeById: (id: string) => Episode | undefined, podcastById: (id: string) => Podcast | undefined): Promise<string | null> {
+  try {
+    const bytes = await weeklyPdfBytes(weekly, episodeById, podcastById)
+    const r = await apiFetch('/api/report', { method: 'POST', headers: { 'content-type': 'application/pdf' }, body: bytes })
+    if (!r.ok) return null
+    const { url } = (await r.json()) as { url?: string }
+    return url ?? null
+  } catch {
+    return null
+  }
 }
 
 export function unsubscribeWeekly(email: string): Promise<{ subscribed: boolean; email: string }> {
@@ -180,10 +210,13 @@ export async function emailWeeklyEdition(
   episodeById: (id: string) => Episode | undefined,
   podcastById: (id: string) => Podcast | undefined,
 ): Promise<EmailResult> {
-  return sendRawEmail({
-    email,
+  // The PDF is the deliverable: render + host it, then send a brief that links to
+  // it. A failed render/upload degrades to a brief with no link, never a hard fail.
+  const pdfUrl = (await hostWeeklyPdf(weekly, episodeById, podcastById)) ?? undefined
+  return postEmail({
+    to: email,
     subject: `Munshot Weekly — ${weekly.rangeLabel}`,
-    html: weeklyBriefEmailHtml(weekly, episodeById, podcastById),
+    html: weeklyBriefEmailHtml(weekly, episodeById, podcastById, { pdfUrl }),
   })
 }
 
