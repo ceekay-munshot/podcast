@@ -233,6 +233,10 @@ export function DownloadMenu({
                       <span>{addErr}</span>
                     </p>
                   )}
+                  <p className="mt-2 flex items-start gap-1.5 border-t border-outline-variant pt-2 text-[11px] leading-snug text-secondary">
+                    <Icon name="event_repeat" size={13} className="mt-px shrink-0 text-primary" />
+                    <span>Saved recipients also get the automated weekly brief every Monday.</span>
+                  </p>
                 </div>
               )}
             </>

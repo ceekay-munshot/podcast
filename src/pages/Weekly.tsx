@@ -5,7 +5,7 @@ import { useAppData } from '../store/AppData'
 import { useSentiment } from '../store/Sentiment'
 import { downloadWeekly } from '../lib/exportWeekly'
 import { downloadWeeklyPdf } from '../lib/pdfRender'
-import { emailWeeklyEdition } from '../lib/api'
+import { emailWeeklyEdition, registerWeeklyRecipient, unregisterWeeklyRecipient } from '../lib/api'
 import { generateWeekly } from '../lib/weeklyApi'
 import { listEditions } from '../lib/weeklyEditions'
 import { weeklyToneView } from '../lib/tone'
@@ -36,19 +36,29 @@ export default function Weekly() {
   // they subscribed the weekly brief with. Absent → the menu item is hidden.
   const userEmail = identity?.email || readSubscribedEmail()
 
-  // Extra recipients (besides the user) the edition also goes to — typed in the
-  // Download menu and saved locally, per user. Mirrored in state so add/remove
-  // re-renders the chips immediately; the store is the source of truth.
+  // Extra recipients (besides the user) the edition goes to — typed in the Download
+  // menu and saved locally, per user. Each is ALSO put on the durable Monday-digest
+  // list, so anyone the user adds (e.g. their boss) receives the automated weekly,
+  // not just an on-demand send. The local list mirrors the chips for instant
+  // re-render; the store is the source of truth, the subscriber list the sink.
   const [extraRecipients, setExtraRecipients] = useState<string[]>([])
   useEffect(() => {
-    setExtraRecipients(loadRecipients())
+    const saved = loadRecipients()
+    setExtraRecipients(saved)
+    // Migration / self-heal: make sure every saved recipient is on the digest list
+    // (covers addresses saved before this wiring, and any earlier missed write).
+    for (const addr of saved) void registerWeeklyRecipient(addr)
   }, [userEmail])
   const addExtraRecipient = (addr: string) => {
     const res = addRecipient(addr)
     setExtraRecipients(res.list)
+    if (res.ok) void registerWeeklyRecipient(addr) // also subscribe to the Monday digest
     return { ok: res.ok, message: res.message }
   }
-  const removeExtraRecipient = (addr: string) => setExtraRecipients(removeRecipient(addr))
+  const removeExtraRecipient = (addr: string) => {
+    setExtraRecipients(removeRecipient(addr))
+    void unregisterWeeklyRecipient(addr) // stop the Monday digest for this address
+  }
 
   // The history: ready episodes sliced into per-week editions (newest first).
   const editions = useMemo(() => listEditions(episodes, podcastById), [episodes, podcastById])

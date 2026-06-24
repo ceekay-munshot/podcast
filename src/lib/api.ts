@@ -188,6 +188,17 @@ export function unsubscribeWeekly(email: string): Promise<{ subscribed: boolean;
   return delay({ subscribed: false, email })
 }
 
+// Put an extra recipient on (or off) the durable Monday-digest list, so anyone the
+// user adds in the dashboard — their boss, a colleague — gets the automated weekly
+// too, not just an on-demand "Email this edition". Idempotent and fire-and-forget;
+// it reuses the same subscriber list / endpoint as the personal subscription.
+export function registerWeeklyRecipient(email: string): Promise<void> {
+  return persistSubscription('POST', email)
+}
+export function unregisterWeeklyRecipient(email: string): Promise<void> {
+  return persistSubscription('DELETE', email)
+}
+
 // Add/remove this address on the server-side subscriber list (/api/subscriptions/
 // weekly) that the scheduled Monday digest reads. Fire-and-forget: the local
 // localStorage mirror is the source of truth for the UI, and a missed write
