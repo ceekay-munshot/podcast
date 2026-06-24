@@ -139,7 +139,9 @@ function liveApiPlugin(config: {
           const to = (b.to ?? '').trim()
           const text = typeof b.text === 'string' ? b.text : undefined
           const html = typeof b.html === 'string' ? b.html : undefined
-          if (!to || !b.subject || !!text === !!html) return json(res, 400, { ok: false, message: 'A recipient, subject, and exactly one of text or html are required.' })
+          // Same recipient hardening as prod: one valid address, no header-injection newlines.
+          if (!/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(to) || /[\r\n]/.test(to)) return json(res, 400, { ok: false, message: 'A valid recipient email is required.' })
+          if (!b.subject || /[\r\n]/.test(b.subject) || !!text === !!html) return json(res, 400, { ok: false, message: 'A subject and exactly one of text or html are required.' })
           const msg: RawEmail = html ? { email: to, subject: b.subject, html } : { email: to, subject: b.subject, text: text as string }
           const result = await sendRawEmail(msg, { token: config.emailToken })
           json(res, result.ok ? 200 : 502, result)

@@ -43,6 +43,7 @@ export interface SummaryStore {
 // `npm run build` (tsconfig includes only src/), so this lightweight local
 // declaration is just for editor sanity — the real binding is provided at runtime.
 export interface KVNamespace {
+  get(key: string): Promise<string | null>
   get(key: string, type: 'json'): Promise<unknown>
   get(key: string, type: 'arrayBuffer'): Promise<ArrayBuffer | null>
   put(key: string, value: string | ArrayBuffer, options?: { expirationTtl?: number }): Promise<void>
