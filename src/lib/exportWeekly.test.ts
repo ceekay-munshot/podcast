@@ -28,7 +28,8 @@ describe('weeklyToWord — institution-grade weekly doc', () => {
     expect(html).toContain('Key Points')
     expect(html).toContain('Power, not silicon, is the binding constraint') // a key-theme heading
     expect(html).toContain('Quantitative Summary')
-    expect(html).toContain('Comparison Across Sources')
+    expect(html).toContain('Investment Readout')
+    expect(html).toContain('Investment interpretation') // a readout card label
     expect(html).toContain('class="dt"') // the data tables
     expect(html).toContain('<strong>') // **bold** claim leads promoted to gold
   })

@@ -25,7 +25,10 @@ import type { SummarizeResult } from './summarize' // type-only → erased at ru
 // r8: harden normalize — coerce `synthesis` (and the weekly `overview`) to a
 //     string[] even when the model returns one string, so the UI/PDF `.map` over
 //     paragraphs can't crash; invalidates any poisoned r7 string-synthesis caches.
-export const SUMMARY_REVISION = 8
+// r9: weekly replaces the comparison table with per-episode investment readouts
+//     (table + cards) under a strict evidence rule; feeds diligence + lead
+//     synthesis into the prompt. Invalidates r8 comparison-only weekly caches.
+export const SUMMARY_REVISION = 9
 
 /** The shared cache key for an episode. The episode id is stable across all users
  *  of the same feed (`live-${podcastId}-${hash(guid|link|title+date)}`), so this is

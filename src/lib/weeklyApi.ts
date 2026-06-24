@@ -30,10 +30,10 @@ export { buildShowDigests }
 
 const SESSION = new Map<string, WeeklySummary>()
 
-// One user-scoped cache key for both layers (memory map + localStorage). The `:v3`
-// namespace retires the pre-Guidepoint shape (no keyThemes/quantTable/comparison),
-// so a stale cached edition is never read after this format change.
-const cacheKey = (key: string): string => scopedKey('munshot:weekly:v3') + `:${key}`
+// One user-scoped cache key for both layers (memory map + localStorage). The `:v4`
+// namespace retires the comparison-table shape (replaced by per-episode investment
+// readouts), so a stale cached edition is never read after this format change.
+const cacheKey = (key: string): string => scopedKey('munshot:weekly:v4') + `:${key}`
 
 export interface WeeklyOptions {
   /** Disambiguates the cache entry — pass the ISO week key (or 'all'). Keeps two

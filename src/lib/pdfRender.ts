@@ -31,8 +31,14 @@ type RGB = [number, number, number]
 type ById<T> = (id: string) => T | undefined
 
 const A4 = { w: 595.28, h: 841.89 } // points
+const A4L = { w: A4.h, h: A4.w } // landscape A4 — the fold-out for the wide Investment Readout table
 const M = { l: 46, r: 46, t: 46, b: 48 }
 const CW = A4.w - M.l - M.r
+const LWC = A4L.w - M.l - M.r // landscape content width
+
+// Each readout sits under its own episode, so the inline [n] citation markers are
+// redundant noise in the table/cards — strip them for display.
+const stripCites = (s: string): string => s.replace(/\s*\[\d+\]/g, '').replace(/\s{2,}/g, ' ').trim()
 
 const C: Record<string, RGB> = {
   navy: [26, 43, 74],
@@ -94,6 +100,9 @@ export type Block =
   | { k: 'moment'; ts: string; star: boolean; title: string; detail: string }
   | { k: 'qa'; q: string; a: string }
   | { k: 'table'; cols: Col[]; rows: string[][] }
+  | { k: 'note'; text: string }
+  | { k: 'readoutTable'; cols: Col[]; rows: string[][] }
+  | { k: 'readoutCard'; episode: string; theme: string; confidence: string; namesSectors: string; evidence: string; interpretation: string; questionsToVerify: string[]; action: string }
   | { k: 'sources'; rows: { episode: string; show: string }[] }
   | { k: 'footer'; left: string; right: string }
 
@@ -172,7 +181,7 @@ export function weeklyBlocks(weekly: WeeklySummary, episodeById: ById<Episode>, 
 
   const keyThemes = weekly.keyThemes ?? []
   const quant = weekly.quantTable ?? []
-  const comparison = weekly.comparison ?? []
+  const readouts = weekly.episodeReadouts ?? []
   const shows = weekly.shows ?? []
 
   const { body, toc } = sectioned((sec, b) => {
@@ -200,13 +209,38 @@ export function weeklyBlocks(weekly: WeeklySummary, episodeById: ById<Episode>, 
       }
     }
 
-    if (comparison.length) {
-      sec('Comparison Across Sources')
+    if (readouts.length) {
+      sec('Investment Readout')
       b.push({
-        k: 'table',
-        cols: [{ header: 'Transcript', w: 0.34 }, { header: 'Voice', w: 0.18 }, { header: 'Date', w: 0.13, align: 'right' }, { header: 'Key Points', w: 0.35 }],
-        rows: comparison.map((c) => [c.index ? `[${c.index}] ${c.source}` : c.source, c.speaker, c.date, c.keyPoints]),
+        k: 'note',
+        text: 'One readout per episode — what the podcast **actually said**, kept strictly separate from the investment **interpretation**, with the external checks to run next. The wide summary table is on the next (landscape) page; the per-episode detail follows it.',
       })
+      b.push({
+        k: 'readoutTable',
+        cols: [
+          { header: 'Episode', w: 0.11 },
+          { header: 'Investable Theme', w: 0.16 },
+          { header: 'Podcast Evidence', w: 0.21 },
+          { header: 'Investment Interpretation', w: 0.21 },
+          { header: 'Names / Sectors', w: 0.12 },
+          { header: 'Conf.', w: 0.06 },
+          { header: 'Action', w: 0.13 },
+        ],
+        rows: readouts.map((r) => [r.episode, stripCites(r.theme), stripCites(r.evidence), stripCites(r.interpretation), r.namesSectors, r.confidence, stripCites(r.action)]),
+      })
+      for (const r of readouts) {
+        b.push({
+          k: 'readoutCard',
+          episode: r.episode,
+          theme: stripCites(r.theme),
+          confidence: r.confidence,
+          namesSectors: r.namesSectors,
+          evidence: stripCites(r.evidence),
+          interpretation: stripCites(r.interpretation),
+          questionsToVerify: r.questionsToVerify.map(stripCites),
+          action: stripCites(r.action),
+        })
+      }
     }
 
     // Concrete calls — flattened across shows (kept out of the fragmented by-show
@@ -325,6 +359,8 @@ export class Painter {
   private readonly pageMap?: Map<string, number>
   /** Pass-1 (probe) render: records each section's start page for the TOC. */
   private readonly record?: Map<string, number>
+  /** Page numbers rendered in landscape (the readout fold-out) — the footer pass skips them. */
+  readonly landscapePages = new Set<number>()
   y = M.t
 
   constructor(doc: JsPdf, logo?: string, opts: { pageMap?: Map<string, number>; record?: Map<string, number> } = {}) {
@@ -1231,13 +1267,158 @@ export class Painter {
     }
     this.y += 2
   }
+
+  // ── Investment Readout (weekly) — a plain intro paragraph, a landscape fold-out
+  //    summary table, and the per-episode cards. ───────────────────────────────
+  note(text: string) {
+    this.ensure(16)
+    this.rich(runs(text), M.l, CW, { sz: 9.4, lh: 14, fam: 'helvetica', color: C.ink2, boldColor: C.navy }, true)
+    this.y += 8
+  }
+
+  // The wide 7-column summary, on its own landscape page(s). Adds the landscape
+  // page(s) here and returns to a portrait page for the cards that follow.
+  readoutTable(cols: Col[], rows: string[][]) {
+    this.d.addPage('a4', 'landscape')
+    this.landscapePages.add(this.d.getNumberOfPages())
+    this.y = M.t
+    this.font('times', 'bold')
+    this.d.setFontSize(13)
+    this.color(C.navy)
+    this.at('Investment Readout — per-episode summary', M.l, this.y)
+    this.y += 20
+    const pad = 8
+    const totalW = cols.reduce((a, c) => a + c.w, 0) || 1
+    const widths = cols.map((c) => (c.w / totalW) * LWC)
+    const xs: number[] = []
+    let acc = M.l
+    for (const w of widths) {
+      xs.push(acc)
+      acc += w
+    }
+    const cellOpt = (align?: 'left' | 'right'): RichOpts => ({ sz: 7.7, lh: 10.2, fam: 'helvetica', color: C.body, boldColor: C.navy, noBreak: true, align })
+    const header = () => {
+      this.font('helvetica', 'bold')
+      this.d.setFontSize(6.6)
+      this.color(C.gold)
+      this.d.setCharSpace(0.8)
+      cols.forEach((c, i) => {
+        const label = c.header.toUpperCase()
+        const lx = c.align === 'right' ? xs[i] + widths[i] - pad - this.spacedW(label, 0.8) : xs[i] + pad
+        this.at(label, lx, this.y + 4)
+      })
+      this.d.setCharSpace(0)
+      this.y += 14
+      this.stroke(C.gold, 1.2)
+      this.d.line(M.l, this.y, M.l + LWC, this.y)
+      this.y += 3
+    }
+    header()
+    let zebra = false
+    for (const row of rows) {
+      let maxLines = 1
+      cols.forEach((c, i) => {
+        const lines = this.rich(runs(row[i] ?? ''), xs[i] + pad, widths[i] - 2 * pad, cellOpt(c.align), false)
+        if (lines > maxLines) maxLines = lines
+      })
+      const rh = maxLines * 10.2 + 8
+      if (this.y + rh > A4L.h - M.b) {
+        this.d.addPage('a4', 'landscape')
+        this.landscapePages.add(this.d.getNumberOfPages())
+        this.y = M.t
+        header()
+      }
+      const top = this.y
+      if (zebra) {
+        this.fill(C.zebra)
+        this.d.rect(M.l, top, LWC, rh, 'F')
+      }
+      cols.forEach((c, i) => {
+        this.y = top + 5
+        this.rich(runs(row[i] ?? ''), xs[i] + pad, widths[i] - 2 * pad, cellOpt(c.align), true)
+      })
+      this.y = top + rh
+      this.stroke(C.line, 0.5)
+      this.d.line(M.l, this.y, M.l + LWC, this.y)
+      zebra = !zebra
+    }
+    this.d.addPage('a4', 'portrait')
+    this.y = M.t
+  }
+
+  readoutCard(b: Extract<Block, { k: 'readoutCard' }>) {
+    this.ensure(40)
+    this.y += 4
+    // Episode title + a confidence chip pinned to the right.
+    this.font('times', 'bold')
+    this.d.setFontSize(13)
+    this.color(C.navy)
+    this.at(b.episode, M.l, this.y)
+    const lvl = b.confidence
+    const cc: RGB = lvl === 'High' ? [42, 122, 72] : lvl === 'Low' ? C.slate : C.gold
+    this.font('helvetica', 'bold')
+    this.d.setFontSize(6.8)
+    this.d.setCharSpace(0.6)
+    const cl = `${lvl.toUpperCase()} CONFIDENCE`
+    const cw = this.spacedW(cl, 0.6) + 14
+    this.stroke(cc, 0.7)
+    this.d.roundedRect(M.l + CW - cw, this.y - 1, cw, 12, 6, 6, 'S')
+    this.color(cc)
+    this.at(cl, M.l + CW - cw + 7, this.y + 2.5)
+    this.d.setCharSpace(0)
+    this.y += 16
+    // Theme (gold).
+    this.rich(runs(b.theme), M.l, CW, { sz: 10, lh: 13, fam: 'helvetica', color: C.gold, boldColor: C.gold }, true)
+    if (b.namesSectors && b.namesSectors !== '—') {
+      this.font('helvetica', 'normal')
+      this.d.setFontSize(8)
+      this.color(C.slate)
+      this.at(b.namesSectors, M.l, this.y)
+      this.y += 12
+    }
+    this.y += 3
+    const labelRow = (label: string) => {
+      this.ensure(16)
+      this.fill(C.gold)
+      this.d.rect(M.l, this.y + 3, 10, 2, 'F')
+      this.font('helvetica', 'bold')
+      this.d.setFontSize(7.4)
+      this.color(C.gold)
+      this.d.setCharSpace(1.2)
+      this.at(label.toUpperCase(), M.l + 16, this.y)
+      this.d.setCharSpace(0)
+      this.y += 13
+    }
+    const prose = (s: string) => {
+      this.rich(runs(s), M.l, CW, { sz: 9.4, lh: 13, fam: 'helvetica', color: C.ink2, boldColor: C.navy }, true)
+      this.y += 5
+    }
+    labelRow('Podcast evidence')
+    prose(b.evidence)
+    labelRow('Investment interpretation')
+    prose(b.interpretation)
+    if (b.questionsToVerify.length) {
+      labelRow('Questions to verify')
+      this.questions(b.questionsToVerify)
+    }
+    if (b.action) {
+      labelRow('Action')
+      prose(b.action)
+    }
+    this.y += 4
+    this.stroke(C.line, 0.6)
+    this.d.line(M.l, this.y, M.l + CW, this.y)
+    this.y += 8
+  }
 }
 
-// Stamp a running footer on every page except the full-bleed cover. Page numbers
-// are only knowable after the whole document is laid out, hence a post-pass.
-function stampFooters(doc: JsPdf, opts: { left: string; right: string }): void {
+// Stamp a running footer on every page except the full-bleed cover (and the
+// landscape readout fold-out pages, which have no room for it). Page numbers are
+// only knowable after the whole document is laid out, hence a post-pass.
+function stampFooters(doc: JsPdf, opts: { left: string; right: string; skip?: Set<number> }): void {
   const total = doc.getNumberOfPages()
   for (let i = 2; i <= total; i++) {
+    if (opts.skip?.has(i)) continue
     doc.setPage(i)
     const y = A4.h - 30
     doc.setDrawColor(216, 193, 135)
@@ -1328,6 +1509,15 @@ export function renderBlocks(p: Painter, blocks: Block[]): void {
       case 'table':
         p.table(b.cols, b.rows)
         break
+      case 'note':
+        p.note(b.text)
+        break
+      case 'readoutTable':
+        p.readoutTable(b.cols, b.rows)
+        break
+      case 'readoutCard':
+        p.readoutCard(b)
+        break
       case 'lead':
         p.lead(b.paras)
         break
@@ -1383,8 +1573,9 @@ function renderDoc(jsPDF: typeof JsPdf, blocks: Block[], logo: string | undefine
   // Pass 2 — real: resolve TOC page numbers, then stamp footers.
   const doc = new jsPDF(opts)
   doc.setProperties({ title })
-  renderBlocks(new Painter(doc, logo, { pageMap: record }), blocks)
-  stampFooters(doc, { left: FOOTER_LEFT, right: footerRight })
+  const painter = new Painter(doc, logo, { pageMap: record })
+  renderBlocks(painter, blocks)
+  stampFooters(doc, { left: FOOTER_LEFT, right: footerRight, skip: painter.landscapePages })
   return doc
 }
 

@@ -32,21 +32,25 @@ describe('weeklyBlocks — Guidepoint house style', () => {
   it('opens with the cover + table of contents, then the synthesised sections in order', () => {
     expect(blocks[0]).toMatchObject({ k: 'cover', title: 'Weekly Summary', dateRange: WEEKLY.rangeLabel })
     expect(blocks[1].k).toBe('toc')
-    expect(titles(blocks)).toEqual(['Overview', 'Key Points', 'Quantitative Summary', 'Comparison Across Sources', 'Ideas Pitched', 'Sources'])
+    expect(titles(blocks)).toEqual(['Overview', 'Key Points', 'Quantitative Summary', 'Investment Readout', 'Ideas Pitched', 'Sources'])
   })
 
-  it('carries the TOC, the quant + comparison tables, and the pitched ideas', () => {
+  it('carries the TOC, the quant tables + the Investment Readout, and the pitched ideas', () => {
     // The TOC lists exactly the emitted sections.
     const toc = blocks.find((b): b is Extract<Block, { k: 'toc' }> => b.k === 'toc')!
     expect(toc.rows.map((r) => r.title)).toEqual(titles(blocks))
-    // Data tables: the Quantitative Summary is now split per source episode (one
-    // table each, headed by a subhead block), plus the single Comparison table.
+    // The Quantitative Summary is split per source episode (one table each).
     const tables = blocks.filter((b): b is Extract<Block, { k: 'table' }> => b.k === 'table')
     const quantTables = tables.filter((t) => t.cols[0]?.header === 'Metric')
-    const comparisonTables = tables.filter((t) => t.cols[0]?.header === 'Transcript')
     expect(quantTables.length).toBeGreaterThan(1) // grouped by episode, not one big table
-    expect(comparisonTables).toHaveLength(1)
     expect(quantTables.reduce((n, t) => n + t.rows.length, 0)).toBeGreaterThan(0)
+    // Investment Readout: a landscape summary table + one card per source episode.
+    const readoutTable = blocks.filter((b): b is Extract<Block, { k: 'readoutTable' }> => b.k === 'readoutTable')
+    const readoutCards = blocks.filter((b): b is Extract<Block, { k: 'readoutCard' }> => b.k === 'readoutCard')
+    expect(readoutTable).toHaveLength(1)
+    expect(readoutTable[0].cols[0]?.header).toBe('Episode')
+    expect(readoutCards.length).toBe((WEEKLY.episodeReadouts ?? []).length)
+    expect(readoutCards.length).toBeGreaterThan(0)
     // Pitched ideas flattened across shows.
     const idea = ideas(blocks).find((i) => i.title === 'Long Nvidia (NVDA) into the capex supercycle')
     expect(idea?.who).toBe('David Sacks')

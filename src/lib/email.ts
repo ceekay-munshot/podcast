@@ -372,6 +372,42 @@ export function weeklyBriefEmailHtml(
         .join('')
     : ''
 
+  // Investment Readout — per-episode evidence/interpretation. Email can't scroll a
+  // wide table, so: a compact scannable table (episode · theme · names · confidence)
+  // then full cards carrying the evidence / interpretation / questions / action.
+  const readouts = weekly.episodeReadouts ?? []
+  const stripN = (s: string) => s.replace(/\s*\[\d+\]/g, '').replace(/\s{2,}/g, ' ').trim()
+  const confPill = (level: string) => {
+    const [bg, fg] = level === 'High' ? ['#e7f3ec', '#2a7a48'] : level === 'Low' ? ['#f1f3f7', '#8794a8'] : ['#eef1f6', C.navy]
+    return `<span style="display:inline-block;background:${bg};color:${fg};font-family:${SANS};font-weight:700;font-size:10.5px;padding:2px 8px;border-radius:5px;white-space:nowrap;">${esc(level)}</span>`
+  }
+  const th = `font-family:${SANS};font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#7d8ba3;padding:7px 10px;border-bottom:1px solid ${C.line};`
+  const cardLabel = (t: string) => `<div style="font-family:${SANS};font-weight:700;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:${C.gold};margin:11px 0 3px;">${t}</div>`
+  const cardProse = (s: string) => `<div style="font-family:${SANS};font-size:13px;line-height:1.55;color:${C.prose};">${richInline(stripN(s))}</div>`
+  const readout = readouts.length
+    ? sectionLabel('Investment Readout') +
+      `<p style="font-family:${SANS};font-size:13px;line-height:1.55;color:${C.body};margin:0 0 12px;">One readout per episode — what the podcast <em>actually said</em>, kept separate from the investment interpretation, with what to verify next.</p>` +
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${C.line};margin-bottom:4px;"><tr style="background:${C.panel};"><th align="left" style="${th}">Episode</th><th align="left" style="${th}">Investable Theme</th><th align="left" style="${th}">Names / Sectors</th><th align="left" style="${th}">Confidence</th></tr>${readouts
+        .map(
+          (r, i) =>
+            `<tr${i % 2 ? ` style="background:#fafbfd;"` : ''}><td style="font-family:${SANS};font-size:12.5px;font-weight:600;color:${C.ink};padding:7px 10px;border-bottom:1px solid ${C.line};">${esc(r.episode)}</td><td style="font-family:${SANS};font-size:12.5px;color:${C.ink};padding:7px 10px;border-bottom:1px solid ${C.line};">${richInline(stripN(r.theme))}</td><td style="font-family:${SANS};font-size:11.5px;color:#7d8ba3;padding:7px 10px;border-bottom:1px solid ${C.line};">${esc(r.namesSectors)}</td><td style="padding:7px 10px;border-bottom:1px solid ${C.line};">${confPill(r.confidence)}</td></tr>`,
+        )
+        .join('')}</table>` +
+      readouts
+        .map(
+          (r) =>
+            `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${C.line};margin-top:10px;"><tr><td style="padding:13px 16px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="font-family:${SANS};font-weight:700;font-size:15px;color:${C.ink};">${esc(r.episode)}<div style="font-family:${SANS};font-weight:600;font-size:13px;color:${C.gold};margin-top:2px;">${richInline(stripN(r.theme))}</div></td><td align="right" valign="top" style="white-space:nowrap;">${confPill(r.confidence)}</td></tr></table>
+        ${r.namesSectors && r.namesSectors !== '—' ? `<div style="font-family:${SANS};font-size:11.5px;color:#8794a8;margin-top:5px;">${esc(r.namesSectors)}</div>` : ''}
+        ${cardLabel('Podcast evidence')}${cardProse(r.evidence)}
+        ${cardLabel('Investment interpretation')}${cardProse(r.interpretation)}
+        ${r.questionsToVerify.length ? cardLabel('Questions to verify') + `<ul style="margin:0;padding-left:18px;font-family:${SANS};font-size:13px;line-height:1.5;color:${C.prose};">${r.questionsToVerify.map((q) => `<li style="margin-bottom:2px;">${richInline(stripN(q))}</li>`).join('')}</ul>` : ''}
+        ${r.action ? cardLabel('Action') + cardProse(r.action) : ''}
+      </td></tr></table>`,
+        )
+        .join('')
+    : ''
+
   const interesting = weekly.interesting.quote
     ? sectionLabel('What Was Actually Interesting') +
       `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.navy};border:1px solid #6b5a2e;"><tr><td style="padding:16px 22px 18px;">
@@ -401,7 +437,7 @@ export function weeklyBriefEmailHtml(
         .join('')}<tr><td colspan="2" style="padding:12px 10px 0;font-family:${SANS};font-size:12px;">&#8594; <a href="${MUNS_DASHBOARD}" style="color:${C.gold};font-weight:700;text-decoration:none;">Open all of these on your Munshot dashboard</a></td></tr></table>`
     : ''
 
-  const bodyRow = `<tr><td style="padding:8px 36px 30px;">${ctaRow}${overview}${keyPoints}${shows}${quant}${interesting}${sourcesBody}</td></tr>`
+  const bodyRow = `<tr><td style="padding:8px 36px 30px;">${ctaRow}${overview}${keyPoints}${shows}${quant}${readout}${interesting}${sourcesBody}</td></tr>`
 
   return shell(
     `Munshot Weekly — ${weekly.rangeLabel}`,

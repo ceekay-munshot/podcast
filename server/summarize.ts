@@ -1,4 +1,4 @@
-import type { EpisodeInsight, EpisodeTone, Highlight, Idea, InsightParty, QAItem, QuantPoint, Summary, TranscriptSegment, WeeklyAi, WeeklyComparisonRow, WeeklySource, WeeklyTheme } from '../src/lib/types'
+import type { EpisodeInsight, EpisodeTone, Highlight, Idea, InsightParty, QAItem, QuantPoint, Summary, TranscriptSegment, WeeklyAi, WeeklyEpisodeReadout, WeeklySource, WeeklyTheme } from '../src/lib/types'
 import { stableHash } from '../src/lib/hash'
 import { transcribeEpisode } from './transcribe'
 import { SUMMARY_REVISION, sharedSummaryKey, type SummaryStore } from './summaryStore'
@@ -564,10 +564,11 @@ async function viaOpenAI(prompt: { system: string; user: string }, apiKey: strin
     headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
       model,
-      // 12288 leaves room for the richer schema (synthesis + comprehensive Q&A +
-      // the investable insight + quant table). Keep it under ~16K: this is a
-      // non-streaming raw fetch, and larger outputs risk HTTP timeouts.
-      max_completion_tokens: 12288,
+      // 16000 leaves room for the richer schema (synthesis + comprehensive Q&A +
+      // the investable insight + quant table + the per-episode investment readouts).
+      // Keep it under ~16K: this is a non-streaming raw fetch, and larger outputs
+      // risk HTTP timeouts.
+      max_completion_tokens: 16000,
       messages: [
         { role: 'system', content: prompt.system },
         { role: 'user', content: prompt.user },
@@ -594,9 +595,9 @@ async function viaAnthropic(prompt: { system: string; user: string }, apiKey: st
     headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
     body: JSON.stringify({
       model,
-      // Room for the richer schema (comprehensive Q&A + insight + quant); <~16K keeps
-      // this non-streaming request under HTTP timeouts.
-      max_tokens: 12288,
+      // Room for the richer schema (comprehensive Q&A + insight + quant + per-episode
+      // investment readouts); <~16K keeps this non-streaming request under HTTP timeouts.
+      max_tokens: 16000,
       system: prompt.system,
       tools: [{ name: 'emit_summary', description: 'Emit the structured summary.', input_schema: schema }],
       tool_choice: { type: 'tool', name: 'emit_summary' },
@@ -665,21 +666,38 @@ const WEEKLY_SCHEMA = {
       },
       description: 'The Quantitative Summary — the hard numbers from across the week. Use ONLY figures that appear in the input material; never invent, round-to-invent, or infer. EMPTY when the week states no figures.',
     },
-    comparison: {
+    episodeReadouts: {
       type: 'array',
       items: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          index: { type: 'number', description: 'The SOURCE NUMBER this row is about (matches the [n] in the input).' },
-          source: { type: 'string', description: 'Show — episode title.' },
-          speaker: { type: 'string', description: 'The lead voice, or "—".' },
-          date: { type: 'string' },
-          keyPoints: { type: 'string', description: '1-3 sentences: this source\'s distinct stance/contribution.' },
+          index: { type: 'number', description: 'The SOURCE NUMBER this readout is about (matches the [n] in the input).' },
+          episode: { type: 'string', description: 'A SHORT recognizable label for the episode, e.g. "Holcim CEO", "GameStop / eBay", "AI data centers" — the subject, not the full show title.' },
+          theme: { type: 'string', description: 'The single INVESTABLE theme this episode surfaces — specific (e.g. "Low-carbon cement + housing shortage"), never a show name.' },
+          evidence: {
+            type: 'string',
+            description:
+              'PODCAST EVIDENCE — ONLY facts, numbers, and direct claims this source ACTUALLY stated. Quote figures EXACTLY as given. Do NOT add any company, number, date, or event not present in THIS source\'s input, and never round-to-invent. If the source gives little hard evidence, say so plainly rather than inventing.',
+          },
+          interpretation: {
+            type: 'string',
+            description:
+              'INVESTMENT INTERPRETATION — your INFERENCE from the evidence, explicitly framed as a hypothesis ("This suggests…", "If accurate, this implies…"). Never present interpretation as a stated fact.',
+          },
+          namesSectors: { type: 'string', description: 'Named companies/tickers + sectors implicated, comma-separated (drawn from the source). "—" if none named.' },
+          confidence: { type: 'string', enum: ['Low', 'Medium', 'High'], description: 'How well the podcast evidence supports the interpretation: High = direct, quantified claims; Medium = clear but partly inferred; Low = thin or speculative.' },
+          action: { type: 'string', description: 'What an investor should CHECK next — evidence PLUS explicitly-stated assumptions (e.g. "Verify EBITDA impact of CHF200m; assumes eco-products carry premium pricing").' },
+          questionsToVerify: {
+            type: 'array',
+            items: { type: 'string' },
+            description: '2-4 forward-looking EXTERNAL checks that would confirm or kill the interpretation — verifiable OUTSIDE the podcast, not a restatement of the episode\'s own Q&A. EMPTY only if none apply.',
+          },
         },
-        required: ['index', 'source', 'speaker', 'date', 'keyPoints'],
+        required: ['index', 'episode', 'theme', 'evidence', 'interpretation', 'namesSectors', 'confidence', 'action', 'questionsToVerify'],
       },
-      description: 'Comparison Across Sources — one row PER source episode, in the input order, capturing each source\'s distinct take so they can be read side by side.',
+      description:
+        'Investment Readout — ONE entry PER source episode, in the input order. Each STRICTLY separates what the podcast ACTUALLY SAID (evidence) from what you INFER (interpretation), with a confidence grade and concrete external checks. This is the centerpiece of the brief.',
     },
     questions: {
       type: 'array',
@@ -687,7 +705,7 @@ const WEEKLY_SCHEMA = {
       description: 'The sharpest OPEN questions the week raises — forward-looking and checkable, each naming its subject. EMPTY when none stand out.',
     },
   },
-  required: ['overview', 'keyThemes', 'quantTable', 'comparison', 'questions'],
+  required: ['overview', 'keyThemes', 'quantTable', 'episodeReadouts', 'questions'],
 }
 
 const WEEKLY_SYSTEM =
@@ -698,7 +716,7 @@ const WEEKLY_SYSTEM =
   '- overview: 2-3 paragraphs stating the consensus AND explicitly naming the outliers/disagreements.\n' +
   '- keyThemes: 2-5 themes that cut across episodes (never one per show); each a list of claim-first bullets (the conclusion in **double asterisks**, then specifics + [n]).\n' +
   '- quantTable: only numbers actually present in the material — never invent, round-to-invent, or infer. Append the [n] in context. EMPTY when there are none.\n' +
-  '- comparison: one row per source, capturing each source\'s distinct stance.\n' +
+  '- episodeReadouts: produce ONE readout per source. STRICT EVIDENCE RULE — the "evidence" field may contain ONLY facts, numbers, quotes, and claims that appear in THAT source\'s input; never introduce a company, figure, date, or event the source did not state, and never round-to-invent. Keep evidence and interpretation strictly SEPARATE: "evidence" = what the podcast said; "interpretation" = your inference, always framed as a hypothesis ("this suggests", "if accurate"). Grade "confidence" honestly against the strength of the evidence (High only for direct, quantified claims). "questionsToVerify" and "action" are the EXTERNAL checks a diligent investor would run next — not a restatement of the episode\'s own Q&A. If a source is thin, say so and grade Low rather than fabricating.\n' +
   '- Base EVERYTHING only on the provided sources. Never fabricate a number, a citation, or a disagreement that is not supported by the material.'
 
 /** Render the numbered sources into the LLM user message. Kept here so both the
@@ -712,6 +730,8 @@ function buildWeeklyUser(range: string, sources: WeeklySource[]): string {
     if (s.atRisk) lines.push(`  At risk: ${s.atRisk}`)
     if (s.quant) lines.push(`  Numbers: ${s.quant}`)
     if (s.keyPoints) lines.push(`  Key points: ${s.keyPoints}`)
+    if (s.synthesis) lines.push(`  Central argument: ${s.synthesis}`)
+    if (s.diligence) lines.push(`  Open diligence: ${s.diligence}`)
     return lines.join('\n')
   })
   return `Weekly cross-source synthesis across ${sources.length} podcast episode${sources.length === 1 ? '' : 's'} from ${range}.\n\nSources:\n${blocks.join('\n\n')}`
@@ -720,9 +740,11 @@ function buildWeeklyUser(range: string, sources: WeeklySource[]): string {
 const strArr = (v: unknown, cap = 12): string[] =>
   Array.isArray(v) ? (v.filter((x): x is string => typeof x === 'string' && !!x.trim()).map((x) => x.trim()).slice(0, cap)) : []
 
+const READOUT_CONFIDENCE = new Set(['Low', 'Medium', 'High'])
+
 // Validate the LLM's weekly output (untrusted — same discipline as normalize()).
 function normalizeWeeklyAi(raw: unknown): WeeklyAi {
-  const r = (raw ?? {}) as { overview?: unknown; keyThemes?: unknown; quantTable?: unknown; comparison?: unknown; questions?: unknown }
+  const r = (raw ?? {}) as { overview?: unknown; keyThemes?: unknown; quantTable?: unknown; episodeReadouts?: unknown; questions?: unknown }
   const keyThemes: WeeklyTheme[] = Array.isArray(r.keyThemes)
     ? (r.keyThemes as Array<{ heading?: unknown; points?: unknown }>)
         .map((t) => ({ heading: typeof t?.heading === 'string' ? t.heading.trim() : '', points: strArr(t?.points, 10) }))
@@ -735,19 +757,24 @@ function normalizeWeeklyAi(raw: unknown): WeeklyAi {
         .filter((q) => q.metric && q.value)
         .slice(0, 24)
     : []
-  const comparison: WeeklyComparisonRow[] = Array.isArray(r.comparison)
-    ? (r.comparison as Array<{ index?: unknown; source?: unknown; speaker?: unknown; date?: unknown; keyPoints?: unknown }>)
+  const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
+  const episodeReadouts: WeeklyEpisodeReadout[] = Array.isArray(r.episodeReadouts)
+    ? (r.episodeReadouts as Array<Record<string, unknown>>)
         .map((c) => ({
-          index: typeof c?.index === 'number' && Number.isFinite(c.index) ? c.index : 0,
-          source: typeof c?.source === 'string' ? c.source.trim() : '',
-          speaker: typeof c?.speaker === 'string' && c.speaker.trim() ? c.speaker.trim() : '—',
-          date: typeof c?.date === 'string' ? c.date.trim() : '',
-          keyPoints: typeof c?.keyPoints === 'string' ? c.keyPoints.trim() : '',
+          index: typeof c?.index === 'number' && Number.isFinite(c.index) ? (c.index as number) : 0,
+          episode: str(c?.episode),
+          theme: str(c?.theme),
+          evidence: str(c?.evidence),
+          interpretation: str(c?.interpretation),
+          namesSectors: str(c?.namesSectors) || '—',
+          confidence: (typeof c?.confidence === 'string' && READOUT_CONFIDENCE.has(c.confidence) ? c.confidence : 'Medium') as 'Low' | 'Medium' | 'High',
+          action: str(c?.action),
+          questionsToVerify: strArr(c?.questionsToVerify, 6),
         }))
-        .filter((c) => c.source && c.keyPoints)
+        .filter((c) => c.theme && (c.evidence || c.interpretation))
         .slice(0, 30)
     : []
-  return { overview: toParagraphs(r.overview).slice(0, 6), keyThemes, quantTable, comparison, questions: strArr(r.questions, 10) }
+  return { overview: toParagraphs(r.overview).slice(0, 6), keyThemes, quantTable, episodeReadouts, questions: strArr(r.questions, 10) }
 }
 
 export interface SynthesizeWeeklyInput {

@@ -9,7 +9,7 @@ import { emailWeeklyEdition, registerWeeklyRecipient, unregisterWeeklyRecipient 
 import { generateWeekly } from '../lib/weeklyApi'
 import { listEditions } from '../lib/weeklyEditions'
 import { weeklyToneView } from '../lib/tone'
-import type { WeeklyIdea, WeeklyShowDigest, WeeklySummary } from '../lib/types'
+import type { Episode, WeeklyEpisodeReadout, WeeklyIdea, WeeklyShowDigest, WeeklySummary } from '../lib/types'
 import { Icon } from '../components/Icon'
 import { DownloadMenu } from '../components/DownloadMenu'
 import { readSubscribedEmail } from '../components/WeeklySubscribe'
@@ -226,7 +226,7 @@ function WeeklyDoc({
   // exist they ARE the body; the by-show breakdown demotes to the no-AI fallback.
   const keyThemes = weekly.keyThemes ?? []
   const quantTable = weekly.quantTable ?? []
-  const comparison = weekly.comparison ?? []
+  const readouts = weekly.episodeReadouts ?? []
   const citations = weekly.citations ?? []
   const synthesised = keyThemes.length > 0
   const epForCite = (index: number) => episodeById(citations.find((c) => c.index === index)?.episodeId ?? '')
@@ -244,7 +244,7 @@ function WeeklyDoc({
     { id: 'overview', label: 'Overview', icon: 'play_circle', show: weekly.overview.length > 0 },
     { id: 'key-points', label: 'Key Points', icon: 'format_list_bulleted', show: synthesised },
     { id: 'quant', label: 'Quantitative', icon: 'monitoring', show: quantTable.length > 0 },
-    { id: 'comparison', label: 'Comparison', icon: 'table_rows', show: comparison.length > 0 },
+    { id: 'readout', label: 'Investment Readout', icon: 'fact_check', show: readouts.length > 0 },
     ...(synthesised ? [] : shows.map((s) => ({ id: `show-${s.podcastId}`, label: s.show, icon: 'podcasts', show: true }))),
     { id: 'themes', label: 'Top Themes', icon: 'sell', show: !synthesised && weekly.topThemes.length > 0 },
     { id: 'mentions', label: 'Mentions', icon: 'alternate_email', show: hasMentions },
@@ -347,28 +347,39 @@ function WeeklyDoc({
             </Block>
           )}
 
-          {/* Comparison Across Sources — each episode's distinct stance, side by side */}
-          {comparison.length > 0 && (
-            <Block id="wk-comparison" title="Comparison Across Sources">
+          {/* Investment Readout — per-episode evidence, interpretation, and what to verify */}
+          {readouts.length > 0 && (
+            <Block id="wk-readout" title="Investment Readout">
+              <p className="mb-3 max-w-3xl text-[13px] leading-relaxed text-secondary">
+                One readout per episode — what the podcast <em>actually said</em>, kept strictly separate from the investment interpretation, with the external checks to run next.
+              </p>
               <DataTable
-                cols={[{ h: 'Transcript' }, { h: 'Voice' }, { h: 'Date', align: 'right' }, { h: 'Key Points' }]}
-                rows={comparison.map((c) => {
-                  const ep = c.episodeId ? episodeById(c.episodeId) : undefined
-                  const label = `${c.index ? `[${c.index}] ` : ''}${c.source}`
+                cols={[{ h: 'Episode' }, { h: 'Investable Theme' }, { h: 'Podcast Evidence' }, { h: 'Investment Interpretation' }, { h: 'Names / Sectors' }, { h: 'Confidence' }, { h: 'Action' }]}
+                rows={readouts.map((r) => {
+                  const ep = r.episodeId ? episodeById(r.episodeId) : undefined
+                  const wrap = (s: string, w: string) => <div className={`${w} whitespace-normal`}>{stripCites(s)}</div>
                   return [
                     ep ? (
-                      <Link to={`/episodes/${ep.id}`} className="press font-medium text-primary hover:underline">
-                        {label}
+                      <Link to={`/episodes/${ep.id}`} className="press inline-block max-w-[9rem] font-medium text-primary hover:underline">
+                        {r.episode}
                       </Link>
                     ) : (
-                      label
+                      <div className="max-w-[9rem]">{r.episode}</div>
                     ),
-                    c.speaker,
-                    c.date,
-                    c.keyPoints,
+                    wrap(r.theme, 'max-w-[11rem] font-medium text-on-surface'),
+                    wrap(r.evidence, 'max-w-[18rem]'),
+                    wrap(r.interpretation, 'max-w-[18rem]'),
+                    <div className="max-w-[10rem] whitespace-normal">{r.namesSectors}</div>,
+                    <ConfidenceBadge level={r.confidence} />,
+                    wrap(r.action, 'max-w-[14rem]'),
                   ]
                 })}
               />
+              <div className="mt-5 space-y-3">
+                {readouts.map((r, i) => (
+                  <ReadoutCard key={i} r={r} ep={r.episodeId ? episodeById(r.episodeId) : undefined} />
+                ))}
+              </div>
             </Block>
           )}
 
@@ -545,6 +556,63 @@ function DataTable({ cols, rows }: { cols: { h: string; align?: 'right' }[]; row
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+// Each readout's evidence/interpretation already sits under its episode, so the
+// inline [n] citation markers are redundant noise — strip them for display.
+function stripCites(s: string): string {
+  return s.replace(/\s*\[\d+\]/g, '').replace(/\s{2,}/g, ' ').trim()
+}
+
+function ConfidenceBadge({ level }: { level: 'Low' | 'Medium' | 'High' }) {
+  const tone =
+    level === 'High'
+      ? 'bg-success-container text-on-success-container'
+      : level === 'Low'
+        ? 'bg-surface-container text-secondary'
+        : 'bg-primary/10 text-primary'
+  return <span className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-semibold ${tone}`}>{level}</span>
+}
+
+// Per-episode investment readout card — evidence kept visually distinct from the
+// interpretation, with the external checks and the next action.
+function ReadoutCard({ r, ep }: { r: WeeklyEpisodeReadout; ep?: Episode }) {
+  const Section = ({ label, children }: { label: string; children: ReactNode }) => (
+    <div className="mt-3">
+      <div className="mb-1 text-label-caps uppercase text-secondary">{label}</div>
+      <div className="text-[13px] leading-relaxed text-on-surface-variant">{children}</div>
+    </div>
+  )
+  return (
+    <div className="rounded-xl border border-outline-variant bg-surface-container-lowest p-4">
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+        <div className="min-w-0">
+          {ep ? (
+            <Link to={`/episodes/${ep.id}`} className="press text-[15px] font-semibold text-on-surface hover:underline">
+              {r.episode}
+            </Link>
+          ) : (
+            <span className="text-[15px] font-semibold text-on-surface">{r.episode}</span>
+          )}
+          <p className="mt-0.5 text-[13px] font-medium text-primary">{r.theme}</p>
+        </div>
+        <ConfidenceBadge level={r.confidence} />
+      </div>
+      {r.namesSectors && r.namesSectors !== '—' && <p className="mt-1.5 text-[11.5px] text-secondary">{r.namesSectors}</p>}
+      <Section label="Podcast evidence">{stripCites(r.evidence)}</Section>
+      <Section label="Investment interpretation">{stripCites(r.interpretation)}</Section>
+      {r.questionsToVerify.length > 0 && (
+        <Section label="Questions to verify">
+          <ul className="list-disc space-y-0.5 pl-4">
+            {r.questionsToVerify.map((q, i) => (
+              <li key={i}>{stripCites(q)}</li>
+            ))}
+          </ul>
+        </Section>
+      )}
+      {r.action && <Section label="Action">{stripCites(r.action)}</Section>}
     </div>
   )
 }

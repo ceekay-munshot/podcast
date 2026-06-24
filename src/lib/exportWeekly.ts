@@ -90,13 +90,29 @@ export function weeklyToWord(weekly: WeeklySummary, episodeById: ById<Episode>, 
         .join('')
     : ''
 
-  const comparisonBody = (weekly.comparison ?? []).length
-    ? `<table class="dt"><tr><th>Transcript</th><th>Voice</th><th class="r">Date</th><th>Key Points</th></tr>${(weekly.comparison ?? [])
+  // Investment Readout — the full 7-column summary table (Word reflows wide tables;
+  // print in landscape for the roomiest read) followed by per-episode cards.
+  const readouts = weekly.episodeReadouts ?? []
+  const stripN = (s: string) => s.replace(/\s*\[\d+\]/g, '').replace(/\s{2,}/g, ' ').trim()
+  const readoutBody = readouts.length
+    ? `<table class="dt"><tr><th>Episode</th><th>Investable Theme</th><th>Podcast Evidence</th><th>Investment Interpretation</th><th>Names / Sectors</th><th>Confidence</th><th>Action</th></tr>${readouts
         .map(
-          (c, i) =>
-            `<tr${i % 2 ? ' class="zebra"' : ''}><td>${esc(c.index ? `[${c.index}] ` : '')}${esc(c.source)}</td><td>${esc(c.speaker)}</td><td class="num">${esc(c.date)}</td><td class="ctx">${esc(c.keyPoints)}</td></tr>`,
+          (r, i) =>
+            `<tr${i % 2 ? ' class="zebra"' : ''}><td>${esc(r.episode)}</td><td>${inline(stripN(r.theme))}</td><td class="ctx">${inline(stripN(r.evidence))}</td><td class="ctx">${inline(stripN(r.interpretation))}</td><td class="ctx">${esc(r.namesSectors)}</td><td>${esc(r.confidence)}</td><td class="ctx">${inline(stripN(r.action))}</td></tr>`,
         )
-        .join('')}</table>`
+        .join('')}</table>${readouts
+        .map(
+          (r) =>
+            `<div style="border:1px solid #e6eaf1;padding:12px 14px;margin:12px 0;">` +
+            `<p class="kpt-heading" style="margin-top:0;">${esc(r.episode)} &mdash; ${inline(stripN(r.theme))} <span style="color:#8794a8;font-weight:normal;">(${esc(r.confidence)} confidence)</span></p>` +
+            (r.namesSectors && r.namesSectors !== '—' ? `<p style="color:#7d8ba3;font-size:11px;margin:0 0 6px;">${esc(r.namesSectors)}</p>` : '') +
+            `<p class="subhead">Podcast evidence</p><p>${inline(stripN(r.evidence))}</p>` +
+            `<p class="subhead">Investment interpretation</p><p>${inline(stripN(r.interpretation))}</p>` +
+            (r.questionsToVerify.length ? `<p class="subhead">Questions to verify</p><ul class="tlist">${r.questionsToVerify.map((q) => `<li><span class="sq">&#9642;</span>${inline(stripN(q))}</li>`).join('')}</ul>` : '') +
+            (r.action ? `<p class="subhead">Action</p><p>${inline(stripN(r.action))}</p>` : '') +
+            `</div>`,
+        )
+        .join('')}`
     : ''
 
   const themes = chipsRow(weekly.topThemes.map((t) => t.label))
@@ -156,7 +172,7 @@ export function weeklyToWord(weekly: WeeklySummary, episodeById: ById<Episode>, 
         sec('Overview', overview)
         sec('Key Points', keyPointsBody)
         sec('Quantitative Summary', quantBody)
-        sec('Comparison Across Sources', comparisonBody)
+        sec('Investment Readout', readoutBody)
         if (!synthesised) sec('By Show', showsBody)
         if (!synthesised) sec('Top Themes', themes)
         sec('Mentions', mentions)

@@ -1,4 +1,4 @@
-import type { Episode, Podcast, QuantPoint, Takeaway, WeeklyAi, WeeklyCitation, WeeklyComparisonRow, WeeklyIdea, WeeklyShowDigest, WeeklySource, WeeklySummary, WeeklyTheme } from './types'
+import type { Episode, Podcast, QuantPoint, Takeaway, WeeklyAi, WeeklyCitation, WeeklyEpisodeReadout, WeeklyIdea, WeeklyShowDigest, WeeklySource, WeeklySummary, WeeklyTheme } from './types'
 import { keyHighlights } from './highlights'
 import { topTopics } from './topics'
 
@@ -35,11 +35,11 @@ export function assembleWeekly(episodes: Episode[], podcastById: ById, opts: { r
 
   // Guidepoint-shaped layers — built deterministically so the no-key path (and the
   // cron without an LLM key) still produces a synthesised-looking edition. The AI
-  // layer (weeklyApi / weeklyDigest) OVERWRITES keyThemes/quantTable/comparison/
+  // layer (weeklyApi / weeklyDigest) OVERWRITES keyThemes/quantTable/episodeReadouts/
   // overview when a key is present, reusing this same citation order so [n] lines up.
   const citations = buildCitations(ready, podcastById)
   const quantTable = aggregateQuant(ready, citations)
-  const comparison = buildComparison(ready, citations, podcastById)
+  const episodeReadouts = buildEpisodeReadouts(ready, citations, podcastById)
   const keyThemes = derivedKeyThemes(ready, citations)
 
   const words = [...overview, ...takeaways.flatMap((t) => [t.title, t.detail])].join(' ').trim().split(/\s+/).length
@@ -51,7 +51,7 @@ export function assembleWeekly(episodes: Episode[], podcastById: ById, opts: { r
     overview,
     keyThemes,
     quantTable,
-    comparison,
+    episodeReadouts,
     citations,
     shows,
     topThemes,
@@ -74,25 +74,38 @@ function clampCitations(s: string, max: number): string {
  *  BOTH the client (weeklyApi) and the server cron (weeklyDigest), so the on-screen
  *  and emailed editions are assembled identically. Falls back field-by-field to the
  *  deterministic layer when the AI omitted something. Reuses `base.citations` as the
- *  canonical [n] map: attaches episodeId to each comparison row and strips any
- *  out-of-range marker from the prose. */
+ *  canonical [n] map: attaches episodeId to each readout, backfills its episode label,
+ *  and strips any out-of-range marker from the prose. */
 export function mergeWeeklyAi(base: WeeklySummary, ai: WeeklyAi): WeeklySummary {
   const cites = base.citations ?? []
   const max = cites.length
-  const epById = new Map(cites.map((c) => [c.index, c.episodeId]))
+  const citeByIndex = new Map(cites.map((c) => [c.index, c]))
 
   const overview = ai.overview.length ? ai.overview.map((p) => clampCitations(p, max)) : base.overview
   const keyThemes = ai.keyThemes.length
     ? ai.keyThemes.map((t) => ({ heading: t.heading, points: t.points.map((p) => clampCitations(p, max)) }))
     : base.keyThemes ?? []
   const quantTable = ai.quantTable.length ? ai.quantTable : base.quantTable
-  const comparison = ai.comparison.length
-    ? ai.comparison.map((r) => ({ ...r, episodeId: epById.get(r.index) ?? r.episodeId }))
-    : base.comparison
+  const episodeReadouts = (ai.episodeReadouts ?? []).length
+    ? ai.episodeReadouts.map((r) => {
+        const cite = citeByIndex.get(r.index)
+        return {
+          ...r,
+          episodeId: cite?.episodeId ?? r.episodeId,
+          episode: r.episode || cite?.label || '',
+          evidence: clampCitations(r.evidence, max),
+          interpretation: clampCitations(r.interpretation, max),
+          action: clampCitations(r.action, max),
+        }
+      })
+    : base.episodeReadouts ?? []
   const questions = ai.questions.length ? ai.questions : base.questions
 
-  const words = [...overview, ...keyThemes.flatMap((t) => [t.heading, ...t.points])].join(' ').trim().split(/\s+/).length
-  return { ...base, overview, keyThemes, quantTable, comparison, questions, readMinutes: Math.max(1, Math.round(words / 200)) }
+  const words = [...overview, ...keyThemes.flatMap((t) => [t.heading, ...t.points]), ...episodeReadouts.flatMap((r) => [r.theme, r.evidence, r.interpretation])]
+    .join(' ')
+    .trim()
+    .split(/\s+/).length
+  return { ...base, overview, keyThemes, quantTable, episodeReadouts, questions, readMinutes: Math.max(1, Math.round(words / 200)) }
 }
 
 // ── Guidepoint-shaped deterministic builders ─────────────────────────────────
@@ -130,22 +143,30 @@ export function aggregateQuant(ready: Episode[], citations: WeeklyCitation[]): Q
   return out
 }
 
-/** One comparison row per episode (the deterministic fallback for the table). */
-export function buildComparison(ready: Episode[], citations: WeeklyCitation[], podcastById: ById): WeeklyComparisonRow[] {
+/** One per-episode Investment Readout — the deterministic fallback (no-LLM path).
+ *  Hallucination-free by construction: it only reshuffles fields the per-episode
+ *  summary already extracted under its own strict-evidence rules. */
+export function buildEpisodeReadouts(ready: Episode[], citations: WeeklyCitation[], podcastById: ById): WeeklyEpisodeReadout[] {
   const idxById = new Map(citations.map((c) => [c.episodeId, c.index]))
+  const names = (list?: { name: string }[]) => (list ?? []).map((p) => p.name).filter(Boolean)
   return ready.map((e) => {
     const s = e.summary
-    const point =
-      (s?.insight?.whatChanged && s.insight.whatChanged) ||
-      (s ? keyHighlights(s)[0]?.detail : '') ||
-      (s?.synthesis?.[0] ?? e.blurb ?? '')
+    const ins = s?.insight
+    const quant = (s?.quantData ?? []).slice(0, 3).map((q) => `${q.metric}: ${q.value}`).join('; ')
+    const lead = s ? keyHighlights(s)[0]?.detail ?? '' : ''
+    const evidence = [ins?.whatChanged, quant, lead].filter(Boolean).join(' ').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim()
+    const namesSectors = [...names(ins?.beneficiaries), ...names(ins?.atRisk), ...(e.entities?.companies ?? [])].filter(Boolean)
     return {
       index: idxById.get(e.id) ?? 0,
       episodeId: e.id,
-      source: `${podcastById(e.podcastId)?.title ?? 'Unknown show'} — ${e.title}`,
-      speaker: e.entities?.people?.[0] ?? '—',
-      date: new Date(e.publishedAt).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }),
-      keyPoints: trim((point || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim(), 280),
+      episode: `${podcastById(e.podcastId)?.title ?? 'Unknown show'} — ${e.title}`,
+      theme: trim((ins?.whatChanged || e.entities?.themes?.[0] || e.title).replace(/\*\*/g, '').trim(), 120),
+      evidence: trim(evidence || (s?.synthesis?.[0] ?? e.blurb ?? '').replace(/\*\*/g, '').trim(), 320),
+      interpretation: trim((ins?.whyItMatters || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim(), 320),
+      namesSectors: namesSectors.length ? trim([...new Set(namesSectors)].join(', '), 200) : '—',
+      confidence: 'Medium',
+      action: (ins?.diligenceQuestions?.[0] ?? '').trim(),
+      questionsToVerify: (ins?.diligenceQuestions ?? []).slice(0, 4).map((q) => q.trim()).filter(Boolean),
     }
   })
 }
@@ -181,8 +202,9 @@ export function buildWeeklySources(ready: Episode[], citations: WeeklyCitation[]
     list && list.length ? list.map((p) => `${p.name} — ${p.why}`).join('; ') : undefined
   return ready.map((e) => {
     const s = e.summary
-    const quant = (s?.quantData ?? []).slice(0, 6).map((q) => `${q.metric}: ${q.value}${q.context ? ` (${q.context})` : ''}`).join('; ')
+    const quant = (s?.quantData ?? []).slice(0, 10).map((q) => `${q.metric}: ${q.value}${q.context ? ` (${q.context})` : ''}`).join('; ')
     const keyPoints = s ? keyHighlights(s).slice(0, 4).map((h) => h.title.replace(/\*\*/g, '').trim()).join('; ') : ''
+    const diligence = (s?.insight?.diligenceQuestions ?? []).slice(0, 5).join('; ')
     return {
       index: idxById.get(e.id) ?? 0,
       show: podcastById(e.podcastId)?.title ?? 'Unknown show',
@@ -195,6 +217,8 @@ export function buildWeeklySources(ready: Episode[], citations: WeeklyCitation[]
       atRisk: parties(s?.insight?.atRisk),
       quant: quant || undefined,
       keyPoints: keyPoints || undefined,
+      synthesis: (s?.synthesis?.[0] ?? '').replace(/\*\*/g, '').trim() || undefined,
+      diligence: diligence || undefined,
     }
   })
 }

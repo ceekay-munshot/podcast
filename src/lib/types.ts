@@ -252,8 +252,8 @@ export interface WeeklyTheme {
   points: string[]
 }
 
-/** One row of the weekly "Comparison Across Sources" table — one episode's stance
- *  in a side-by-side. `index` is the citation `[n]`; `episodeId` links the row. */
+/** @deprecated Replaced by `WeeklyEpisodeReadout` (the Investment Readout). Kept so
+ *  older cached editions in localStorage/KV still parse; no longer emitted/rendered. */
 export interface WeeklyComparisonRow {
   index: number
   source: string // show — episode title
@@ -262,6 +262,31 @@ export interface WeeklyComparisonRow {
   keyPoints: string
   /** Resolved during merge so the renderer can link the row to its episode. */
   episodeId?: string
+}
+
+/** One episode's INVESTMENT READOUT — the unit of the weekly "investment intelligence
+ *  note". Strictly separates what the podcast SAID (`evidence`) from the model's
+ *  INFERENCE (`interpretation`), with the external checks (`questionsToVerify`), the
+ *  next `action`, and a `confidence` grade. `index` is the citation `[n]`; `episodeId`
+ *  is resolved during merge so renderers can link the row/card to its episode. */
+export interface WeeklyEpisodeReadout {
+  index: number
+  episodeId?: string
+  /** Short recognizable episode label for the table's "Episode" cell, e.g. "Holcim CEO". */
+  episode: string
+  /** The single investable theme this episode surfaces. */
+  theme: string
+  /** Podcast Evidence — facts/numbers/quotes ONLY present in the source material. */
+  evidence: string
+  /** Investment Interpretation — the model's inference, framed as a hypothesis. */
+  interpretation: string
+  /** Named companies/tickers + sectors implicated; "—" when none named. */
+  namesSectors: string
+  confidence: 'Low' | 'Medium' | 'High'
+  /** What to check next (evidence + explicitly-stated assumptions). */
+  action: string
+  /** Forward-looking EXTERNAL checks that would confirm or kill the interpretation. */
+  questionsToVerify: string[]
 }
 
 /** The `[n]` → episode registry that backs every inline citation in the weekly. */
@@ -286,6 +311,10 @@ export interface WeeklySource {
   atRisk?: string
   quant?: string
   keyPoints?: string
+  /** The episode's forward-looking diligence questions — seeds "questions to verify". */
+  diligence?: string
+  /** The episode's lead synthesis paragraph — its central argument, as grounded evidence. */
+  synthesis?: string
 }
 
 /** The cross-episode narrative the weekly synthesis LLM produces (the layer on
@@ -294,7 +323,8 @@ export interface WeeklyAi {
   overview: string[]
   keyThemes: WeeklyTheme[]
   quantTable: QuantPoint[]
-  comparison: WeeklyComparisonRow[]
+  /** Per-episode Investment Readout (replaces the old comparison table). */
+  episodeReadouts: WeeklyEpisodeReadout[]
   questions: string[]
 }
 
@@ -310,7 +340,9 @@ export interface WeeklySummary {
   keyThemes?: WeeklyTheme[]
   /** Aggregated hard numbers — the Quantitative Summary table. */
   quantTable?: QuantPoint[]
-  /** The Comparison Across Sources table. */
+  /** Per-episode Investment Readout — the table + cards. */
+  episodeReadouts?: WeeklyEpisodeReadout[]
+  /** @deprecated Superseded by `episodeReadouts`; retained for back-compat with cached editions. */
   comparison?: WeeklyComparisonRow[]
   /** The `[n]` → episode registry backing the citations in overview/keyThemes. */
   citations?: WeeklyCitation[]
