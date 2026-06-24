@@ -91,3 +91,30 @@ describe('runs — inline [n] citations', () => {
     expect(runs('share[4]').map((x) => x.w)).toEqual(['share', '[4]'])
   })
 })
+
+describe('runs — punctuation glue (no stray space before trailing marks)', () => {
+  it('glues a colon that trails a **bold** span to it (renders "debate:" not "debate :")', () => {
+    const t = runs('**The debate**: at a 6-year life')
+    expect(t.find((x) => x.w === ':')?.glue).toBe(true)
+    expect(t.find((x) => x.w === 'at')?.glue).toBeFalsy()
+  })
+  it('glues a period that trails a [n] citation (renders "[3]." not "[3] .")', () => {
+    const t = runs('the reported margin is fiction [3].')
+    const last = t[t.length - 1]
+    expect(last.w).toBe('.')
+    expect(last.glue).toBe(true)
+    expect(t.find((x) => x.w === '[3]')?.cite).toBe(true)
+  })
+  it('does NOT glue an em-dash — spaced dashes keep their spaces', () => {
+    expect(runs('Europe — Latin America').find((x) => x.w === '—')?.glue).toBeFalsy()
+  })
+})
+
+describe('PDF hyperlinks — every "Munshot" affordance links to the dashboard', () => {
+  it('embeds clickable /Link annotations pointing at chat.muns.io/dashboards', () => {
+    const blocks = weeklyBlocks(WEEKLY, episodeById, podcastById)
+    const pdf = new TextDecoder('latin1').decode(toPdfBytes(blocks))
+    expect(pdf).toContain('/Link')
+    expect(pdf).toContain('chat.muns.io/dashboards')
+  })
+})
