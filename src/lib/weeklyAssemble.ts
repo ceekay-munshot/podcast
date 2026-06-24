@@ -152,18 +152,21 @@ export function buildEpisodeReadouts(ready: Episode[], citations: WeeklyCitation
   return ready.map((e) => {
     const s = e.summary
     const ins = s?.insight
-    const quant = (s?.quantData ?? []).slice(0, 3).map((q) => `${q.metric}: ${q.value}`).join('; ')
+    const quant = (s?.quantData ?? []).map((q) => `${q.metric}: ${q.value}`).join('; ')
     const lead = s ? keyHighlights(s)[0]?.detail ?? '' : ''
+    // Full data — never truncate; the brief shows the whole evidence/interpretation.
     const evidence = [ins?.whatChanged, quant, lead].filter(Boolean).join(' ').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim()
     const namesSectors = [...names(ins?.beneficiaries), ...names(ins?.atRisk), ...(e.entities?.companies ?? [])].filter(Boolean)
     return {
       index: idxById.get(e.id) ?? 0,
       episodeId: e.id,
       episode: `${podcastById(e.podcastId)?.title ?? 'Unknown show'} — ${e.title}`,
-      theme: trim((ins?.whatChanged || e.entities?.themes?.[0] || e.title).replace(/\*\*/g, '').trim(), 120),
-      evidence: trim(evidence || (s?.synthesis?.[0] ?? e.blurb ?? '').replace(/\*\*/g, '').trim(), 320),
-      interpretation: trim((ins?.whyItMatters || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim(), 320),
-      namesSectors: namesSectors.length ? trim([...new Set(namesSectors)].join(', '), 200) : '—',
+      // Prefer the episode's short theme tag for a concise "theme"; fall back to the
+      // full development (never cut) so the column is meaningful, not duplicative.
+      theme: (e.entities?.themes?.[0] || ins?.whatChanged || e.title).replace(/\*\*/g, '').trim(),
+      evidence: evidence || (s?.synthesis?.[0] ?? e.blurb ?? '').replace(/\*\*/g, '').trim(),
+      interpretation: (ins?.whyItMatters || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim(),
+      namesSectors: namesSectors.length ? [...new Set(namesSectors)].join(', ') : '—',
       confidence: 'Medium',
       action: (ins?.diligenceQuestions?.[0] ?? '').trim(),
       questionsToVerify: (ins?.diligenceQuestions ?? []).slice(0, 4).map((q) => q.trim()).filter(Boolean),
