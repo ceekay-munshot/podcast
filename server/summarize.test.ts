@@ -199,6 +199,25 @@ describe('summarizeEpisode — investable insight + quant extraction', () => {
     expect(summary.insight).toBeUndefined()
   })
 
+  it('coerces a string `synthesis` (no strict mode) into a paragraph array', async () => {
+    fetchMock.mockResolvedValueOnce(
+      llmWith({
+        // The model returned ONE string instead of the schema's array — must not crash the UI.
+        synthesis: 'First paragraph about the thesis.\n\nSecond paragraph with the **specifics**.',
+        qa: [{ q: 'Q', a: 'A' }, { q: '', a: 'dropped' }],
+        highlights: [],
+        tone: { overall: 'neutral', rationale: 'r', aspects: [] },
+      }),
+    )
+    const { summary } = await summarizeEpisode(
+      { id: 'live-allin-strsyn', title: 'Str', show: 'All-In', notes: 'notes' },
+      { openaiKey: 'sk-test', store: memStore() },
+    )
+    expect(Array.isArray(summary.synthesis)).toBe(true)
+    expect(summary.synthesis).toEqual(['First paragraph about the thesis.', 'Second paragraph with the **specifics**.'])
+    expect(summary.qa).toEqual([{ q: 'Q', a: 'A' }]) // the malformed pair is dropped
+  })
+
   it('keeps valid quant rows and drops rows missing a metric or value', async () => {
     fetchMock.mockResolvedValueOnce(
       llmWith({

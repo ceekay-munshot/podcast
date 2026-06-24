@@ -22,7 +22,10 @@ import type { SummarizeResult } from './summarize' // type-only → erased at ru
 // r6: added structured `ideas` (concrete pitches/calls + thesis) extraction.
 // r7: added investable `insight` (what changed / why / who benefits / who's at
 //     risk / diligence questions) + `quantData` (hard numbers) extraction.
-export const SUMMARY_REVISION = 7
+// r8: harden normalize — coerce `synthesis` (and the weekly `overview`) to a
+//     string[] even when the model returns one string, so the UI/PDF `.map` over
+//     paragraphs can't crash; invalidates any poisoned r7 string-synthesis caches.
+export const SUMMARY_REVISION = 8
 
 /** The shared cache key for an episode. The episode id is stable across all users
  *  of the same feed (`live-${podcastId}-${hash(guid|link|title+date)}`), so this is

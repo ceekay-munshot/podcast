@@ -348,19 +348,47 @@ function normalize(raw: RawSummary | undefined): Summary {
   // the bracketed transcript marker, e.g. "[12:34]"), sort chronologically (it can
   // emit them out of order), then assign stable ids in display order. Clean timestamps
   // are what lets buildTranscript anchor each highlight to its transcript row.
-  const highlights: Highlight[] = (r.highlights ?? [])
-    .map((h) => ({ ...h, timestamp: cleanClock(h.timestamp), key: !!h.key }))
+  // `highlights` is array-guarded: the schema asks for an array, but without strict
+  // mode some models emit a single object or omit it — never let a non-array reach
+  // the `.map` chains in the UI / PDF.
+  const rawHl = Array.isArray(r.highlights) ? r.highlights : []
+  const highlights: Highlight[] = rawHl
+    .filter((h): h is NonNullable<typeof h> => !!h && typeof h === 'object')
+    .map((h) => ({ title: String(h.title ?? ''), detail: String(h.detail ?? ''), timestamp: cleanClock(String(h.timestamp ?? '—')), key: !!h.key }))
     .sort((a, b) => (parseClock(a.timestamp) ?? Number.POSITIVE_INFINITY) - (parseClock(b.timestamp) ?? Number.POSITIVE_INFINITY))
     .map((h, i) => ({ ...h, id: `gen-${i}` }))
   return {
-    synthesis: r.synthesis ?? [],
+    synthesis: toParagraphs(r.synthesis),
     highlights,
-    qa: r.qa ?? [],
+    qa: normalizeQa(r.qa),
     ...(ideas.length ? { ideas } : {}),
     ...(insight ? { insight } : {}),
     ...(quantData.length ? { quantData } : {}),
     ...(tone ? { tone } : {}),
   }
+}
+
+// Coerce `synthesis` to a clean string[] regardless of how the model returned it.
+// Forced tool-calling isn't strict, so a model may return ONE string instead of the
+// array the schema asks for (gpt-4.1 family does this often) — split it into
+// paragraphs so the UI/PDF `.map` over paragraphs always works.
+function toParagraphs(v: unknown): string[] {
+  if (Array.isArray(v)) return v.filter((p): p is string => typeof p === 'string' && !!p.trim()).map((p) => p.trim())
+  if (typeof v === 'string' && v.trim()) return v.split(/\n\s*\n+/).map((p) => p.trim()).filter(Boolean)
+  return []
+}
+
+// Keep only well-formed { q, a } pairs (array-guarded, same reason as highlights).
+function normalizeQa(v: unknown): QAItem[] {
+  if (!Array.isArray(v)) return []
+  const out: QAItem[] = []
+  for (const it of v as Array<{ q?: unknown; a?: unknown }>) {
+    if (!it || typeof it !== 'object') continue
+    const q = typeof it.q === 'string' ? it.q.trim() : ''
+    const a = typeof it.a === 'string' ? it.a.trim() : ''
+    if (q && a) out.push({ q, a })
+  }
+  return out
 }
 
 // Clean a highlight timestamp to a display-ready "m:ss" / "h:mm:ss", or "—" if unparseable.
@@ -719,7 +747,7 @@ function normalizeWeeklyAi(raw: unknown): WeeklyAi {
         .filter((c) => c.source && c.keyPoints)
         .slice(0, 30)
     : []
-  return { overview: strArr(r.overview, 6), keyThemes, quantTable, comparison, questions: strArr(r.questions, 10) }
+  return { overview: toParagraphs(r.overview).slice(0, 6), keyThemes, quantTable, comparison, questions: strArr(r.questions, 10) }
 }
 
 export interface SynthesizeWeeklyInput {
