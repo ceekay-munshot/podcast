@@ -297,6 +297,7 @@ interface RichOpts {
   boldColor: RGB
   italic?: boolean
   indentFirst?: number
+  indentLines?: number // how many leading lines get `indentFirst` (default 1) — drop caps indent 2
   noBreak?: boolean // caller has reserved the height; don't page-break mid-block
   align?: 'left' | 'right' // right-align each line within maxW (table number cells)
 }
@@ -358,16 +359,21 @@ export class Painter {
     this.d.setFontSize(o.sz)
     const spaceW = this.d.getTextWidth(' ')
 
+    // A leading indent (e.g. the cap recess of a drop-cap lead) can span the
+    // first `indentLines` wrapped lines, not just the first one.
+    const indentN = o.indentFirst ? o.indentLines ?? 1 : 0
+    const indentFor = (li: number) => (li < indentN ? o.indentFirst ?? 0 : 0)
+
     const lines: (Token & { ww: number })[][] = []
     let cur: (Token & { ww: number })[] = []
-    let cx = o.indentFirst ?? 0
+    let cx = indentFor(0)
     for (const t of tokens) {
       setFont(t)
       const ww = this.d.getTextWidth(t.w)
       if (cur.length && cx + spaceW + ww > maxW) {
         lines.push(cur)
         cur = []
-        cx = 0
+        cx = indentFor(lines.length)
       }
       if (cur.length) cx += spaceW
       cur.push({ ...t, ww })
@@ -378,7 +384,7 @@ export class Painter {
     if (!draw) return lines.length
     for (let li = 0; li < lines.length; li++) {
       if (!o.noBreak) this.ensure(o.lh)
-      const indent = li === 0 ? o.indentFirst ?? 0 : 0
+      const indent = indentFor(li)
       // Right-align: shift the whole line so its right edge meets x+maxW.
       let lx = x + indent
       if (o.align === 'right') {
@@ -532,21 +538,32 @@ export class Painter {
 
   lead(paras: string[]) {
     const padX = 16
-    const padT = 13
-    const padB = 11
+    const padT = 14
+    const padB = 12
     const lh = 15
     const sz = 10.2
     const innerW = CW - 2 * padX
-    const cap = (paras[0] || '').charAt(0)
+    // A true two-line drop cap: a Times-bold initial sized to span the first two
+    // body lines, with those two lines recessed to its right. Sizing it to ~2 lh
+    // lands the cap's baseline on the second line and its top on the first, so it
+    // no longer overhangs the (un-indented) third line the way a 1-line cap did.
+    const capLines = 2
+    const capSize = 33
+    const capGap = 5
+    const first = paras[0] || ''
+    const cap = first.charAt(0)
     this.font('times', 'bold')
-    this.d.setFontSize(22)
-    const capW = this.d.getTextWidth(cap)
-    const firstRest = runs((paras[0] || '').slice(1))
-    const opt = (indentFirst = 0): RichOpts => ({ sz, lh, fam: 'helvetica', color: C.ink2, boldColor: C.gold, indentFirst, noBreak: true })
+    this.d.setFontSize(capSize)
+    const indentW = this.d.getTextWidth(cap) + capGap
+    const firstRest = runs(first.slice(1))
+    const leadOpt: RichOpts = { sz, lh, fam: 'helvetica', color: C.ink2, boldColor: C.gold, indentFirst: indentW, indentLines: capLines, noBreak: true }
+    const bodyOpt: RichOpts = { sz, lh, fam: 'helvetica', color: C.ink2, boldColor: C.gold, noBreak: true }
 
-    let total = padT
-    total += this.rich(firstRest, M.l + padX, innerW, opt(capW + 6), false) * lh
-    for (let i = 1; i < paras.length; i++) total += 8 + this.rich(runs(paras[i]), M.l + padX, innerW, opt(), false) * lh
+    // Measure. The first paragraph reserves at least `capLines` rows so a short
+    // opener still leaves room for the cap before the next paragraph.
+    const firstLines = Math.max(this.rich(firstRest, M.l + padX, innerW, leadOpt, false), capLines)
+    let total = padT + firstLines * lh
+    for (let i = 1; i < paras.length; i++) total += 8 + this.rich(runs(paras[i]), M.l + padX, innerW, bodyOpt, false) * lh
     total += padB
 
     this.ensure(total)
@@ -556,16 +573,19 @@ export class Painter {
     this.fill(C.gold)
     this.d.rect(M.l, top, 3, total, 'F')
 
-    this.y = top + padT
-    this.font('times', 'bold')
-    this.d.setFontSize(22)
-    this.color(C.gold)
-    this.at(cap, M.l + padX, this.y)
-    this.rich(firstRest, M.l + padX, innerW, opt(capW + 6), true)
+    const firstTop = top + padT
+    this.y = firstTop
+    this.rich(firstRest, M.l + padX, innerW, leadOpt, true)
+    this.y = firstTop + firstLines * lh // clear the cap before the next paragraph
     for (let i = 1; i < paras.length; i++) {
       this.y += 8
-      this.rich(runs(paras[i]), M.l + padX, innerW, opt(), true)
+      this.rich(runs(paras[i]), M.l + padX, innerW, bodyOpt, true)
     }
+    // Cap drawn last, top-aligned with the first line's cap height.
+    this.font('times', 'bold')
+    this.d.setFontSize(capSize)
+    this.color(C.gold)
+    this.at(cap, M.l + padX, firstTop)
     this.y = top + total + 12
   }
 

@@ -94,10 +94,19 @@ describe('weeklyBriefEmailHtml — real edition rendering', () => {
     expect(html).toContain('Power, not silicon, is the binding constraint') // a key theme heading
   })
 
+  it('drives back to the chat.muns.io dashboard with a CTA + linked citations + linked sources', () => {
+    expect(html).toContain('https://chat.muns.io/dashboards') // the dashboard URL
+    expect(html).toContain('Open the live dashboard') // the primary CTA
+    // Inline [n] citations are turned into links back to the dashboard.
+    expect(html).toMatch(/<a href="https:\/\/chat\.muns\.io\/dashboards"[^>]*>\[\d+\]<\/a>/)
+    // Source rows link back too.
+    expect(html).toContain('Open all of these on your Munshot dashboard')
+  })
+
   it('shows the Download PDF button only when a report URL is provided', () => {
-    expect(html).not.toContain('Download full PDF report')
+    expect(html).not.toContain('Download PDF')
     const withPdf = weeklyBriefEmailHtml(WEEKLY, episodeById, podcastById, { pdfUrl: 'https://example.test/api/report/abc.pdf' })
-    expect(withPdf).toContain('Download full PDF report')
+    expect(withPdf).toContain('Download PDF')
     expect(withPdf).toContain('https://example.test/api/report/abc.pdf')
   })
 
