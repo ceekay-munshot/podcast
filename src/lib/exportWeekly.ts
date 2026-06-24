@@ -1,5 +1,6 @@
 import type { Episode, Podcast, WeeklyIdea, WeeklyShowDigest, WeeklySummary } from './types'
 import { cover, docFooter, downloadWord, esc, inline, leadParagraph, pill, sanitizeFilename, section, tag, wordShell } from './exportDoc'
+import { groupQuantByEpisode } from './weeklyQuant'
 
 // Builds the institution-grade Weekly Summary Word document: a navy cover, then a
 // BY-SHOW body (each show's pitched ideas · key takeaways · questions), cross-show
@@ -76,10 +77,17 @@ export function weeklyToWord(weekly: WeeklySummary, episodeById: ById<Episode>, 
         .join('')
     : ''
 
+  // Grouped by source episode so the numbers don't read as one mixed list.
   const quantBody = (weekly.quantTable ?? []).length
-    ? `<table class="dt"><tr><th>Metric</th><th class="r">Value</th><th>Context</th></tr>${(weekly.quantTable ?? [])
-        .map((q, i) => `<tr${i % 2 ? ' class="zebra"' : ''}><td>${esc(q.metric)}</td><td class="num">${esc(q.value)}</td><td class="ctx">${esc(q.context)}</td></tr>`)
-        .join('')}</table>`
+    ? groupQuantByEpisode(weekly.quantTable ?? [], weekly.citations ?? [])
+        .map((g) => {
+          const heading = g.label ? `<p class="kpt-heading">${esc(g.label)}</p>` : ''
+          const rows = g.rows
+            .map((q, i) => `<tr${i % 2 ? ' class="zebra"' : ''}><td>${esc(q.metric)}</td><td class="num">${esc(q.value)}</td><td class="ctx">${esc(q.context)}</td></tr>`)
+            .join('')
+          return `${heading}<table class="dt"><tr><th>Metric</th><th class="r">Value</th><th>Context</th></tr>${rows}</table>`
+        })
+        .join('')
     : ''
 
   const comparisonBody = (weekly.comparison ?? []).length

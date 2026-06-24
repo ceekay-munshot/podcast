@@ -1,5 +1,6 @@
 import type { Episode, Podcast, WeeklyIdea, WeeklyShowDigest, WeeklySummary } from './types'
 import { esc } from './exportDoc'
+import { groupQuantByEpisode } from './weeklyQuant'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Email delivery — the real wiring behind the Weekly-brief subscription seam.
@@ -347,18 +348,28 @@ export function weeklyBriefEmailHtml(
 
   const shows = !keyThemes.length && (weekly.shows ?? []).length ? sectionLabel('By Show') + (weekly.shows ?? []).map(showBlock).join('') : ''
 
-  const quant = (weekly.quantTable ?? []).length
+  // Grouped by episode so the numbers read per-source, not as one mixed list.
+  const quantGroups = (weekly.quantTable ?? []).length ? groupQuantByEpisode(weekly.quantTable ?? [], weekly.citations ?? []) : []
+  const quant = quantGroups.length
     ? sectionLabel('Quantitative Summary') +
-      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${C.line};">${(weekly.quantTable ?? [])
-        .map(
-          (q, i) =>
-            `<tr${i % 2 ? ` style="background:#fafbfd;"` : ''}>
+      quantGroups
+        .map((g) => {
+          const heading = g.label
+            ? `<div style="font-family:${SANS};font-weight:700;font-size:13px;color:${C.ink};margin:16px 0 6px;">${esc(g.label)}</div>`
+            : ''
+          const rows = g.rows
+            .map(
+              (q, i) =>
+                `<tr${i % 2 ? ` style="background:#fafbfd;"` : ''}>
               <td style="font-family:${SANS};font-size:13px;color:${C.ink};padding:7px 12px;border-bottom:1px solid ${C.line};">${esc(q.metric)}</td>
               <td align="right" style="font-family:${SANS};font-size:13px;font-weight:700;color:${C.ink};white-space:nowrap;padding:7px 12px;border-bottom:1px solid ${C.line};">${esc(q.value)}</td>
               <td style="font-family:${SANS};font-size:12px;color:#7d8ba3;padding:7px 12px;border-bottom:1px solid ${C.line};">${esc(q.context)}</td>
             </tr>`,
-        )
-        .join('')}</table>`
+            )
+            .join('')
+          return `${heading}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${C.line};">${rows}</table>`
+        })
+        .join('')
     : ''
 
   const interesting = weekly.interesting.quote

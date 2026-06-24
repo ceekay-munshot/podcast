@@ -14,6 +14,7 @@ import { Icon } from '../components/Icon'
 import { DownloadMenu } from '../components/DownloadMenu'
 import { readSubscribedEmail } from '../components/WeeklySubscribe'
 import { loadRecipients, addRecipient, removeRecipient } from '../lib/recipientsStore'
+import { groupQuantByEpisode } from '../lib/weeklyQuant'
 import { EditionSwitcher } from '../components/EditionSwitcher'
 import { RichText, entityTerms } from '../components/RichText'
 import { ToneMeter } from '../components/ToneMeter'
@@ -329,13 +330,20 @@ function WeeklyDoc({
             </Block>
           )}
 
-          {/* Quantitative Summary — the hard numbers from across the week */}
+          {/* Quantitative Summary — the hard numbers, grouped by source episode */}
           {quantTable.length > 0 && (
             <Block id="wk-quant" title="Quantitative Summary">
-              <DataTable
-                cols={[{ h: 'Metric' }, { h: 'Value', align: 'right' }, { h: 'Context' }]}
-                rows={quantTable.map((q) => [q.metric, q.value, q.context])}
-              />
+              <div className="space-y-4">
+                {groupQuantByEpisode(quantTable, weekly.citations ?? []).map((g, gi) => (
+                  <div key={gi}>
+                    {g.label && <h4 className="mb-1.5 text-[13px] font-semibold text-on-surface">{g.label}</h4>}
+                    <DataTable
+                      cols={[{ h: 'Metric' }, { h: 'Value', align: 'right' }, { h: 'Context' }]}
+                      rows={g.rows.map((q) => [q.metric, q.value, q.context])}
+                    />
+                  </div>
+                ))}
+              </div>
             </Block>
           )}
 

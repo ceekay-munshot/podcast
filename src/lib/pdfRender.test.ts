@@ -39,10 +39,14 @@ describe('weeklyBlocks — Guidepoint house style', () => {
     // The TOC lists exactly the emitted sections.
     const toc = blocks.find((b): b is Extract<Block, { k: 'toc' }> => b.k === 'toc')!
     expect(toc.rows.map((r) => r.title)).toEqual(titles(blocks))
-    // Two data tables (quant + comparison) with header columns + rows.
+    // Data tables: the Quantitative Summary is now split per source episode (one
+    // table each, headed by a subhead block), plus the single Comparison table.
     const tables = blocks.filter((b): b is Extract<Block, { k: 'table' }> => b.k === 'table')
-    expect(tables).toHaveLength(2)
-    expect(tables[0].rows.length).toBeGreaterThan(0)
+    const quantTables = tables.filter((t) => t.cols[0]?.header === 'Metric')
+    const comparisonTables = tables.filter((t) => t.cols[0]?.header === 'Transcript')
+    expect(quantTables.length).toBeGreaterThan(1) // grouped by episode, not one big table
+    expect(comparisonTables).toHaveLength(1)
+    expect(quantTables.reduce((n, t) => n + t.rows.length, 0)).toBeGreaterThan(0)
     // Pitched ideas flattened across shows.
     const idea = ideas(blocks).find((i) => i.title === 'Long Nvidia (NVDA) into the capex supercycle')
     expect(idea?.who).toBe('David Sacks')
