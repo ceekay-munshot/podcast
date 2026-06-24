@@ -13,6 +13,7 @@ import type { WeeklyIdea, WeeklyShowDigest, WeeklySummary } from '../lib/types'
 import { Icon } from '../components/Icon'
 import { DownloadMenu } from '../components/DownloadMenu'
 import { readSubscribedEmail } from '../components/WeeklySubscribe'
+import { loadRecipients, addRecipient, removeRecipient } from '../lib/recipientsStore'
 import { EditionSwitcher } from '../components/EditionSwitcher'
 import { RichText, entityTerms } from '../components/RichText'
 import { ToneMeter } from '../components/ToneMeter'
@@ -34,6 +35,20 @@ export default function Weekly() {
   // Where "Email this edition" sends: the signed-in user's address, or the one
   // they subscribed the weekly brief with. Absent → the menu item is hidden.
   const userEmail = identity?.email || readSubscribedEmail()
+
+  // Extra recipients (besides the user) the edition also goes to — typed in the
+  // Download menu and saved locally, per user. Mirrored in state so add/remove
+  // re-renders the chips immediately; the store is the source of truth.
+  const [extraRecipients, setExtraRecipients] = useState<string[]>([])
+  useEffect(() => {
+    setExtraRecipients(loadRecipients())
+  }, [userEmail])
+  const addExtraRecipient = (addr: string) => {
+    const res = addRecipient(addr)
+    setExtraRecipients(res.list)
+    return { ok: res.ok, message: res.message }
+  }
+  const removeExtraRecipient = (addr: string) => setExtraRecipients(removeRecipient(addr))
 
   // The history: ready episodes sliced into per-week editions (newest first).
   const editions = useMemo(() => listEditions(episodes, podcastById), [episodes, podcastById])
@@ -147,8 +162,12 @@ export default function Weekly() {
             <DownloadMenu
               onPdf={() => void downloadWeeklyPdf(weekly, episodeById, podcastById)}
               onWord={() => void downloadWeekly(weekly, episodeById, podcastById)}
-              onEmail={userEmail ? () => emailWeeklyEdition(userEmail, weekly, episodeById, podcastById) : undefined}
-              emailSubtitle={userEmail ? `To ${userEmail}` : undefined}
+              onEmail={userEmail ? () => emailWeeklyEdition([userEmail, ...extraRecipients], weekly, episodeById, podcastById) : undefined}
+              recipients={
+                userEmail
+                  ? { self: userEmail, others: extraRecipients, onAdd: addExtraRecipient, onRemove: removeExtraRecipient }
+                  : undefined
+              }
             />
           )}
         </div>

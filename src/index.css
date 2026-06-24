@@ -336,6 +336,21 @@
   }
 }
 
+/* Recipients editor — fades + settles down as it expands under the email item. */
+.recip-editor {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 160ms var(--ease-out),
+    transform 160ms var(--ease-out);
+}
+@starting-style {
+  .recip-editor {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
 /* Mobile nav drawer — slides in from the left edge, the side its ☰ trigger
    lives on. Stays mounted so the transform/opacity transitions are
    interruptible (a quick open→close retargets mid-glide instead of
@@ -384,11 +399,13 @@
   .lift:active {
     transform: none;
   }
-  .pop {
+  .pop,
+  .recip-editor {
     transition-property: opacity;
   }
   @starting-style {
-    .pop {
+    .pop,
+    .recip-editor {
       transform: none;
     }
   }

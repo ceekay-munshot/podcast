@@ -4,6 +4,7 @@ import { stableHash } from './hash'
 import { apiFetch } from './apiFetch'
 import { weeklyBriefEmailHtml, welcomeEmailHtml, type EmailResult } from './email'
 import { weeklyPdfBytes } from './pdfRender'
+import { normalizeRecipients } from './recipientsStore'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE SEAM.
@@ -201,23 +202,33 @@ function persistSubscription(method: 'POST' | 'DELETE', email: string): Promise<
     .catch(() => undefined)
 }
 
-// Send ONE real weekly edition to an address on demand (the Weekly page's
-// "Email this edition"). Renders the actual generated summary as a designed
-// HTML email; `ok` is false on any delivery failure so the UI can say so.
+// Send the real weekly edition on demand (the Weekly page's "Email this edition")
+// to one OR MORE recipients. Renders + hosts the PDF ONCE, then posts the same
+// designed brief to each address (the relay proxy validates a single recipient
+// per request and rate-limits per address, so a list must fan out one-per-send).
+// `ok` is false unless every recipient succeeds, and `message` reports the tally.
 export async function emailWeeklyEdition(
-  email: string,
+  recipients: string | string[],
   weekly: WeeklySummary,
   episodeById: (id: string) => Episode | undefined,
   podcastById: (id: string) => Podcast | undefined,
 ): Promise<EmailResult> {
-  // The PDF is the deliverable: render + host it, then send a brief that links to
-  // it. A failed render/upload degrades to a brief with no link, never a hard fail.
+  const to = normalizeRecipients(undefined, Array.isArray(recipients) ? recipients : [recipients])
+  if (!to.length) return { ok: false, message: 'No valid recipient to send to.' }
+
+  // The PDF is the deliverable: render + host it ONCE, then reuse the link for all.
+  // A failed render/upload degrades to a brief with no link, never a hard fail.
   const pdfUrl = (await hostWeeklyPdf(weekly, episodeById, podcastById)) ?? undefined
-  return postEmail({
-    to: email,
-    subject: `Munshot Weekly — ${weekly.rangeLabel}`,
-    html: weeklyBriefEmailHtml(weekly, episodeById, podcastById, { pdfUrl }),
-  })
+  const subject = `Munshot Weekly — ${weekly.rangeLabel}`
+  const html = weeklyBriefEmailHtml(weekly, episodeById, podcastById, { pdfUrl })
+
+  const results = await Promise.all(to.map((addr) => postEmail({ to: addr, subject, html })))
+  const sent = results.filter((r) => r.ok).length
+  const failed = to.length - sent
+
+  if (sent === 0) return { ok: false, message: results[0]?.message || "Couldn't send the email." }
+  if (failed > 0) return { ok: false, message: `Sent to ${sent} of ${to.length} — ${failed} couldn't be reached.` }
+  return { ok: true, message: to.length === 1 ? `Sent to ${to[0]}` : `Sent to ${to.length} recipients` }
 }
 
 // Search a real podcast directory, or resolve a pasted RSS / Apple-show /
