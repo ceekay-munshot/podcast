@@ -20,7 +20,10 @@ import { COVER_BG } from './coverBg'
 // mono split the .doc uses (Times / Helvetica / Courier ≈ Georgia / Calibri /
 // Consolas) — the three standard PDF families, so nothing needs embedding.
 //
-// Colours: navy #1a2b4a · gold #b8902f. **bold** spans render gold, like the app.
+// Colours: navy #1a2b4a · gold #b8902f. **bold** prose renders in dark navy for
+// readability (gold prose is too low-contrast on white, especially for long runs);
+// gold is reserved for structure — section numbers, rules, subheads, bullet
+// markers, [n] citation markers, badges — and for bold text on the dark quote panel.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type RGB = [number, number, number]
@@ -618,8 +621,8 @@ export class Painter {
     this.d.setFontSize(capSize)
     const indentW = this.d.getTextWidth(cap) + capGap
     const firstRest = runs(first.slice(1))
-    const leadOpt: RichOpts = { sz, lh, fam: 'helvetica', color: C.ink2, boldColor: C.gold, indentFirst: indentW, indentLines: capLines, noBreak: true }
-    const bodyOpt: RichOpts = { sz, lh, fam: 'helvetica', color: C.ink2, boldColor: C.gold, noBreak: true }
+    const leadOpt: RichOpts = { sz, lh, fam: 'helvetica', color: C.ink2, boldColor: C.navy, indentFirst: indentW, indentLines: capLines, noBreak: true }
+    const bodyOpt: RichOpts = { sz, lh, fam: 'helvetica', color: C.ink2, boldColor: C.navy, noBreak: true }
 
     // Measure. The first paragraph reserves at least `capLines` rows so a short
     // opener still leaves room for the cap before the next paragraph.
@@ -700,7 +703,7 @@ export class Painter {
       kindW = this.d.getTextWidth(b.kind.toUpperCase()) + 12 + 7
     }
     const titleOpt: RichOpts = { sz: 11.4, lh: 14, fam: 'times', color: C.navy, boldColor: C.navy, indentFirst: kindW, noBreak: true }
-    const thOpt: RichOpts = { sz: 9.2, lh: 12.5, fam: 'helvetica', color: C.body, boldColor: C.gold, noBreak: true }
+    const thOpt: RichOpts = { sz: 9.2, lh: 12.5, fam: 'helvetica', color: C.body, boldColor: C.navy, noBreak: true }
 
     let h = padV + this.rich(runs(b.title), M.l + padX, innerW, titleOpt, false) * 14
     if (b.who) h += 5 + 16
@@ -768,7 +771,7 @@ export class Painter {
         .filter(Boolean)
         .map((w, i, a): Token => ({ w: i === a.length - 1 ? w + '.' : w, b: true, c: C.navy }))
       const toks = titleWords.concat(runs(it.detail))
-      const opt: RichOpts = { sz: 10, lh, fam: 'helvetica', color: C.body, boldColor: C.gold, noBreak: true }
+      const opt: RichOpts = { sz: 10, lh, fam: 'helvetica', color: C.body, boldColor: C.navy, noBreak: true }
       const lines = this.rich(toks, M.l + 16, CW - 16, opt, false)
       this.ensure(lines * lh + 6)
       this.fill(C.gold)
@@ -781,7 +784,7 @@ export class Painter {
   questions(items: string[]) {
     const lh = 12.5
     for (const q of items) {
-      const opt: RichOpts = { sz: 9, lh, fam: 'helvetica', italic: true, color: [70, 86, 111], boldColor: C.gold, noBreak: true }
+      const opt: RichOpts = { sz: 9, lh, fam: 'helvetica', italic: true, color: [70, 86, 111], boldColor: C.navy, noBreak: true }
       const lines = this.rich(runs(q), M.l + 14, CW - 14, opt, false)
       this.ensure(lines * lh + 6)
       this.fill(C.goldB)
@@ -868,8 +871,8 @@ export class Painter {
     const padX = 22
     const padV = 18
     const innerW = CW - 2 * padX
-    const titleOpt: RichOpts = { sz: 15, lh: 18, fam: 'times', color: C.goldPale, boldColor: C.goldPale, noBreak: true }
-    const qOpt: RichOpts = { sz: 12.4, lh: 17, fam: 'times', italic: true, color: [221, 230, 242], boldColor: C.goldPale, noBreak: true }
+    const titleOpt: RichOpts = { sz: 15, lh: 18, fam: 'times', color: C.goldPale, boldColor: C.navyPale, noBreak: true }
+    const qOpt: RichOpts = { sz: 12.4, lh: 17, fam: 'times', italic: true, color: [221, 230, 242], boldColor: C.navyPale, noBreak: true }
 
     let h = padV
     if (b.title) h += this.rich(runs(b.title), M.l + padX, innerW, titleOpt, false) * 18 + 8
@@ -921,7 +924,7 @@ export class Painter {
     let indent = tsW + 8
     if (b.star) indent += 12
     const titleOpt: RichOpts = { sz: 11.2, lh: 14, fam: 'times', color: C.navy, boldColor: C.navy, indentFirst: indent, noBreak: true }
-    const whyOpt: RichOpts = { sz: 9.2, lh: 13, fam: 'helvetica', color: C.body, boldColor: C.gold, noBreak: true }
+    const whyOpt: RichOpts = { sz: 9.2, lh: 13, fam: 'helvetica', color: C.body, boldColor: C.navy, noBreak: true }
 
     let h = padV + this.rich(runs(b.title), M.l + padX, innerW, titleOpt, false) * 14
     h += 4 + this.rich(runs(b.detail), M.l + padX, innerW, whyOpt, false) * 13 + padV
@@ -968,7 +971,7 @@ export class Painter {
     this.rich(runs(b.q), M.l + qbW + 8, CW - qbW - 8, qOpt, true)
     this.y += 4
     // answer is breakable (can run long)
-    this.rich(runs(b.a), M.l, CW, { sz: 9.4, lh: 13.5, fam: 'helvetica', color: C.body, boldColor: C.gold }, true)
+    this.rich(runs(b.a), M.l, CW, { sz: 9.4, lh: 13.5, fam: 'helvetica', color: C.body, boldColor: C.navy }, true)
     this.y += 9
     this.stroke(C.line, 0.5)
     this.d.line(M.l, this.y, M.l + CW, this.y)
@@ -1192,7 +1195,7 @@ export class Painter {
       this.y += 13
     }
     const prose = (s: string) => {
-      this.rich(runs(s), M.l, CW, { sz: 9.6, lh: 13.5, fam: 'helvetica', color: C.ink2, boldColor: C.gold }, true)
+      this.rich(runs(s), M.l, CW, { sz: 9.6, lh: 13.5, fam: 'helvetica', color: C.ink2, boldColor: C.navy }, true)
       this.y += 6
     }
     if (b.whatChanged) {
@@ -1209,11 +1212,11 @@ export class Painter {
       labelRow(label)
       for (const p of items) {
         const toks: Token[] = [{ w: p.name + (p.why ? ' —' : ''), b: true, c: C.navy }, ...runs(p.why)]
-        const lines = this.rich(toks, M.l + 14, CW - 14, { sz: 9.2, lh: 12.5, fam: 'helvetica', color: C.body, boldColor: C.gold, noBreak: true }, false)
+        const lines = this.rich(toks, M.l + 14, CW - 14, { sz: 9.2, lh: 12.5, fam: 'helvetica', color: C.body, boldColor: C.navy, noBreak: true }, false)
         this.ensure(lines * 12.5 + 4)
         this.fill(dot)
         this.diamond(M.l + 3, this.y + 5, 2.4)
-        this.rich(toks, M.l + 14, CW - 14, { sz: 9.2, lh: 12.5, fam: 'helvetica', color: C.body, boldColor: C.gold, noBreak: true }, true)
+        this.rich(toks, M.l + 14, CW - 14, { sz: 9.2, lh: 12.5, fam: 'helvetica', color: C.body, boldColor: C.navy, noBreak: true }, true)
         this.y += 3
       }
       this.y += 4
