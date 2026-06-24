@@ -34,29 +34,6 @@ export default function Weekly() {
   // Where "Email this edition" sends: the signed-in user's address, or the one
   // they subscribed the weekly brief with. Absent → the menu item is hidden.
   const userEmail = identity?.email || readSubscribedEmail()
-  const [mailing, setMailing] = useState(false)
-  const [mailNote, setMailNote] = useState<{ ok: boolean; text: string } | null>(null)
-
-  async function emailEdition() {
-    if (!weekly || !userEmail || mailing) return
-    setMailing(true)
-    setMailNote(null)
-    try {
-      const res = await emailWeeklyEdition(userEmail, weekly, episodeById, podcastById)
-      setMailNote({ ok: res.ok, text: res.ok ? `Sent to ${userEmail}` : res.message })
-    } catch {
-      setMailNote({ ok: false, text: "Couldn't send — please try again." })
-    } finally {
-      setMailing(false)
-    }
-  }
-
-  // Auto-dismiss the transient send status.
-  useEffect(() => {
-    if (!mailNote) return
-    const t = setTimeout(() => setMailNote(null), 5000)
-    return () => clearTimeout(t)
-  }, [mailNote])
 
   // The history: ready episodes sliced into per-week editions (newest first).
   const editions = useMemo(() => listEditions(episodes, podcastById), [episodes, podcastById])
@@ -167,26 +144,12 @@ export default function Weekly() {
             </button>
           )}
           {weekly && (
-            <div className="flex items-center gap-2.5">
-              {mailNote && (
-                <span
-                  role="status"
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-metadata font-medium ${
-                    mailNote.ok ? 'bg-success-container text-on-success-container' : 'bg-error-container text-on-error-container'
-                  }`}
-                >
-                  <Icon name={mailNote.ok ? 'mark_email_read' : 'error'} size={15} />
-                  <span className="max-w-[12rem] truncate">{mailNote.text}</span>
-                </span>
-              )}
-              <DownloadMenu
-                onPdf={() => void downloadWeeklyPdf(weekly, episodeById, podcastById)}
-                onWord={() => void downloadWeekly(weekly, episodeById, podcastById)}
-                onEmail={userEmail ? () => void emailEdition() : undefined}
-                emailSubtitle={userEmail ? `To ${userEmail}` : undefined}
-                emailBusy={mailing}
-              />
-            </div>
+            <DownloadMenu
+              onPdf={() => void downloadWeeklyPdf(weekly, episodeById, podcastById)}
+              onWord={() => void downloadWeekly(weekly, episodeById, podcastById)}
+              onEmail={userEmail ? () => emailWeeklyEdition(userEmail, weekly, episodeById, podcastById) : undefined}
+              emailSubtitle={userEmail ? `To ${userEmail}` : undefined}
+            />
           )}
         </div>
       </div>

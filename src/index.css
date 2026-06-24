@@ -374,6 +374,10 @@
   .animate-fade-up {
     animation: none;
   }
+  /* Status icons (e.g. the "email sent" check) appear instantly — no scale pop. */
+  .node-pop {
+    animation: none;
+  }
   .press:active,
   .press-soft:active,
   .lift:hover,
