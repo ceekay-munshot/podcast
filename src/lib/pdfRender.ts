@@ -334,6 +334,13 @@ export class Painter {
   private at(s: string, x: number, y = this.y) {
     this.d.text(s, x, y, { baseline: 'top' })
   }
+  // jsPDF's getTextWidth ignores letter-spacing (the PDF Tc operator), so any
+  // label drawn under setCharSpace measures short by `cs` per inter-glyph gap.
+  // Add it back so pill badges contain their text and right/centre-aligned
+  // letterspaced labels land where they should instead of overhanging.
+  private spacedW(s: string, cs: number) {
+    return this.d.getTextWidth(s) + cs * Math.max(0, s.length - 1)
+  }
   private ensure(h: number) {
     if (this.y + h > A4.h - M.b) {
       this.d.addPage()
@@ -432,7 +439,7 @@ export class Painter {
     this.color(C.goldPale)
     this.d.setCharSpace(1.6)
     const kick = b.kicker.toUpperCase()
-    this.at(kick, inR - this.d.getTextWidth(kick), cy + 7)
+    this.at(kick, inR - this.spacedW(kick, 1.6), cy + 7)
     this.d.setCharSpace(0)
 
     cy += 40
@@ -453,7 +460,7 @@ export class Painter {
       this.color(C.goldB)
       this.d.setCharSpace(2.2)
       const e = b.eyebrow.toUpperCase()
-      this.at(e, (A4.w - this.d.getTextWidth(e)) / 2, ty)
+      this.at(e, (A4.w - this.spacedW(e, 2.2)) / 2, ty)
       this.d.setCharSpace(0)
       ty += 20
     }
@@ -483,7 +490,7 @@ export class Painter {
       const gap = 10
       const ch = 17
       const labels = b.chips.map((c) => c.toUpperCase())
-      const widths = labels.map((l) => this.d.getTextWidth(l) + pad * 2)
+      const widths = labels.map((l) => this.spacedW(l, 1) + pad * 2)
       const total = widths.reduce((a, w) => a + w, 0) + gap * (labels.length - 1)
       let cx2 = (A4.w - total) / 2
       this.stroke([150, 121, 52], 0.6)
@@ -510,7 +517,7 @@ export class Painter {
       this.color(C.goldPale)
       this.d.setCharSpace(1.2)
       const r = b.dateRange.toUpperCase()
-      this.at(r, inR - this.d.getTextWidth(r), by + 10)
+      this.at(r, inR - this.spacedW(r, 1.2), by + 10)
       this.d.setCharSpace(0)
     }
   }
@@ -600,7 +607,7 @@ export class Painter {
     this.font('helvetica', 'bold')
     this.d.setFontSize(7.2)
     this.d.setCharSpace(0.6)
-    const w = this.d.getTextWidth(label) + 16
+    const w = this.spacedW(label, 0.6) + 16
     this.fill(C.goldTint)
     this.stroke([150, 121, 52], 0.5)
     this.d.roundedRect(M.l + CW - w, this.y - 1, w, 13, 6, 6, 'FD')
@@ -932,7 +939,7 @@ export class Painter {
       this.d.setCharSpace(1.4)
       this.at('EPISODE', M.l, this.y + 4)
       const sh = 'SHOW'
-      this.at(sh, M.l + CW - this.d.getTextWidth(sh), this.y + 4)
+      this.at(sh, M.l + CW - this.spacedW(sh, 1.4), this.y + 4)
       this.d.setCharSpace(0)
       this.y += 14
       this.stroke(C.gold, 1.4)
@@ -945,7 +952,7 @@ export class Painter {
     const tagW = (show: string) => {
       this.font('helvetica', 'bold')
       this.d.setFontSize(6.9)
-      return show ? this.d.getTextWidth(show.toUpperCase()) + 16 : 0
+      return show ? this.spacedW(show.toUpperCase(), 0.4) + 16 : 0
     }
     for (const row of rows) {
       const lines = this.rich(runs(row.episode), M.l + 9, CW - 18 - tagW(row.show) - 10, epOpt, false)
@@ -966,7 +973,7 @@ export class Painter {
         const t = row.show.toUpperCase()
         this.font('helvetica', 'bold')
         this.d.setFontSize(6.9)
-        const w = this.d.getTextWidth(t) + 16
+        const w = this.spacedW(t, 0.4) + 16
         const x = M.l + CW - w - 6
         const yy = top + (rh - 13) / 2
         this.fill(tagColor(row.show))
@@ -997,7 +1004,7 @@ export class Painter {
     this.color(C.gold)
     this.d.setCharSpace(1)
     const r = right.toUpperCase()
-    this.at(r, M.l + CW - this.d.getTextWidth(r), this.y)
+    this.at(r, M.l + CW - this.spacedW(r, 1), this.y)
     this.d.setCharSpace(0)
   }
 
@@ -1074,7 +1081,7 @@ export class Painter {
       this.d.setCharSpace(1)
       cols.forEach((c, i) => {
         const label = c.header.toUpperCase()
-        const lx = c.align === 'right' ? xs[i] + widths[i] - pad - this.d.getTextWidth(label) : xs[i] + pad
+        const lx = c.align === 'right' ? xs[i] + widths[i] - pad - this.spacedW(label, 1) : xs[i] + pad
         this.at(label, lx, this.y + 4)
       })
       this.d.setCharSpace(0)
@@ -1185,7 +1192,9 @@ function stampFooters(doc: JsPdf, opts: { left: string; right: string }): void {
     doc.setTextColor(184, 144, 47)
     doc.setCharSpace(1)
     const right = `${opts.right.toUpperCase()}  ·  ${i} / ${total}`
-    doc.text(right, M.l + CW - doc.getTextWidth(right), y + 9, { baseline: 'top' })
+    // getTextWidth ignores letter-spacing — add it back so the date doesn't overhang.
+    const rightW = doc.getTextWidth(right) + 1 * Math.max(0, right.length - 1)
+    doc.text(right, M.l + CW - rightW, y + 9, { baseline: 'top' })
     doc.setCharSpace(0)
   }
 }
