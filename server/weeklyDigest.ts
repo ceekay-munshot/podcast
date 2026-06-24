@@ -1,8 +1,8 @@
-import type { Episode, Podcast, WeeklySummary } from '../src/lib/types'
+import type { Episode, Podcast, Summary, WeeklySummary } from '../src/lib/types'
 import { PODCASTS } from '../src/lib/mock-data'
 import { assembleWeekly, buildCitations, buildWeeklySources, hashKey, mergeWeeklyAi } from '../src/lib/weeklyAssemble'
 import { weeklyBriefEmailHtml } from '../src/lib/email'
-import { synthesizeWeekly, type SummarizeConfig } from './summarize'
+import { summarizeEpisode, synthesizeWeekly, type SummarizeConfig } from './summarize'
 import type { SummaryStore } from './summaryStore'
 import type { SubscriberStore } from './subscriberStore'
 
@@ -14,6 +14,13 @@ import type { SubscriberStore } from './subscriberStore'
 // subscriber. No browser needed: the digest is assembled entirely server-side
 // from the deterministic engine (weeklyAssemble.ts) + the shared summary cache,
 // so it never depends on anyone having opened the app this week.
+//
+// PRE-SEND BACKFILL: before assembling, the job makes sure every subscribed channel
+// that published this week is represented. If nobody processed a channel's latest
+// episode (so the brief would go out empty or thin), it summarises one episode per
+// uncovered channel inline (pickBackfillTargets + makeEpisodeProcessor), writing the
+// result to the shared cache so the app reuses it. This is the guarantee that the
+// Monday email always carries real, freshly-processed content.
 //
 // Triggered over HTTP by a scheduled GitHub Actions workflow (Cloudflare Pages
 // can't run cron itself), guarded by a shared CRON_SECRET.
@@ -36,6 +43,51 @@ export function readyThisWeek(episodes: Episode[], now: number): Episode[] {
   return episodes.filter((e) => e.status === 'ready' && e.summary && +new Date(e.publishedAt) >= cutoff)
 }
 
+/** Pre-send backfill targets: ONE episode per channel that has no ready episode in
+ *  this week's window yet but DOES have a recent, summarisable one waiting. Picks
+ *  the most recent pending episode per show, so every channel that published this
+ *  week contributes at least one episode to the brief — this is what stops the
+ *  Monday digest going out empty when nobody opened the app all week. Channels with
+ *  nothing published this week (nothing to summarise) are correctly left out. */
+export function pickBackfillTargets(episodes: Episode[], now: number): Episode[] {
+  const cutoff = now - WEEK_MS
+  const inWindow = (e: Episode): boolean => +new Date(e.publishedAt) >= cutoff
+  // Channels already represented in this week's edition need no backfill.
+  const covered = new Set(episodes.filter((e) => e.status === 'ready' && e.summary && inWindow(e)).map((e) => e.podcastId))
+  const best = new Map<string, Episode>()
+  for (const e of episodes) {
+    if (covered.has(e.podcastId)) continue
+    if (e.status === 'ready' && e.summary) continue // already processed, just out of window — don't redo it
+    if (!inWindow(e)) continue
+    // Needs real source material to summarise from (free feed transcript, audio, or
+    // show-notes); skip contentless items rather than spend a call on an empty prompt.
+    if (!e.transcriptUrl && !e.audioUrl && !(e.notes && e.notes.trim())) continue
+    const cur = best.get(e.podcastId)
+    if (!cur || +new Date(e.publishedAt) > +new Date(cur.publishedAt)) best.set(e.podcastId, e)
+  }
+  return [...best.values()]
+}
+
+/** Default backfill processor, derived from the digest's LLM config: summarise one
+ *  episode through the real engine and return its summary, writing the full result
+ *  to the shared store so the app and later runs reuse it. Returns undefined when no
+ *  LLM key is configured (backfill then no-ops).
+ *
+ *  Transcription keys are intentionally NOT required here: the digest uses the free
+ *  publisher transcript when the feed carries one, else the show-notes — keeping the
+ *  Monday run fast and bounded instead of transcribing a dozen full episodes inline. */
+export function makeEpisodeProcessor(cfg: SummarizeConfig | undefined): ((ep: Episode) => Promise<Summary | null>) | undefined {
+  if (!cfg || (!cfg.openaiKey && !cfg.anthropicKey)) return undefined
+  return async (ep) => {
+    const show = PODCASTS.find((p) => p.id === ep.podcastId)?.title ?? ep.podcastId
+    const res = await summarizeEpisode(
+      { id: ep.id, title: ep.title, show, notes: ep.notes, transcriptUrl: ep.transcriptUrl, audioUrl: ep.audioUrl },
+      cfg,
+    )
+    return res.summary
+  }
+}
+
 export interface DigestDeps {
   /** Source of the curated shows' episodes (summaries overlaid) — getLiveEpisodes. */
   getEpisodes: (store?: SummaryStore) => Promise<Episode[]>
@@ -52,6 +104,10 @@ export interface DigestDeps {
   generatePdf?: (weekly: WeeklySummary, episodeById: (id: string) => Episode | undefined, podcastById: (id: string) => Podcast | undefined) => Promise<ArrayBuffer>
   /** Store the rendered PDF and return its hosted URL (the brief's download link). */
   storePdf?: (bytes: ArrayBuffer) => Promise<string>
+  /** Summarise one not-yet-processed episode and return its summary (writing it to
+   *  the shared store). Powers the pre-send backfill. Injected so tests don't hit the
+   *  wire; in production it is derived from `summarizeConfig` when omitted. */
+  processEpisode?: (ep: Episode) => Promise<Summary | null>
   /** Overridable clock for tests. */
   now?: number
 }
@@ -63,6 +119,8 @@ export interface DigestReport {
   recipients: number
   rangeLabel?: string
   episodeCount?: number
+  /** Episodes processed inline by the pre-send backfill (0 when none was needed). */
+  backfilled?: number
   /** Set when nothing was sent: 'no_ready_episodes' | 'no_subscribers'. */
   skipped?: string
 }
@@ -74,15 +132,41 @@ export async function runWeeklyDigest(deps: DigestDeps): Promise<{ status: numbe
   const now = deps.now ?? Date.now()
   const podcastById = (id: string): Podcast | undefined => PODCASTS.find((p) => p.id === id)
 
-  const all = await deps.getEpisodes(deps.summaryStore)
-  const ready = readyThisWeek(all, now)
-  if (!ready.length) {
-    return { status: 200, body: { ok: true, sent: 0, failed: 0, recipients: 0, skipped: 'no_ready_episodes' } }
-  }
-
+  // Recipients first: the pre-send backfill below can be expensive (one LLM call per
+  // uncovered channel), so don't build an edition nobody is going to receive.
   const subscribers = deps.subscriberStore ? (await deps.subscriberStore.get()) ?? [] : []
   if (!subscribers.length) {
     return { status: 200, body: { ok: true, sent: 0, failed: 0, recipients: 0, skipped: 'no_subscribers' } }
+  }
+
+  const all = await deps.getEpisodes(deps.summaryStore)
+  let ready = readyThisWeek(all, now)
+
+  // Guarantee the brief isn't empty just because nobody opened the app this week:
+  // for every subscribed channel with no ready episode in this week's window, process
+  // its most recent pending episode now. Best-effort and per-channel isolated — one
+  // channel's failure never blocks the others, nor the send.
+  let backfilled = 0
+  const processEpisode = deps.processEpisode ?? makeEpisodeProcessor(deps.summarizeConfig)
+  if (processEpisode) {
+    const targets = pickBackfillTargets(all, now)
+    if (targets.length) {
+      const results = await Promise.allSettled(
+        targets.map(async (t) => {
+          const summary = await processEpisode(t)
+          if (!summary) return false
+          t.status = 'ready'
+          t.summary = summary
+          return true
+        }),
+      )
+      backfilled = results.filter((r) => r.status === 'fulfilled' && r.value).length
+      if (backfilled) ready = readyThisWeek(all, now)
+    }
+  }
+
+  if (!ready.length) {
+    return { status: 200, body: { ok: true, sent: 0, failed: 0, recipients: subscribers.length, backfilled, skipped: 'no_ready_episodes' } }
   }
 
   // Deterministic base, then the SAME cross-episode AI synthesis the on-screen
@@ -122,6 +206,6 @@ export async function runWeeklyDigest(deps: DigestDeps): Promise<{ status: numbe
 
   return {
     status: 200,
-    body: { ok: failed === 0, sent, failed, recipients: subscribers.length, rangeLabel: weekly.rangeLabel, episodeCount: ready.length },
+    body: { ok: failed === 0, sent, failed, recipients: subscribers.length, backfilled, rangeLabel: weekly.rangeLabel, episodeCount: ready.length },
   }
 }

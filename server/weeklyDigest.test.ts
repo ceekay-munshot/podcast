@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { Episode, Summary } from '../src/lib/types'
-import { checkCronAuth, readyThisWeek, runWeeklyDigest } from './weeklyDigest'
+import { checkCronAuth, pickBackfillTargets, readyThisWeek, runWeeklyDigest } from './weeklyDigest'
 import type { Subscriber, SubscriberStore } from './subscriberStore'
 
 // The Monday digest job. The send transport and the data sources are injected, so
@@ -33,6 +33,13 @@ function ep(id: string, podcastId: string, publishedAt: string, status: Episode[
   }
 }
 
+// A detected (not-yet-summarised) episode WITH source material — a valid backfill
+// candidate (pickBackfillTargets skips items with no notes/transcript/audio).
+const pending = (id: string, podcastId: string, publishedAt: string): Episode => ({
+  ...ep(id, podcastId, publishedAt, 'detected'),
+  notes: 'Real show notes with enough material to summarise from.',
+})
+
 const memSubscriberStore = (list: Subscriber[] | null): SubscriberStore => ({
   get: async () => list,
   put: async () => {},
@@ -62,7 +69,69 @@ describe('readyThisWeek', () => {
   })
 })
 
+describe('pickBackfillTargets', () => {
+  it('picks one recent, summarisable pending episode per UNCOVERED channel', () => {
+    const eps = [
+      ep('allin-ready', 'allin', daysAgo(1)), // allin already covered this week → skip the channel
+      pending('allin-older', 'allin', daysAgo(2)), // (same channel, ignored)
+      pending('odd-new', 'oddlots', daysAgo(1)), // oddlots uncovered → pick the NEWEST pending
+      pending('odd-old', 'oddlots', daysAgo(4)),
+      pending('stale', 'bg2', daysAgo(20)), // out of the 7-day window → skip
+      ep('bare', 'acquired', daysAgo(1), 'detected'), // no notes/transcript/audio → nothing to summarise → skip
+    ]
+    expect(pickBackfillTargets(eps, NOW).map((e) => e.id)).toEqual(['odd-new'])
+  })
+})
+
 describe('runWeeklyDigest', () => {
+  it('backfills uncovered channels before sending so the brief is never empty', async () => {
+    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent' }))
+    const processEpisode = vi.fn(async (e: Episode) => sum({ synthesis: [`processed ${e.id}`] }))
+    const res = await runWeeklyDigest({
+      getEpisodes: async () => [pending('fresh', 'allin', daysAgo(1))], // nothing ready yet this week
+      subscriberStore: memSubscriberStore(subs('a@muns.io')),
+      sendEmail,
+      processEpisode,
+      now: NOW,
+    })
+    expect(processEpisode).toHaveBeenCalledTimes(1)
+    expect(processEpisode.mock.calls[0][0].id).toBe('fresh')
+    expect(res.body).toMatchObject({ ok: true, sent: 1, backfilled: 1, episodeCount: 1 })
+    expect(sendEmail).toHaveBeenCalledTimes(1)
+  })
+
+  it('is best-effort per channel: one failed processing never blocks the send', async () => {
+    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent' }))
+    const processEpisode = vi.fn(async (e: Episode) => {
+      if (e.podcastId === 'oddlots') throw new Error('provider down')
+      return sum({ synthesis: [`processed ${e.id}`] })
+    })
+    const res = await runWeeklyDigest({
+      getEpisodes: async () => [pending('a', 'allin', daysAgo(1)), pending('o', 'oddlots', daysAgo(1))],
+      subscriberStore: memSubscriberStore(subs('a@muns.io')),
+      sendEmail,
+      processEpisode,
+      now: NOW,
+    })
+    expect(processEpisode).toHaveBeenCalledTimes(2)
+    expect(res.body).toMatchObject({ ok: true, sent: 1, backfilled: 1, episodeCount: 1 })
+    expect(sendEmail).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not backfill channels already covered this week', async () => {
+    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent' }))
+    const processEpisode = vi.fn(async (e: Episode) => sum({ synthesis: [`processed ${e.id}`] }))
+    const res = await runWeeklyDigest({
+      getEpisodes: async () => [ep('ready', 'allin', daysAgo(1))], // already summarised → no work needed
+      subscriberStore: memSubscriberStore(subs('a@muns.io')),
+      sendEmail,
+      processEpisode,
+      now: NOW,
+    })
+    expect(processEpisode).not.toHaveBeenCalled()
+    expect(res.body).toMatchObject({ ok: true, sent: 1, backfilled: 0, episodeCount: 1 })
+  })
+
   it('skips (sends nothing) when no episodes are ready this week', async () => {
     const sendEmail = vi.fn()
     const res = await runWeeklyDigest({
