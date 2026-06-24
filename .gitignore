@@ -15,6 +15,10 @@ dist-ssr
 # Local dev summary cache (filesystem mirror of the prod KV namespace)
 .cache
 
+# Local scratch — ad-hoc PDF/email render artifacts used to eyeball the format
+scripts/
+tmp-*.mts
+
 # Local env / secrets — never commit API keys
 .env
 .env.*
