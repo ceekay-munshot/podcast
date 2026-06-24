@@ -99,10 +99,14 @@ async function aiSynthesize(
   const sources = buildWeeklySources(ready, citations, podcastById)
 
   try {
-    // Bound the call so the edition never hangs on a slow/stuck endpoint — on
-    // timeout we abort and fall through to the deterministic Guidepoint layer.
+    // Bound the call so the edition never hangs on a stuck endpoint — on timeout we
+    // abort and fall through to the deterministic layer. Generous: the per-episode
+    // Investment Readout makes the synthesis heavier (~20-40s for a full week), and
+    // a 25s cap was tripping it into the deterministic fallback on real-sized weeks.
+    // This is a one-time, shared, cache-miss cost (the result is cached server- AND
+    // client-side), so a longer ceiling beats silently degrading the brief.
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 25_000)
+    const timer = setTimeout(() => controller.abort(), 75_000)
     let res: Response
     try {
       res = await apiFetch('/api/summary', {
