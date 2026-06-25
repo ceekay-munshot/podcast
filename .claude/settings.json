@@ -4,7 +4,7 @@
     "munshot-skills": {
       "source": {
         "source": "github",
-        "repo": "techmuns/claude-skills"
+        "repo": "ceekay-munshot/claude-skills"
       }
     }
   },
