@@ -24,9 +24,17 @@
  * authProvider } — note there is no userId field, so email IS the identity;
  * SDK dashboards are built to fall back to email).
  *
- * Verified live on 2026-06-12 by posting exactly these messages from the
- * chat.muns.io console: the podcast dashboard signed in, switched to the
- * user's personal space, and acked the channel.
+ * Context shape: the Munshot dashboard auth standard nests context under
+ * `payload.context.session` ({ token, userName, email, orgId, orgName }) — the
+ * shape the dashboard's useHostContext / identity layer reads. The userData
+ * blob carries no JWT, so `token` is null (this dashboard authenticates its own
+ * same-origin /api/* by the email-derived user key, not a bearer token); if a
+ * session token becomes available, populate it here and it flows through.
+ *
+ * Verified live on 2026-06-12 (flat-context era) by posting these messages from
+ * the chat.muns.io console: the podcast dashboard signed in, switched to the
+ * user's personal space, and acked the channel. The live host must be redeployed
+ * with this nested shape for the standard-conformant dashboard to read identity.
  */
 ;(function munshotDashboardHost() {
   if (window.__munshotDashboardHost) return // idempotent install
@@ -38,11 +46,16 @@
   function sessionContext() {
     try {
       var u = JSON.parse(localStorage.getItem('userData') || '{}')
+      // Nested per the dashboard auth standard: payload.context.session. No
+      // userId/JWT in userData → email IS the identity and token stays null.
       return {
-        userId: u.userId || u.email, // no userId in the session → email is the identity
-        email: u.email,
-        name: u.name,
-        orgId: u.orgId,
+        session: {
+          token: u.token || null,
+          userName: u.name || null,
+          email: u.email || null,
+          orgId: u.orgId || null,
+          orgName: u.orgName || null,
+        },
       }
     } catch (e) {
       return {}

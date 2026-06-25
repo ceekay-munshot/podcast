@@ -1,45 +1,41 @@
 import { canonicalUserKey } from './identityKey'
+import { sdk, type DashboardHostContext, type DashboardSdkEnvelope } from './sdk'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Munshot host identity — the ONLY module that touches the Dashboard SDK.
+// Munshot host identity — the app's identity layer, sitting ON TOP of the single
+// canonical Dashboard SDK client (src/lib/sdk.ts). This module owns NO SDK
+// client of its own: per the Munshot dashboard auth standard there is exactly
+// one client, created at module load in sdk.ts, whose message listener is live
+// before host:init can arrive. Here we only READ from it (getContext +
+// onMessage) and never call ready()/requestContext().
 //
-// When this app runs inside the chat.muns.io dashboard iframe, the host injects
-// the logged-in user's context via the Munshot Dashboard SDK (postMessage
-// envelope protocol: the SDK announces `dashboard:ready`, the host answers
-// `host:init` with { context: { userId, email, name, … } }, and may later send
-// `host:context:update`). This module resolves that to an Identity — or null
-// (anonymous) — and notifies on every change, so the app personalizes per user
-// without a page refresh.
-//
-// The handshake is HOST-initiated (verified against the SDK source): the host
-// picks a channelId and sends `host:init`; the SDK client captures it, stores
-// the context, and — with autoReady — REPLIES `dashboard:ready` as the ack.
-// Because the host may have fired its init before this client existed (iframe
-// load races the app bundle), the client also announces `ready()` proactively
-// (channelId "pending-channel"), retrying briefly — a host re-sends host:init
-// whenever it sees that announcement.
+// The host injects context per the standard contract: an envelope of kind
+// `host:init` (on load) or `host:context:update` (login / sign-out / user
+// switch) with the data at `payload.context`, which the SDK caches. We read
+// `context.session` ({ token, userName, email, orgId, orgName }) and resolve it
+// to an Identity — or null (anonymous) — notifying on every change so the app
+// personalizes per user without a refresh. The session carries no userId, so
+// (as the host intends) the email IS the identity.
 //
 // Resolution state machine:
-//   detecting    — synchronous: not in an iframe → anonymous immediately (the
-//                  SDK script is never even fetched on standalone visits).
-//   loading-sdk  — inject the SDK <script>; onerror / 4s timeout / missing
-//                  global / client construction throwing → anonymous.
-//   awaiting-init— client created; ready() announced (retried every 500ms);
-//                  the first explicit host context settles it; 3s of host
-//                  silence → anonymous (the client stays alive, so a LATE
-//                  host:init is handled as an identity change rather than lost).
-//   settled      — later host:init / host:context:update messages transition
-//                  the identity (switch / sign-out) and fire onIdentityChange;
-//                  same-user updates are no-ops.
+//   not embedded — synchronous: window.self === window.top → anonymous at once
+//                  (standalone visits never have a host).
+//   awaiting     — embedded: read any already-cached host:init, and listen for
+//                  the first explicit host context; 3s of host silence settles
+//                  anonymous. The listener stays live, so a LATE host:init is
+//                  handled as an identity change rather than lost.
+//   settled      — later host:init / host:context:update transition the identity
+//                  (switch / sign-out) and fire onIdentityChange; same-user
+//                  updates are no-ops.
 //
-// Safety (per the Munshot dashboard standards): explicit allowedOrigins (never
-// '*'), origin locked on first message, every incoming payload type-checked and
-// length-capped, and no handler can throw on hostile input. Identity failure of
-// any kind degrades to anonymous — the app stays fully functional.
+// Safety: every incoming session field is type-checked, trimmed, and length-
+// capped; an identity whose canonical key is null is unusable. Identity failure
+// of any kind degrades to anonymous — the app stays fully functional. Origin
+// safety (lock-on-first-message) is handled by the SDK client in sdk.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface Identity {
-  /** The raw host-provided id (userId, falling back to email). For display/debug. */
+  /** The raw host-provided id (the session email). For display/debug. */
   userId: string
   /** canonicalUserKey(userId) — what scopes storage, headers, and KV. Never null here. */
   key: string
@@ -47,34 +43,7 @@ export interface Identity {
   name?: string
 }
 
-const SDK_URL = 'https://munshot.s3.ap-south-1.amazonaws.com/SDK+script/munshot-dashboard-sdk.v1.0.0.min.js'
-const SDK_SCRIPT_TIMEOUT_MS = 4000 // S3 cold-fetch can be slow from far regions; beyond this it's effectively down
 const HOST_INIT_TIMEOUT_MS = 3000 // host:init is a same-machine postMessage round trip — 3s is ~30x margin
-const READY_ANNOUNCE_INTERVAL_MS = 500 // re-announce ready() while waiting, in case the host's init raced us
-const DASHBOARD_ID = 'munshot-podcasts'
-
-// Minimal surface of the SDK client this module relies on. Tolerant on purpose:
-// every member is optional and the code degrades to anonymous if absent.
-interface MunshotClient {
-  getContext?: () => unknown
-  onMessage?: (cb: (envelope: unknown, metadata?: unknown) => void) => unknown
-  ready?: () => boolean
-}
-
-interface MunshotSdk {
-  // The published v1.0.0 bundle exports the factory as createDashboardClientSdk
-  // (a trailing `var` assignment clobbers the inner `createClient` global);
-  // accept every shape so a fixed future build keeps working.
-  createDashboardClientSdk?: (options: Record<string, unknown>) => MunshotClient
-  createClient?: (options: Record<string, unknown>) => MunshotClient
-  DashboardClientSdk?: new (options: Record<string, unknown>) => MunshotClient
-}
-
-declare global {
-  interface Window {
-    MunshotDashboardSDK?: MunshotSdk
-  }
-}
 
 let current: Identity | null = null
 let settled = false
@@ -95,8 +64,8 @@ export function onIdentityChange(cb: (identity: Identity | null) => void): () =>
 }
 
 /** Resolve the embedded identity once (memoized single-flight — every caller
- *  shares one promise). Resolves null when standalone, the SDK fails to load,
- *  the host stays silent past the timeout, or the context is unusable. */
+ *  shares one promise). Resolves null when standalone, the host stays silent
+ *  past the timeout, or the context is unusable. */
 export function resolveIdentity(): Promise<Identity | null> {
   if (inFlight) return inFlight
   inFlight = new Promise((resolve) => {
@@ -104,92 +73,51 @@ export function resolveIdentity(): Promise<Identity | null> {
       settle(null, resolve)
       return
     }
-    void loadSdk().then((sdk) => {
-      if (settled) return // raced an earlier settle (shouldn't happen, but harmless)
-      if (!sdk) {
-        settle(null, resolve)
-        return
-      }
-      const factory =
-        sdk.createDashboardClientSdk ??
-        sdk.createClient ??
-        (sdk.DashboardClientSdk ? (o: Record<string, unknown>) => new sdk.DashboardClientSdk!(o) : null)
-      if (!factory) {
-        settle(null, resolve)
-        return
-      }
-      let client: MunshotClient
-      try {
-        client = factory({
-          dashboardId: DASHBOARD_ID,
-          dashboardName: 'Munshot Podcasts',
-          autoReady: true, // ack every host:init with dashboard:ready
-          targetWindow: window.parent,
-          lockOriginOnFirstMessage: true,
-          // Explicit allowlist — never '*': only the Munshot host (and, in dev,
-          // the same-origin embed harness) may inject an identity. The SDK
-          // expects an ARRAY here (it checks .length, then builds its own Set).
-          allowedOrigins: ['https://chat.muns.io', ...(import.meta.env.DEV ? [window.location.origin] : [])],
-        })
-      } catch {
-        settle(null, resolve)
-        return
-      }
 
-      // Announce ourselves until the host's init lands: if the host fired
-      // host:init before this client existed (iframe load races the bundle),
-      // seeing our dashboard:ready tells it to send host:init again.
-      const announce = () => {
-        try {
-          client.ready?.()
-        } catch {
-          /* announce is best-effort */
-        }
-      }
-      const announcer = setInterval(announce, READY_ANNOUNCE_INTERVAL_MS)
-      const stopWaiting = () => {
+    // Settle anonymous if the host never sends context — the listener below
+    // stays live, so a late host:init is still handled (as a transition).
+    const timer = setTimeout(() => settle(null, resolve), HOST_INIT_TIMEOUT_MS)
+
+    const handle = (ctx: DashboardHostContext | null, explicit: boolean) => {
+      const id = parseIdentity(ctx)
+      // An empty result from a non-explicit probe just means host:init hasn't
+      // landed yet — it must NOT settle us anonymous; keep waiting for the timeout.
+      if (!id && !explicit) return
+      if (!settled) {
         clearTimeout(timer)
-        clearInterval(announcer)
+        settle(id, resolve)
+        return
       }
-      const timer = setTimeout(() => {
-        stopWaiting()
-        settle(null, resolve)
-      }, HOST_INIT_TIMEOUT_MS)
-      announce()
-      const accept = (ctx: unknown, explicit: boolean) => acceptContext(ctx, explicit, resolve, stopWaiting)
+      // Post-settlement: transition only when the user actually changed.
+      if ((id?.key ?? null) === (current?.key ?? null)) return
+      current = id
+      notify(id)
+    }
 
-      // Primary path: explicit host messages carrying context.
-      try {
-        client.onMessage?.((envelope) => {
-          try {
-            const kind = (envelope as { kind?: unknown } | null)?.kind
-            if (kind !== 'host:init' && kind !== 'host:context:update') return
-            accept((envelope as { payload?: { context?: unknown } }).payload?.context, true)
-          } catch {
-            /* hostile/odd payload — never throw out of a message handler */
-          }
-        })
-      } catch {
-        /* SDK variant without onMessage — getContext below still covers init */
-      }
-
-      // Belt-and-braces: some SDK builds buffer the context behind getContext().
-      // Non-explicit — an empty result here just means the host hasn't sent
-      // host:init yet, so it must NOT settle us anonymous.
-      try {
-        const maybe = client.getContext?.()
-        if (maybe && typeof (maybe as { then?: unknown }).then === 'function') {
-          void (maybe as Promise<unknown>).then(
-            (ctx) => accept(ctx, false),
-            () => {},
-          )
-        } else if (maybe) {
-          accept(maybe, false)
+    // Persistent listener — catches host:init (settles) and later
+    // host:context:update (transitions). Never unsubscribed: it lives for the
+    // app's lifetime so a sign-in / switch / sign-out always re-points the app.
+    try {
+      sdk.onMessage((envelope: DashboardSdkEnvelope) => {
+        try {
+          const kind = envelope?.kind
+          if (kind !== 'host:init' && kind !== 'host:context:update') return
+          handle(sdk.getContext(), true)
+        } catch {
+          /* hostile/odd payload — never throw out of a message handler */
         }
-      } catch {
-        /* getContext threw — onMessage covers it */
-      }
-    })
+      })
+    } catch {
+      /* no-op SDK (standalone) — the timeout still settles us anonymous */
+    }
+
+    // host:init may have arrived before this ran — the single client caches it
+    // at module load, so apply any already-cached context now.
+    try {
+      handle(sdk.getContext(), false)
+    } catch {
+      /* getContext threw — the onMessage path still covers init */
+    }
   })
   return inFlight
 }
@@ -204,62 +132,23 @@ function isEmbedded(): boolean {
   }
 }
 
-let sdkLoad: Promise<Window['MunshotDashboardSDK'] | null> | null = null
-
-function loadSdk(): Promise<Window['MunshotDashboardSDK'] | null> {
-  if (sdkLoad) return sdkLoad
-  sdkLoad = new Promise((resolve) => {
-    if (window.MunshotDashboardSDK) {
-      resolve(window.MunshotDashboardSDK)
-      return
-    }
-    let done = false
-    const finish = (ok: boolean) => {
-      if (done) return
-      done = true
-      clearTimeout(timer)
-      resolve(ok ? (window.MunshotDashboardSDK ?? null) : null)
-    }
-    const timer = setTimeout(() => finish(false), SDK_SCRIPT_TIMEOUT_MS)
-    const script = document.createElement('script')
-    script.src = SDK_URL
-    script.async = true
-    script.onload = () => finish(true)
-    script.onerror = () => finish(false)
-    document.head.appendChild(script)
-  })
-  return sdkLoad
-}
-
-/** Validate an untrusted host context into an Identity (or null). Type-checks,
- *  trims, caps lengths; an identity whose canonical key is null is unusable. */
-function parseIdentity(ctx: unknown): Identity | null {
-  if (!ctx || typeof ctx !== 'object') return null
-  const x = ctx as Record<string, unknown>
-  const s = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 200) : undefined)
-  const userId = s(x.userId) ?? s(x.email) // email is the fallback identity
+/** Validate an untrusted host context into an Identity (or null). Reads the
+ *  standard nested `context.session`; type-checks, trims, caps lengths; an
+ *  identity whose canonical key is null is unusable. */
+function parseIdentity(ctx: DashboardHostContext | null): Identity | null {
+  const session = ctx?.session
+  if (!session || typeof session !== 'object') return null
+  const s = (v: unknown): string | undefined =>
+    typeof v === 'string' && v.trim() ? v.trim().slice(0, 200) : undefined
+  const email = s(session.email)
+  const userId = email // the host session carries no userId — email is the identity
   if (!userId) return null
   const key = canonicalUserKey(userId)
   if (!key) return null
-  return { userId, key, email: s(x.email), name: s(x.name) }
+  return { userId, key, email, name: s(session.userName) }
 }
 
-function acceptContext(
-  ctx: unknown,
-  explicit: boolean, // true = a host:init / host:context:update message; false = a getContext() probe
-  resolve: (id: Identity | null) => void,
-  stopWaiting: () => void,
-): void {
-  const id = parseIdentity(ctx)
-  if (!id && !explicit) return // empty probe before host:init — keep waiting
-  if (!settled) {
-    stopWaiting()
-    settle(id, resolve)
-    return
-  }
-  // Post-settlement: transition only when the user actually changed.
-  if ((id?.key ?? null) === (current?.key ?? null)) return
-  current = id
+function notify(id: Identity | null): void {
   for (const cb of listeners) {
     try {
       cb(id)
