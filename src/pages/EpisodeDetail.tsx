@@ -5,11 +5,14 @@ import { useAppData } from '../store/AppData'
 import { useSentiment } from '../store/Sentiment'
 import { downloadSummary } from '../lib/exportSummary'
 import { downloadSummaryPdf } from '../lib/pdfRender'
+import { emailEpisodeSummary, registerWeeklyRecipient, unregisterWeeklyRecipient } from '../lib/api'
+import { addRecipient, loadRecipients, removeRecipient } from '../lib/recipientsStore'
 import { formatDuration, longDate, statusMeta } from '../lib/format'
 import type { Episode, EpisodeInsight, ProcessingStatus, QuantPoint, Takeaway, TranscriptSegment } from '../lib/types'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
 import { DownloadMenu } from '../components/DownloadMenu'
+import { readSubscribedEmail } from '../components/WeeklySubscribe'
 import { RichText, entityTerms } from '../components/RichText'
 import { analyzeSentiment, findSentimentSpans, sentimentClass, sentimentTitle } from '../lib/sentiment'
 import { keyHighlights } from '../lib/highlights'
@@ -37,8 +40,30 @@ export default function EpisodeDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [params] = useSearchParams()
-  const { episodeById, podcastById, summarizeEpisode, needsApiKey } = useAppData()
+  const { episodeById, podcastById, summarizeEpisode, needsApiKey, identity } = useAppData()
   const { on: sentimentOn } = useSentiment()
+
+  // Where "Email this edition" sends: the signed-in user's address, or the one
+  // they subscribed the weekly brief with. Absent → the email item is hidden.
+  // Mirrors the Weekly page exactly (same recipient list + Monday-digest wiring).
+  const userEmail = identity?.email || readSubscribedEmail()
+  const [extraRecipients, setExtraRecipients] = useState<string[]>([])
+  useEffect(() => {
+    const saved = loadRecipients()
+    setExtraRecipients(saved)
+    // Self-heal: make sure every saved recipient is on the durable digest list.
+    for (const addr of saved) void registerWeeklyRecipient(addr)
+  }, [userEmail])
+  const addExtraRecipient = (addr: string) => {
+    const res = addRecipient(addr)
+    setExtraRecipients(res.list)
+    if (res.ok) void registerWeeklyRecipient(addr) // also subscribe to the Monday digest
+    return { ok: res.ok, message: res.message }
+  }
+  const removeExtraRecipient = (addr: string) => {
+    setExtraRecipients(removeRecipient(addr))
+    void unregisterWeeklyRecipient(addr)
+  }
 
   const raw = params.get('tab')
   const paramTab = raw ? (LEGACY_TABS[raw] ?? (raw as Tab)) : null
@@ -177,6 +202,12 @@ export default function EpisodeDetail() {
             disabled={!episode.summary}
             onPdf={() => void downloadSummaryPdf(episode, podcast)}
             onWord={() => void downloadSummary(episode, podcast)}
+            onEmail={userEmail && episode.summary ? () => emailEpisodeSummary([userEmail, ...extraRecipients], episode, podcast) : undefined}
+            recipients={
+              userEmail
+                ? { self: userEmail, others: extraRecipients, onAdd: addExtraRecipient, onRemove: removeExtraRecipient }
+                : undefined
+            }
           />
         </div>
       </div>

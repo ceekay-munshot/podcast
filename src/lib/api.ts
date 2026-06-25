@@ -2,7 +2,7 @@ import type { Episode, Podcast, PodcastSearchResult, Summary, TranscriptSegment,
 import { EPISODES, PODCASTS, WEEKLY } from './mock-data'
 import { stableHash } from './hash'
 import { apiFetch } from './apiFetch'
-import { weeklyBriefEmailHtml, welcomeEmailHtml, type EmailResult } from './email'
+import { episodeBriefEmailHtml, weeklyBriefEmailHtml, welcomeEmailHtml, type EmailResult } from './email'
 import { weeklyPdfBytes } from './pdfRender'
 import { normalizeRecipients } from './recipientsStore'
 
@@ -232,6 +232,34 @@ export async function emailWeeklyEdition(
   const pdfUrl = (await hostWeeklyPdf(weekly, episodeById, podcastById)) ?? undefined
   const subject = `Munshot Weekly — ${weekly.rangeLabel}`
   const html = weeklyBriefEmailHtml(weekly, episodeById, podcastById, { pdfUrl })
+
+  const results = await Promise.all(to.map((addr) => postEmail({ to: addr, subject, html })))
+  const sent = results.filter((r) => r.ok).length
+  const failed = to.length - sent
+
+  if (sent === 0) return { ok: false, message: results[0]?.message || "Couldn't send the email." }
+  if (failed > 0) return { ok: false, message: `Sent to ${sent} of ${to.length} — ${failed} couldn't be reached.` }
+  return { ok: true, message: to.length === 1 ? `Sent to ${to[0]}` : `Sent to ${to.length} recipients` }
+}
+
+// Send one episode's summary on demand (the Episode page's "Email this edition")
+// to one OR MORE recipients. Mirrors emailWeeklyEdition exactly — the designed,
+// inbox-safe HTML brief goes through the SAME same-origin proxy (postEmail →
+// /api/email/send), which carries the signed-in user's identity header and holds
+// the service token server-side. Renders the HTML once, then fans out one send
+// per address (the relay validates a single recipient per request). `ok` is false
+// unless every recipient succeeds, and `message` reports the tally.
+export async function emailEpisodeSummary(
+  recipients: string | string[],
+  episode: Episode,
+  podcast?: Podcast,
+): Promise<EmailResult> {
+  if (!episode.summary) return { ok: false, message: 'This episode has no summary to send yet.' }
+  const to = normalizeRecipients(undefined, Array.isArray(recipients) ? recipients : [recipients])
+  if (!to.length) return { ok: false, message: 'No valid recipient to send to.' }
+
+  const subject = `${episode.title} — Munshot Summary`
+  const html = episodeBriefEmailHtml(episode, podcast)
 
   const results = await Promise.all(to.map((addr) => postEmail({ to: addr, subject, html })))
   const sent = results.filter((r) => r.ok).length
