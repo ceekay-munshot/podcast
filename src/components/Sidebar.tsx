@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
-import type { Identity } from '../lib/munshot'
+import { isEmbedded, type Identity } from '../lib/munshot'
 import { Icon } from './Icon'
 import { WeeklySubscribe } from './WeeklySubscribe'
 
@@ -127,8 +127,9 @@ function SidebarContent({ onNavigate, onClose }: { onNavigate?: () => void; onCl
 }
 
 /** Shows whose space this is: the Munshot account the host signed in (data
- *  synced per user), the shared space when anonymous, or a quiet skeleton for
- *  the moment identity is still resolving. */
+ *  synced per user); a "Signing you in…" state while embedded and the host
+ *  handshake is still resolving; the shared space when genuinely anonymous
+ *  (standalone); or a quiet skeleton for the first moment identity resolves. */
 function IdentityBadge() {
   const { identity } = useAppData()
 
@@ -145,6 +146,28 @@ function IdentityBadge() {
   }
 
   if (!identity) {
+    // Inside the Munshot host the user is, by definition, signed in (they can't
+    // reach the dashboard otherwise) — so an unresolved identity here means the
+    // host handshake just hasn't delivered the session yet. Show a calm
+    // "Signing you in…" state, never a false "Not signed in"; it flips to the
+    // account card the moment context.session arrives. "Not signed in / shared
+    // space" is reserved for genuine standalone use (opened outside the host).
+    if (isEmbedded()) {
+      return (
+        <div
+          className="mt-auto flex items-center gap-3 rounded-xl border border-outline-variant/60 px-3 py-2.5"
+          title="Connecting to your Munshot account…"
+        >
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface-container-low text-primary">
+            <Icon name="progress_activity" size={18} className="motion-safe:animate-spin" />
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-[13px] font-semibold text-on-surface">Signing you in…</p>
+            <p className="truncate text-[11.5px] text-secondary">Connecting to Munshot</p>
+          </div>
+        </div>
+      )
+    }
     return (
       <div
         className="mt-auto flex items-center gap-3 rounded-xl border border-outline-variant/60 px-3 py-2.5"

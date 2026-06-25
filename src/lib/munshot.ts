@@ -124,7 +124,10 @@ export function resolveIdentity(): Promise<Identity | null> {
 
 // ── internals ────────────────────────────────────────────────────────────────
 
-function isEmbedded(): boolean {
+/** True when this app runs inside the Munshot host iframe (vs. opened standalone).
+ *  Inside the host the user is, by definition, signed in — so the UI treats an
+ *  as-yet-unresolved identity as "signing in", never "not signed in". */
+export function isEmbedded(): boolean {
   try {
     return window.self !== window.top
   } catch {
