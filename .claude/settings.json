@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "extraKnownMarketplaces": {
+    "munshot-skills": {
+      "source": {
+        "source": "github",
+        "repo": "techmuns/claude-skills"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "dashboard-skill@munshot-skills": true
+  }
+}
