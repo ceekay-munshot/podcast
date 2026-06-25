@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { sendRawEmail, welcomeEmailHtml, weeklyBriefEmailHtml } from './email'
+import { episodeBriefEmailHtml, sendRawEmail, welcomeEmailHtml, weeklyBriefEmailHtml } from './email'
 import { EPISODES, PODCASTS, WEEKLY } from './mock-data'
 
 const episodeById = (id: string) => EPISODES.find((e) => e.id === id)
@@ -128,6 +128,42 @@ describe('weeklyBriefEmailHtml — real edition rendering', () => {
       interesting: { ...WEEKLY.interesting, quote: 'A <script>alert(1)</script> & "co"' },
     }
     const out = weeklyBriefEmailHtml(hostile, episodeById, podcastById)
+    expect(out).toContain('&lt;script&gt;')
+    expect(out).not.toContain('<script>alert(1)</script>')
+  })
+})
+
+describe('episodeBriefEmailHtml — single episode rendering', () => {
+  const episode = EPISODES.find((e) => e.summary)!
+  const podcast = podcastById(episode.podcastId)
+  const html = episodeBriefEmailHtml(episode, podcast)
+
+  it('is a branded, self-contained HTML email in the weekly house style (all inline)', () => {
+    expect(html.startsWith('<!doctype html>')).toBe(true)
+    expect(html).toContain(episode.title) // the subject/hero title
+    expect(html).toContain('AI Summary') // the lead section, mirroring the Word/PDF export
+    expect(html).toContain('Episode Intelligence') // episode-specific header kicker
+    expect(html).toContain('#14233c') // navy house colour
+    expect(html).toContain('#b8902f') // gold
+    expect(html).not.toContain('<style') // Gmail strips <style>; everything must be inline
+    expect(html).not.toContain('class="') // no class selectors survive email clients
+  })
+
+  it('drives back to the chat.muns.io dashboard with the same CTA as the weekly brief', () => {
+    expect(html).toContain('https://chat.muns.io/dashboards')
+    expect(html).toContain('Open the live dashboard')
+  })
+
+  it('returns an empty string for an episode with no summary (nothing to send)', () => {
+    const bare = EPISODES.find((e) => !e.summary)
+    if (bare) expect(episodeBriefEmailHtml(bare, podcastById(bare.podcastId))).toBe('')
+    // And explicitly for a stripped episode, regardless of the mock set.
+    expect(episodeBriefEmailHtml({ ...episode, summary: undefined }, podcast)).toBe('')
+  })
+
+  it('escapes HTML-special characters in episode content', () => {
+    const hostile = { ...episode, title: 'A <script>alert(1)</script> & "co"' }
+    const out = episodeBriefEmailHtml(hostile, podcast)
     expect(out).toContain('&lt;script&gt;')
     expect(out).not.toContain('<script>alert(1)</script>')
   })
