@@ -33,6 +33,12 @@ export { buildShowDigests }
 
 const SESSION = new Map<string, WeeklySummary>()
 
+// In-flight generations, keyed by the scope cache key. Module-level, so a run
+// SURVIVES the Weekly page unmounting on navigation: a second caller (e.g. the page
+// remounting on return) re-attaches to the SAME promise instead of starting another
+// — the synthesis is never lost or duplicated by leaving and coming back.
+const inFlight = new Map<string, Promise<WeeklySummary | null>>()
+
 // Saved-edition cache key — per user, per SCOPE (week key | 'all'). `:v5` retires
 // the old per-episode-set keying (and the comparison-table shape before it), so a
 // stale cached edition is never read after this change.
@@ -44,6 +50,12 @@ const cacheKey = (scope: string): string => scopedKey('munshot:weekly:v5') + `:$
 export function peekWeekly(scope = 'all'): WeeklySummary | null {
   const ck = cacheKey(scope)
   return SESSION.get(ck) ?? readCache(ck)
+}
+
+/** The in-flight generation for a scope, if one is running right now (else null).
+ *  Lets a remounting page re-attach to a synthesis that's still going. */
+export function pendingWeekly(scope = 'all'): Promise<WeeklySummary | null> | null {
+  return inFlight.get(cacheKey(scope)) ?? null
 }
 
 export interface WeeklyOptions {
@@ -82,21 +94,32 @@ export async function generateWeekly(
     }
   }
 
+  // A run for this scope already going? Re-attach to it (survives navigation; never
+  // double-runs the synthesis from a remount or a double-click).
+  const existing = inFlight.get(ck)
+  if (existing) return existing
+
   // Always-real deterministic base (shared engine), then the AI narrative on top.
   // The GLOBAL server id stays content-derived (episode-set hash) so the same set is
   // synthesised once across all users; only the per-browser SAVED edition is scoped.
-  const contentKey = `${hashKey(ready)}:${scope}`
-  const range = opts.rangeLabel ?? rangeLabel(ready)
-  const base = assembleWeekly(ready, podcastById, { rangeLabel: range, id: `wk-${contentKey}` })
-
-  // Guidepoint AI layer (overview, key themes, quant table, readouts, questions) with
-  // the deterministic fallback baked into mergeWeeklyAi.
-  const ai = await aiSynthesize(ready, range, podcastById, { id: `weekly:${contentKey}`, force: opts.force })
-  const weekly = ai ? mergeWeeklyAi(base, ai) : base
-
-  SESSION.set(ck, weekly)
-  writeCache(ck, weekly)
-  return weekly
+  const run = (async () => {
+    const contentKey = `${hashKey(ready)}:${scope}`
+    const range = opts.rangeLabel ?? rangeLabel(ready)
+    const base = assembleWeekly(ready, podcastById, { rangeLabel: range, id: `wk-${contentKey}` })
+    // Guidepoint AI layer (overview, key themes, quant table, readouts, questions) with
+    // the deterministic fallback baked into mergeWeeklyAi.
+    const ai = await aiSynthesize(ready, range, podcastById, { id: `weekly:${contentKey}`, force: opts.force })
+    const weekly = ai ? mergeWeeklyAi(base, ai) : base
+    SESSION.set(ck, weekly)
+    writeCache(ck, weekly)
+    return weekly
+  })()
+  inFlight.set(ck, run)
+  try {
+    return await run
+  } finally {
+    inFlight.delete(ck)
+  }
 }
 
 // ── AI narrative via the shared /api/summary endpoint (weekly mode) ───────────

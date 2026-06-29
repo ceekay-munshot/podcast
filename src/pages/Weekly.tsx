@@ -6,7 +6,7 @@ import { useSentiment } from '../store/Sentiment'
 import { downloadWeekly } from '../lib/exportWeekly'
 import { downloadWeeklyPdf } from '../lib/pdfRender'
 import { emailWeeklyEdition, registerWeeklyRecipient, unregisterWeeklyRecipient } from '../lib/api'
-import { generateWeekly, peekWeekly } from '../lib/weeklyApi'
+import { generateWeekly, peekWeekly, pendingWeekly } from '../lib/weeklyApi'
 import { listEditions } from '../lib/weeklyEditions'
 import { weeklyToneView } from '../lib/tone'
 import type { Episode, WeeklyEpisodeReadout, WeeklyIdea, WeeklyShowDigest, WeeklySummary } from '../lib/types'
@@ -28,7 +28,7 @@ const THEME_STYLES = [
 ]
 
 export default function Weekly() {
-  const { episodes, podcasts, episodeById, podcastById, loading, identity, summarizeEpisode, needsApiKey } = useAppData()
+  const { episodes, podcasts, episodeById, podcastById, loading, identity, needsApiKey, weekProcessing, weekProgress, processWeek, cancelProcessWeek } = useAppData()
   const { on: sentimentOn } = useSentiment()
   const [params, setParams] = useSearchParams()
   const [weekly, setWeekly] = useState<WeeklySummary | null | undefined>(undefined) // undefined = generating
@@ -95,6 +95,21 @@ export default function Weekly() {
   useEffect(() => {
     let alive = true
     const token = currentKey
+    // A synthesis for this scope may still be running (e.g. started before the user
+    // left the tab) — re-attach to it and show it running, rather than the stale
+    // saved edition. (Must come BEFORE the cache peek.)
+    const pending = pendingWeekly(currentKey)
+    if (pending) {
+      setRefreshing(true)
+      setWeekly(undefined)
+      pending
+        .then((w) => alive && scopeRef.current === token && setWeekly(w))
+        .catch(() => alive && scopeRef.current === token && setWeekly(null))
+        .finally(() => alive && scopeRef.current === token && setRefreshing(false))
+      return () => {
+        alive = false
+      }
+    }
     const saved = peekWeekly(currentKey)
     if (saved) {
       setWeekly(saved)
@@ -159,27 +174,12 @@ export default function Weekly() {
         (!!e.transcriptUrl || !!e.audioUrl || !!(e.notes && e.notes.trim())),
     )
   }, [episodes])
-  const [processing, setProcessing] = useState(false)
-  const [progress, setProgress] = useState({ done: 0, total: 0, title: '' })
-  const cancelRef = useRef(false)
-
-  async function processAll() {
-    if (processing || !unprocessed.length || needsApiKey) return
-    const targets = [...unprocessed]
-    cancelRef.current = false
-    setProcessing(true)
-    setProgress({ done: 0, total: targets.length, title: '' })
-    for (let i = 0; i < targets.length; i++) {
-      if (cancelRef.current) break
-      setProgress({ done: i, total: targets.length, title: targets[i].title })
-      await summarizeEpisode(targets[i], podcastById(targets[i].podcastId))
-      if (cancelRef.current) break
-      await new Promise((r) => setTimeout(r, 400)) // gentle pacing between episodes
-    }
-    setProgress((p) => ({ ...p, done: p.total, title: '' }))
-    setProcessing(false)
-    // The newly-ready episodes now surface via the "new episodes" banner → Refresh
-    // folds them into the edition, then it's ready to email.
+  // The bulk job itself lives in AppData (so it survives navigation); the page just
+  // kicks it off with this week's targets. Newly-ready episodes then surface via the
+  // "new episodes" banner → Refresh folds them in, ready to email.
+  const processAll = () => {
+    if (weekProcessing || !unprocessed.length || needsApiKey) return
+    void processWeek([...unprocessed])
   }
 
   function selectEdition(key: string) {
@@ -241,20 +241,20 @@ export default function Weekly() {
       </div>
 
       {/* Process this week's not-yet-summarised episodes so the Monday brief is complete. */}
-      {(unprocessed.length > 0 || processing) && (
+      {(unprocessed.length > 0 || weekProcessing) && (
         <div className="animate-fade-up mb-md flex items-center gap-3 rounded-xl border border-[#ecddb6] bg-[#fdf8ee] px-4 py-3">
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#b8902f] text-white">
-            <Icon name={processing ? 'progress_activity' : 'bolt'} size={18} className={processing ? 'animate-spin' : ''} />
+            <Icon name={weekProcessing ? 'progress_activity' : 'bolt'} size={18} className={weekProcessing ? 'animate-spin' : ''} />
           </span>
           <div className="min-w-0 flex-1">
-            {processing ? (
+            {weekProcessing ? (
               <>
                 <p className="text-[13.5px] font-semibold text-on-surface">
-                  Processing {Math.min(progress.done + 1, progress.total)} of {progress.total}…
+                  Processing {Math.min(weekProgress.done + 1, weekProgress.total)} of {weekProgress.total}…
                 </p>
-                <p className="truncate text-[12px] text-secondary">{progress.title || 'Finishing up…'}</p>
+                <p className="truncate text-[12px] text-secondary">{weekProgress.title || 'Finishing up…'}</p>
                 <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[#efe3c6]">
-                  <div className="h-full rounded-full bg-[#b8902f] transition-[width] duration-300 ease-out" style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }} />
+                  <div className="h-full rounded-full bg-[#b8902f] transition-[width] duration-300 ease-out" style={{ width: `${weekProgress.total ? (weekProgress.done / weekProgress.total) * 100 : 0}%` }} />
                 </div>
               </>
             ) : (
@@ -266,11 +266,9 @@ export default function Weekly() {
               </>
             )}
           </div>
-          {processing ? (
+          {weekProcessing ? (
             <button
-              onClick={() => {
-                cancelRef.current = true
-              }}
+              onClick={cancelProcessWeek}
               className="press shrink-0 rounded-lg border border-outline-variant bg-surface px-3 py-2 text-metadata font-semibold text-on-surface hover:bg-surface-container-low"
             >
               Stop

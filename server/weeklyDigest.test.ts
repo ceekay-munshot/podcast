@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { Episode, Summary } from '../src/lib/types'
-import { checkCronAuth, pickBackfillTargets, readyThisWeek, runWeeklyDigest } from './weeklyDigest'
+import { checkCronAuth, pickBackfillTargets, pickPendingThisWeek, processPendingBatch, readyThisWeek, runWeeklyDigest } from './weeklyDigest'
 import type { Subscriber, SubscriberStore } from './subscriberStore'
 
 // The Monday digest job. The send transport and the data sources are injected, so
@@ -189,5 +189,50 @@ describe('runWeeklyDigest', () => {
       now: NOW,
     })
     expect(res.body).toMatchObject({ ok: false, sent: 1, failed: 1, recipients: 2 })
+  })
+})
+
+describe('pickPendingThisWeek — the auto-processor target set', () => {
+  it('returns ALL in-window pending episodes (NOT one-per-channel like backfill)', () => {
+    const eps = [
+      pending('a1', 'allin', daysAgo(1)),
+      pending('a2', 'allin', daysAgo(2)), // same channel — backfill caps to one; auto-processor keeps both
+      pending('o1', 'oddlots', daysAgo(3)),
+      pending('old', 'allin', daysAgo(20)), // out of window → excluded
+    ]
+    const ids = pickPendingThisWeek(eps, NOW).map((e) => e.id)
+    expect(ids.sort()).toEqual(['a1', 'a2', 'o1'])
+    // contrast: the one-per-channel backfill takes only ONE 'allin' episode
+    expect(pickBackfillTargets(eps, NOW).filter((e) => e.podcastId === 'allin')).toHaveLength(1)
+  })
+  it('excludes already-ready and source-less episodes', () => {
+    const eps = [ep('r1', 'allin', daysAgo(1)), ep('x', 'oddlots', daysAgo(1), 'detected')] // ready, and detected-without-source
+    expect(pickPendingThisWeek(eps, NOW)).toHaveLength(0)
+  })
+})
+
+describe('processPendingBatch — bounded auto-processing', () => {
+  it('processes up to `limit`, leaves the rest, reports counts', async () => {
+    const eps = [pending('a1', 'allin', daysAgo(1)), pending('a2', 'allin', daysAgo(2)), pending('o1', 'oddlots', daysAgo(3))]
+    const processEpisode = vi.fn(async () => sum())
+    const res = await processPendingBatch({ getEpisodes: async () => eps, processEpisode, now: NOW }, { limit: 2 })
+    expect(res).toEqual({ processed: 2, remaining: 1 })
+    expect(processEpisode).toHaveBeenCalledTimes(2)
+  })
+  it('no-ops when nothing is pending', async () => {
+    const processEpisode = vi.fn(async () => sum())
+    const res = await processPendingBatch({ getEpisodes: async () => [ep('r', 'allin', daysAgo(1))], processEpisode, now: NOW })
+    expect(res.processed).toBe(0)
+    expect(processEpisode).not.toHaveBeenCalled()
+  })
+  it('no-ops without a processor (no LLM key)', async () => {
+    const res = await processPendingBatch({ getEpisodes: async () => [pending('a', 'allin', daysAgo(1))], now: NOW })
+    expect(res.processed).toBe(0)
+  })
+  it('respects the wall-clock budget before the first episode', async () => {
+    const processEpisode = vi.fn(async () => sum())
+    const res = await processPendingBatch({ getEpisodes: async () => [pending('a', 'allin', daysAgo(1))], processEpisode, now: NOW }, { budgetMs: -1 })
+    expect(res.processed).toBe(0)
+    expect(processEpisode).not.toHaveBeenCalled()
   })
 })

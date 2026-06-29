@@ -38,6 +38,14 @@ interface AppData {
    *  Pass `{ force: true }` to regenerate an already-summarized episode, bypassing
    *  the server + client caches (the Refresh button). */
   summarizeEpisode: (episode: Episode, podcast?: Podcast, opts?: { force?: boolean }) => Promise<void>
+  /** Bulk "process this week" — summarises the given episodes sequentially. Lives in
+   *  the provider so the run KEEPS GOING across navigation and the page re-attaches to
+   *  its live `weekProgress` on return. No-op if one is already running. */
+  weekProcessing: boolean
+  weekProgress: { done: number; total: number; title: string }
+  processWeek: (targets: Episode[]) => Promise<void>
+  /** Stop the bulk run after the current episode finishes. */
+  cancelProcessWeek: () => void
 }
 
 const Ctx = createContext<AppData | null>(null)
@@ -82,6 +90,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [weekly, setWeekly] = useState<WeeklySummary | null>(null)
   const [needsApiKey, setNeedsApiKey] = useState(false)
   const summarizing = useRef<Set<string>>(new Set()) // episode ids with an in-flight summary request
+  // Bulk "process this week" — held in the provider so it survives page navigation.
+  const [weekProcessing, setWeekProcessing] = useState(false)
+  const [weekProgress, setWeekProgress] = useState({ done: 0, total: 0, title: '' })
+  const weekCancel = useRef(false)
+  const weekRunning = useRef(false) // guards against a second run while one is live
   // Ids in the seed/curated list — lets the mutation callbacks tell a user-added
   // show (which we persist + prune) from a built-in one. Populated on load.
   const seedIds = useRef<Set<string>>(new Set())
@@ -385,6 +398,39 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  // Bulk "process this week": summarise `targets` one at a time (gentle pacing) so it
+  // never hammers the API. Held here in the provider, so it KEEPS RUNNING when the
+  // user navigates away — the Weekly page reads `weekProgress` and re-attaches on
+  // return. De-dupes (no-op if already running) and drops out on an identity switch.
+  const processWeek = useCallback(async (targets: Episode[]) => {
+    if (weekRunning.current || !targets.length) return
+    weekRunning.current = true
+    weekCancel.current = false
+    const epoch = identityEpoch.current
+    setWeekProcessing(true)
+    setWeekProgress({ done: 0, total: targets.length, title: '' })
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        if (weekCancel.current || identityEpoch.current !== epoch) break
+        setWeekProgress({ done: i, total: targets.length, title: targets[i].title })
+        const podcast = podcastsRef.current.find((p) => p.id === targets[i].podcastId)
+        await summarizeEpisode(targets[i], podcast)
+        if (weekCancel.current || identityEpoch.current !== epoch) break
+        await new Promise((r) => setTimeout(r, 400)) // gentle pacing between episodes
+      }
+    } finally {
+      if (identityEpoch.current === epoch) {
+        setWeekProgress((p) => ({ ...p, done: p.total, title: '' }))
+        setWeekProcessing(false)
+      }
+      weekRunning.current = false
+    }
+  }, [summarizeEpisode])
+
+  const cancelProcessWeek = useCallback(() => {
+    weekCancel.current = true
+  }, [])
+
   const value = useMemo<AppData>(
     () => ({
       loading,
@@ -399,8 +445,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       toggleTracked,
       addPodcast,
       summarizeEpisode,
+      weekProcessing,
+      weekProgress,
+      processWeek,
+      cancelProcessWeek,
     }),
-    [loading, podcasts, episodes, weekly, identity, needsApiKey, podcastById, episodeById, episodesByPodcast, toggleTracked, addPodcast, summarizeEpisode],
+    [loading, podcasts, episodes, weekly, identity, needsApiKey, podcastById, episodeById, episodesByPodcast, toggleTracked, addPodcast, summarizeEpisode, weekProcessing, weekProgress, processWeek, cancelProcessWeek],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

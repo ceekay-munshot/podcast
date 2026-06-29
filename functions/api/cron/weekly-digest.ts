@@ -2,7 +2,7 @@ import { getLiveEpisodes } from '../../../server/feeds'
 import { kvSummaryStore, type KVNamespace } from '../../../server/summaryStore'
 import { kvSubscriberStore } from '../../../server/subscriberStore'
 import { kvReportStore, reportUrl } from '../../../server/reportStore'
-import { checkCronAuth, runWeeklyDigest } from '../../../server/weeklyDigest'
+import { checkCronAuth, processPendingBatch, runWeeklyDigest } from '../../../server/weeklyDigest'
 import { DEFAULT_SCHEDULE, dueToSend, kvScheduleStore } from '../../../server/scheduleStore'
 import { sendRawEmail } from '../../../src/lib/email'
 import { weeklyPdfBytes } from '../../../src/lib/pdfRender'
@@ -46,17 +46,25 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
     // `?force=1` (a manual workflow_dispatch) bypasses the gate to send immediately.
     const force = new URL(request.url).searchParams.get('force') === '1'
     const scheduleStore = env.SUMMARIES ? kvScheduleStore(env.SUMMARIES) : null
+    const summaryStore = env.SUMMARIES ? kvSummaryStore(env.SUMMARIES) : undefined
+    const summarizeConfig = { openaiKey: env.OPENAI_API_KEY, anthropicKey: env.ANTHROPIC_API_KEY, model: env.SUMMARY_MODEL || undefined, store: summaryStore }
+
+    // Auto-process the week, sustainably: on EVERY tick, summarise a bounded batch of
+    // this week's pending episodes (writes to the shared store). Over the 30-min ticks
+    // the backlog clears, so the Monday send goes out with the whole week processed —
+    // no manual "Process all" needed. Bounded so a tick never exceeds the curl budget.
+    const batch = await processPendingBatch({ getEpisodes: getLiveEpisodes, summaryStore, summarizeConfig }, { limit: 5, budgetMs: 75_000 }).catch(() => ({ processed: 0, remaining: 0 }))
+
     let sentMarker: string | null = null
     if (!force) {
-      // No store ⇒ can't gate or de-dupe ⇒ refuse rather than send on every tick.
-      if (!scheduleStore) return json(200, { ok: true, skipped: 'no_schedule_store' })
+      // No store ⇒ can't gate or de-dupe ⇒ refuse to send (but the batch above still ran).
+      if (!scheduleStore) return json(200, { ok: true, skipped: 'no_schedule_store', batch })
       const schedule = (await scheduleStore.getSchedule()) ?? DEFAULT_SCHEDULE
       const gate = dueToSend(schedule, new Date(), await scheduleStore.getLastSent())
-      if (!gate.due) return json(200, { ok: true, skipped: 'not_scheduled', schedule })
+      if (!gate.due) return json(200, { ok: true, skipped: 'not_scheduled', schedule, batch })
       sentMarker = gate.dateStr
     }
 
-    const summaryStore = env.SUMMARIES ? kvSummaryStore(env.SUMMARIES) : undefined
     const subscriberStore = env.SUMMARIES ? kvSubscriberStore(env.SUMMARIES) : null
     // Host the PDF only when we can build an absolute link to it (KV + SITE_URL).
     const reportStore = env.SUMMARIES && env.SITE_URL ? kvReportStore(env.SUMMARIES) : null
@@ -67,7 +75,7 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
       subscriberStore,
       // No browser session server-side, so authenticate the send with the service token.
       sendEmail: (msg) => sendRawEmail(msg, { token: env.MUNSHOT_EMAIL_TOKEN }),
-      summarizeConfig: { openaiKey: env.OPENAI_API_KEY, anthropicKey: env.ANTHROPIC_API_KEY, model: env.SUMMARY_MODEL || undefined, store: summaryStore },
+      summarizeConfig,
       ...(reportStore && siteUrl
         ? {
             generatePdf: (weekly, episodeById, podcastById) => weeklyPdfBytes(weekly, episodeById, podcastById),
@@ -82,7 +90,7 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
       const recipients = (result.body as { recipients?: number }).recipients
       if (typeof recipients === 'number' && recipients > 0) await scheduleStore.setLastSent(sentMarker)
     }
-    return json(result.status, result.body)
+    return json(result.status, { ...result.body, batch })
   } catch {
     return json(500, { error: 'digest_failed' })
   }

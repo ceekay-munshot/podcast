@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { buildShowDigests, generateWeekly, peekWeekly } from './weeklyApi'
+import { buildShowDigests, generateWeekly, peekWeekly, pendingWeekly } from './weeklyApi'
 import type { Episode, Highlight, Idea, Podcast, Summary } from './types'
 
 // buildShowDigests is the deterministic heart of the by-show weekly: it groups the
@@ -196,5 +196,37 @@ describe('generateWeekly — saved edition (no reprocess until Refresh)', () => 
     await generateWeekly([ep('p1', 'allin', sum({ highlights: [hl('h', 'T', true)] }), '2026-06-01')], podcastById, { scope })
     expect(peekWeekly(scope)?.sourceEpisodeIds).toEqual(['p1'])
     expect(fetchMock).toHaveBeenCalledTimes(1) // peek itself triggered no call
+  })
+})
+
+describe('generateWeekly — running synthesis survives navigation (in-flight re-attach)', () => {
+  const fetchMock = vi.fn()
+  beforeEach(() => {
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('de-dupes concurrent calls into ONE run, exposed via pendingWeekly until it resolves', async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    fetchMock.mockImplementation(async () => {
+      await gate // hold the synthesis open so a 2nd caller arrives mid-flight
+      return { ok: true, json: async () => ({ weekly: { overview: ['o'], keyThemes: [], quantTable: [], episodeReadouts: [], questions: [] } }) }
+    })
+    const eps = [ep('if1', 'allin', sum({ highlights: [hl('h', 'T', true)] }), '2026-06-01')]
+    const scope = `inflight-${Math.random().toString(36).slice(2)}`
+
+    const p1 = generateWeekly(eps, podcastById, { scope, force: true })
+    const p2 = generateWeekly(eps, podcastById, { scope, force: true }) // e.g. the page remounting on return
+    expect(pendingWeekly(scope)).not.toBeNull() // a run is in flight and discoverable
+
+    release()
+    const [w1, w2] = await Promise.all([p1, p2])
+    expect(fetchMock).toHaveBeenCalledTimes(1) // ONE synthesis — the 2nd call re-attached
+    expect(w1).toBe(w2) // same result object
+    expect(pendingWeekly(scope)).toBeNull() // cleared once it finishes
   })
 })

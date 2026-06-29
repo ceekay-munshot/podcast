@@ -41,10 +41,12 @@ jobs:
           # endpoint decide based on the app's chosen day/time/timezone.
           url="${SITE_URL%/}/api/cron/weekly-digest"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then url="${url}?force=1"; fi
+          # Generous timeout: a tick may summarise a bounded batch of pending episodes
+          # before (maybe) sending, so allow well beyond a bare send.
           code=$(curl -sS -o /tmp/digest.json -w '%{http_code}' \
             -X POST "$url" \
             -H "authorization: Bearer ${CRON_SECRET}" \
-            --max-time 120)
+            --max-time 280)
           echo "HTTP ${code}"
           cat /tmp/digest.json || true
           echo

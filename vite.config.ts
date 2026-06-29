@@ -15,7 +15,7 @@ import { handleSubscribers } from './server/subscriberStore'
 import { fileSubscriberStore } from './server/subscriberStore.node'
 import { handleSchedule } from './server/scheduleStore'
 import { fileScheduleStore } from './server/scheduleStore.node'
-import { checkCronAuth, runWeeklyDigest } from './server/weeklyDigest'
+import { checkCronAuth, processPendingBatch, runWeeklyDigest } from './server/weeklyDigest'
 import { sendRawEmail, type RawEmail } from './src/lib/email'
 import { reportId, reportUrl } from './server/reportStore'
 import { weeklyPdfBytes } from './src/lib/pdfRender'
@@ -209,6 +209,8 @@ function liveApiPlugin(config: {
           return json(res, 401, { error: 'unauthorized' })
         }
         try {
+          // Mirror prod: chip away at this week's pending episodes on every tick.
+          const batch = await processPendingBatch({ getEpisodes: getLiveEpisodes, summaryStore: store, summarizeConfig: { ...config, store } }, { limit: 5, budgetMs: 75_000 }).catch(() => ({ processed: 0, remaining: 0 }))
           const result = await runWeeklyDigest({
             getEpisodes: getLiveEpisodes,
             summaryStore: store,
@@ -218,7 +220,7 @@ function liveApiPlugin(config: {
             generatePdf: (weekly, episodeById, podcastById) => weeklyPdfBytes(weekly, episodeById, podcastById),
             storePdf: async (bytes) => reportUrl(originFor(req), await devReportStore.put(bytes)),
           })
-          json(res, result.status, result.body)
+          json(res, result.status, { ...result.body, batch })
         } catch (e) {
           json(res, 500, { error: 'digest_failed', detail: String(e).slice(0, 200) })
         }

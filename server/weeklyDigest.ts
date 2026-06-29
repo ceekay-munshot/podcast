@@ -68,6 +68,23 @@ export function pickBackfillTargets(episodes: Episode[], now: number): Episode[]
   return [...best.values()]
 }
 
+/** ALL pending (not-yet-summarised) episodes published in this week's window that
+ *  have source material — the full set the auto-processor chips through so the whole
+ *  week is ready by send time, vs `pickBackfillTargets`' one-per-channel floor.
+ *  Newest first, so the freshest episodes are summarised first. */
+export function pickPendingThisWeek(episodes: Episode[], now: number): Episode[] {
+  const cutoff = now - WEEK_MS
+  return episodes
+    .filter(
+      (e) =>
+        e.status !== 'ready' &&
+        !e.summary &&
+        +new Date(e.publishedAt) >= cutoff &&
+        (!!e.transcriptUrl || !!e.audioUrl || !!(e.notes && e.notes.trim())),
+    )
+    .sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt))
+}
+
 /** Default backfill processor, derived from the digest's LLM config: summarise one
  *  episode through the real engine and return its summary, writing the full result
  *  to the shared store so the app and later runs reuse it. Returns undefined when no
@@ -123,6 +140,34 @@ export interface DigestReport {
   backfilled?: number
   /** Set when nothing was sent: 'no_ready_episodes' | 'no_subscribers'. */
   skipped?: string
+}
+
+/** Auto-processor: summarise up to `limit` of THIS WEEK's pending episodes (writing
+ *  each to the shared store), bounded by `budgetMs` of wall-clock so a single cron
+ *  tick never runs long. The cron calls this every tick, so the week's backlog clears
+ *  steadily before the Monday send — sustainable (no burst), and bounded (no timeout).
+ *  No-op without an LLM key. Returns how many it processed + how many still pending. */
+export async function processPendingBatch(
+  deps: Pick<DigestDeps, 'getEpisodes' | 'summaryStore' | 'summarizeConfig' | 'processEpisode' | 'now'>,
+  opts: { limit?: number; budgetMs?: number } = {},
+): Promise<{ processed: number; remaining: number }> {
+  const now = deps.now ?? Date.now()
+  const limit = opts.limit ?? 5
+  const budgetMs = opts.budgetMs ?? 75_000
+  const processEpisode = deps.processEpisode ?? makeEpisodeProcessor(deps.summarizeConfig)
+  const pending = pickPendingThisWeek(await deps.getEpisodes(deps.summaryStore), now)
+  if (!processEpisode || !pending.length) return { processed: 0, remaining: pending.length }
+  const start = Date.now()
+  let processed = 0
+  for (const ep of pending.slice(0, limit)) {
+    if (Date.now() - start > budgetMs) break
+    try {
+      if (await processEpisode(ep)) processed++
+    } catch {
+      /* one episode's failure is isolated — keep going */
+    }
+  }
+  return { processed, remaining: Math.max(0, pending.length - processed) }
 }
 
 /** Build this week's shared edition and mail it to every subscriber. Returns a
