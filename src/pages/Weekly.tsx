@@ -6,7 +6,7 @@ import { useSentiment } from '../store/Sentiment'
 import { downloadWeekly } from '../lib/exportWeekly'
 import { downloadWeeklyPdf } from '../lib/pdfRender'
 import { emailWeeklyEdition, registerWeeklyRecipient, unregisterWeeklyRecipient } from '../lib/api'
-import { generateWeekly } from '../lib/weeklyApi'
+import { generateWeekly, peekWeekly } from '../lib/weeklyApi'
 import { listEditions } from '../lib/weeklyEditions'
 import { weeklyToneView } from '../lib/tone'
 import type { Episode, WeeklyEpisodeReadout, WeeklyIdea, WeeklyShowDigest, WeeklySummary } from '../lib/types'
@@ -81,38 +81,53 @@ export default function Weekly() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [episodes, currentKey, selected?.weekKey])
 
-  const genKey = useMemo(
-    () => `${currentKey}|${editionEpisodes.map((e) => e.id).sort().join(',')}`,
-    [currentKey, editionEpisodes],
-  )
-  // Latest genKey, so an in-flight refresh never applies its result to an edition
-  // the user has since switched away from.
-  const genKeyRef = useRef(genKey)
-  genKeyRef.current = genKey
+  // The active scope, so an in-flight (re)generation never applies its result to an
+  // edition the user has since switched away from.
+  const scopeRef = useRef(currentKey)
+  scopeRef.current = currentKey
+  const hasEpisodes = editionEpisodes.length > 0
   const [refreshing, setRefreshing] = useState(false)
 
+  // Load the SAVED edition for this scope (instant, no reprocess). Generate only when
+  // there's nothing saved yet (first time for this scope). Re-runs on edition switch
+  // and once episodes first arrive — NOT every time a new episode is detected, so a
+  // busy feed never silently re-runs the synthesis.
   useEffect(() => {
     let alive = true
-    setWeekly(undefined)
-    if (!editionEpisodes.length) {
+    const token = currentKey
+    const saved = peekWeekly(currentKey)
+    if (saved) {
+      setWeekly(saved)
+      return
+    }
+    if (!hasEpisodes) {
       setWeekly(null)
       return
     }
+    setWeekly(undefined)
     generateWeekly(editionEpisodes, podcastById, { scope: currentKey, rangeLabel: selected?.rangeLabel })
-      .then((w) => alive && setWeekly(w))
-      .catch(() => alive && setWeekly(null))
+      .then((w) => alive && scopeRef.current === token && setWeekly(w))
+      .catch(() => alive && scopeRef.current === token && setWeekly(null))
     return () => {
       alive = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [genKey])
+  }, [currentKey, hasEpisodes])
 
-  // Force-regenerate the current edition, bypassing the memory + localStorage cache
-  // (and overwriting it). The escape hatch for "I shipped a new format — show me the
-  // latest, not the cached version."
+  // Ready episodes in this edition that the SAVED edition didn't include — i.e. new
+  // episodes detected since it was generated. Drives the "new episodes" banner; only
+  // a Refresh folds them in.
+  const newEpisodes = useMemo(() => {
+    if (!weekly) return [] as typeof editionEpisodes
+    const saved = new Set(weekly.sourceEpisodeIds)
+    return editionEpisodes.filter((e) => e.status === 'ready' && e.summary && !saved.has(e.id))
+  }, [weekly, editionEpisodes])
+
+  // Force-regenerate the current edition from the latest episodes, overwriting the
+  // saved one. The only path that folds in newly detected episodes (or a new format).
   async function refresh() {
-    if (!editionEpisodes.length || refreshing) return
-    const token = genKey
+    if (!hasEpisodes || refreshing) return
+    const token = currentKey
     setRefreshing(true)
     setWeekly(undefined)
     try {
@@ -121,9 +136,9 @@ export default function Weekly() {
         rangeLabel: selected?.rangeLabel,
         force: true,
       })
-      if (genKeyRef.current === token) setWeekly(w)
+      if (scopeRef.current === token) setWeekly(w)
     } catch {
-      if (genKeyRef.current === token) setWeekly(null)
+      if (scopeRef.current === token) setWeekly(null)
     } finally {
       setRefreshing(false)
     }
@@ -162,11 +177,14 @@ export default function Weekly() {
             <button
               onClick={refresh}
               disabled={refreshing || weekly === undefined}
-              title="Regenerate this edition from scratch (skips the cache) — use after shipping a new format"
-              className="press inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-3 py-2.5 text-metadata font-semibold text-on-surface hover:bg-surface-container-low disabled:cursor-not-allowed disabled:opacity-50"
+              title={newEpisodes.length ? `Refresh to fold in ${newEpisodes.length} newly detected episode${newEpisodes.length === 1 ? '' : 's'}` : 'Regenerate this edition from the latest episodes (skips the cache)'}
+              className="press relative inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-3 py-2.5 text-metadata font-semibold text-on-surface hover:bg-surface-container-low disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Icon name="refresh" size={18} className={refreshing ? 'motion-safe:animate-spin' : ''} />
               <span className="hidden sm:inline">{refreshing ? 'Refreshing…' : 'Refresh'}</span>
+              {newEpisodes.length > 0 && !refreshing && (
+                <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-primary ring-2 ring-surface" aria-hidden />
+              )}
             </button>
           )}
           {weekly && (
@@ -183,6 +201,28 @@ export default function Weekly() {
           )}
         </div>
       </div>
+
+      {/* New episodes detected since the saved edition — visible, opt-in refresh. */}
+      {weekly && newEpisodes.length > 0 && (
+        <button
+          onClick={refresh}
+          disabled={refreshing}
+          className="press-soft animate-fade-up mb-md flex w-full items-center gap-3 rounded-xl border border-primary/30 bg-[#eff5ff] px-4 py-3 text-left hover:bg-[#e6efff] disabled:opacity-70"
+        >
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-primary text-on-primary">
+            <Icon name="fiber_new" size={18} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13.5px] font-semibold text-on-surface">
+              {newEpisodes.length} new episode{newEpisodes.length === 1 ? '' : 's'} detected since this edition
+            </span>
+            <span className="block text-[12px] text-secondary">Showing the saved version — refresh to fold in the latest.</span>
+          </span>
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-metadata font-semibold text-on-primary">
+            <Icon name="refresh" size={15} /> <span className="hidden sm:inline">Refresh</span>
+          </span>
+        </button>
+      )}
 
       {loading || weekly === undefined ? (
         <GeneratingState count={editionEpisodes.length} />

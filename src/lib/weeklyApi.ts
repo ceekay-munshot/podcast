@@ -17,10 +17,13 @@ import { assembleWeekly, buildCitations, buildShowDigests, buildWeeklySources, h
 //     deterministic layer's prose when there's no key or the call fails.
 //
 // Caching is layered. L1 (per browser): a memory map + user-scoped localStorage,
-// keyed by the analysed-episode set — instant on return, never crosses users. L2
-// (global): the AI synthesis posts a content-derived `id`, so the shared summary
-// store reuses it across ALL users and browsers — the same episode set is run
-// through the model ONCE total, not once per visitor.
+// keyed by the EDITION SCOPE (the ISO week, or 'all') — NOT the exact episode set.
+// So once an edition is generated it's SAVED and shown instantly on every later
+// visit, and detecting a new episode no longer silently re-runs the synthesis;
+// the page surfaces "new episodes" and only Refresh (force) regenerates. L2
+// (global): the AI synthesis still posts a content-derived `id`, so the shared
+// summary store reuses it across ALL users — the same episode set is run through
+// the model ONCE total, not once per visitor.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type ById = (id: string) => Podcast | undefined
@@ -30,10 +33,18 @@ export { buildShowDigests }
 
 const SESSION = new Map<string, WeeklySummary>()
 
-// One user-scoped cache key for both layers (memory map + localStorage). The `:v4`
-// namespace retires the comparison-table shape (replaced by per-episode investment
-// readouts), so a stale cached edition is never read after this format change.
-const cacheKey = (key: string): string => scopedKey('munshot:weekly:v4') + `:${key}`
+// Saved-edition cache key — per user, per SCOPE (week key | 'all'). `:v5` retires
+// the old per-episode-set keying (and the comparison-table shape before it), so a
+// stale cached edition is never read after this change.
+const cacheKey = (scope: string): string => scopedKey('munshot:weekly:v5') + `:${scope}`
+
+/** The saved edition for a scope, read synchronously (memory then localStorage),
+ *  WITHOUT generating. Lets the page show the saved edition instantly and decide
+ *  separately whether new episodes warrant a refresh. */
+export function peekWeekly(scope = 'all'): WeeklySummary | null {
+  const ck = cacheKey(scope)
+  return SESSION.get(ck) ?? readCache(ck)
+}
 
 export interface WeeklyOptions {
   /** Disambiguates the cache entry — pass the ISO week key (or 'all'). Keeps two
@@ -59,8 +70,10 @@ export async function generateWeekly(
     .sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt))
   if (!ready.length) return null
 
-  const key = hashKey(ready) + (opts.scope ? `:${opts.scope}` : '')
-  const ck = cacheKey(key)
+  const scope = opts.scope || 'all'
+  const ck = cacheKey(scope)
+  // On a normal load, return the SAVED edition for this scope — never reprocess just
+  // because a new episode was detected (the page surfaces that and offers Refresh).
   if (!opts.force) {
     const cached = SESSION.get(ck) ?? readCache(ck)
     if (cached) {
@@ -70,14 +83,15 @@ export async function generateWeekly(
   }
 
   // Always-real deterministic base (shared engine), then the AI narrative on top.
+  // The GLOBAL server id stays content-derived (episode-set hash) so the same set is
+  // synthesised once across all users; only the per-browser SAVED edition is scoped.
+  const contentKey = `${hashKey(ready)}:${scope}`
   const range = opts.rangeLabel ?? rangeLabel(ready)
-  const base = assembleWeekly(ready, podcastById, { rangeLabel: range, id: `wk-${key}` })
+  const base = assembleWeekly(ready, podcastById, { rangeLabel: range, id: `wk-${contentKey}` })
 
-  // Guidepoint AI layer (overview, key themes, quant table, comparison, questions)
-  // with the deterministic fallback baked into mergeWeeklyAi. The shared id makes
-  // the result reusable across ALL users via the global summary store (same episode
-  // set ⇒ same id ⇒ one LLM call total), not just this browser.
-  const ai = await aiSynthesize(ready, range, podcastById, { id: `weekly:${key}`, force: opts.force })
+  // Guidepoint AI layer (overview, key themes, quant table, readouts, questions) with
+  // the deterministic fallback baked into mergeWeeklyAi.
+  const ai = await aiSynthesize(ready, range, podcastById, { id: `weekly:${contentKey}`, force: opts.force })
   const weekly = ai ? mergeWeeklyAi(base, ai) : base
 
   SESSION.set(ck, weekly)

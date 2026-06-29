@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { buildShowDigests, generateWeekly } from './weeklyApi'
+import { buildShowDigests, generateWeekly, peekWeekly } from './weeklyApi'
 import type { Episode, Highlight, Idea, Podcast, Summary } from './types'
 
 // buildShowDigests is the deterministic heart of the by-show weekly: it groups the
@@ -157,5 +157,44 @@ describe('generateWeekly — shared across users', () => {
     const id1 = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string).id
     const id2 = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string).id
     expect(id1).toBe(id2)
+  })
+})
+
+describe('generateWeekly — saved edition (no reprocess until Refresh)', () => {
+  const fetchMock = vi.fn()
+  beforeEach(() => {
+    fetchMock.mockReset()
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ weekly: { overview: ['o'], keyThemes: [], quantTable: [], episodeReadouts: [], questions: [] } }) })
+    vi.stubGlobal('fetch', fetchMock)
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('reuses the saved edition when a new episode appears; only force regenerates', async () => {
+    const scope = `save-${Math.random().toString(36).slice(2)}`
+    const e1 = ep('s1', 'allin', sum({ highlights: [hl('h1', 'T1', true)] }), '2026-06-01')
+    const e2 = ep('s2', 'oddlots', sum({ highlights: [hl('h2', 'T2', true)] }), '2026-06-08')
+
+    const first = await generateWeekly([e1], podcastById, { scope })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(first?.sourceEpisodeIds).toEqual(['s1'])
+
+    // A new episode (e2) is now ready — a normal load must NOT reprocess; it returns
+    // the SAVED edition (still just s1).
+    const reused = await generateWeekly([e1, e2], podcastById, { scope })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(reused?.sourceEpisodeIds).toEqual(['s1'])
+
+    // Refresh (force) folds in the new episode.
+    const refreshed = await generateWeekly([e1, e2], podcastById, { scope, force: true })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect([...(refreshed?.sourceEpisodeIds ?? [])].sort()).toEqual(['s1', 's2'])
+  })
+
+  it('peekWeekly returns the saved edition for a scope without generating', async () => {
+    const scope = `peek-${Math.random().toString(36).slice(2)}`
+    expect(peekWeekly(scope)).toBeNull()
+    await generateWeekly([ep('p1', 'allin', sum({ highlights: [hl('h', 'T', true)] }), '2026-06-01')], podcastById, { scope })
+    expect(peekWeekly(scope)?.sourceEpisodeIds).toEqual(['p1'])
+    expect(fetchMock).toHaveBeenCalledTimes(1) // peek itself triggered no call
   })
 })
