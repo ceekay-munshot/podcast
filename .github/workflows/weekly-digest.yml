@@ -1,9 +1,10 @@
 name: Weekly digest
 
-# Sends the Munshot weekly brief to all subscribers every Monday. Cloudflare Pages
-# can't run cron itself, so this scheduled workflow POSTs the deployed
-# /api/cron/weekly-digest endpoint, which builds the shared edition and mails
-# every subscriber.
+# Sends the Munshot weekly brief on the schedule chosen in the app (day · time ·
+# timezone). Cloudflare Pages can't run cron itself, and a YAML cron is a fixed UTC
+# string — so this workflow PINGS the deployed /api/cron/weekly-digest endpoint
+# every 30 minutes, and the endpoint decides whether it's the chosen send time
+# (de-duped to once per week). A manual run forces an immediate send.
 #
 # Required repository secrets (Settings → Secrets and variables → Actions):
 #   SITE_URL     — the deployed site origin, e.g. https://podcast.pages.dev
@@ -15,8 +16,8 @@ name: Weekly digest
 
 on:
   schedule:
-    - cron: '0 13 * * 1' # Mondays 13:00 UTC
-  workflow_dispatch: {} # allow a manual run from the Actions tab
+    - cron: '*/30 * * * *' # every 30 min; the endpoint gates on the chosen schedule
+  workflow_dispatch: {} # a manual run forces an immediate send (see ?force=1 below)
 
 # Don't let two runs overlap (e.g. a manual run during the scheduled one).
 concurrency:
@@ -36,8 +37,12 @@ jobs:
             echo "::error::SITE_URL and CRON_SECRET repository secrets must be set."
             exit 1
           fi
+          # A manual run forces an immediate send; the scheduled ticks let the
+          # endpoint decide based on the app's chosen day/time/timezone.
+          url="${SITE_URL%/}/api/cron/weekly-digest"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then url="${url}?force=1"; fi
           code=$(curl -sS -o /tmp/digest.json -w '%{http_code}' \
-            -X POST "${SITE_URL%/}/api/cron/weekly-digest" \
+            -X POST "$url" \
             -H "authorization: Bearer ${CRON_SECRET}" \
             --max-time 120)
           echo "HTTP ${code}"

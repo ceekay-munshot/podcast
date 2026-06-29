@@ -328,6 +328,19 @@ export interface WeeklyAi {
   questions: string[]
 }
 
+/** The day/time/timezone the weekly digest is mailed. Chosen in the app, stored
+ *  server-side, and enforced by the cron endpoint (server/scheduleStore.ts). */
+export interface WeeklySchedule {
+  /** 0 = Sunday … 6 = Saturday (JS getDay convention). */
+  dayOfWeek: number
+  /** Local hour, 0–23. */
+  hour: number
+  /** Local minute, 0–59. */
+  minute: number
+  /** IANA timezone, e.g. "Asia/Kolkata". */
+  timezone: string
+}
+
 export interface WeeklySummary {
   id: string
   rangeLabel: string // "May 19 – May 25, 2026"

@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { subscribeWeekly, unsubscribeWeekly } from '../lib/api'
 import { useAppData } from '../store/AppData'
 import { Icon } from './Icon'
+import { WeeklyScheduleEditor } from './WeeklyScheduleEditor'
 
 // Weekly-digest subscription as a compact sidebar bell + popover.
 // Persists locally; subscribing sends a real confirmation email through
@@ -116,7 +117,9 @@ export function WeeklySubscribe() {
         <>
           {/* click-away */}
           <button className="fixed inset-0 z-40 cursor-default" aria-hidden onClick={() => setOpen(false)} />
-          <div className="pop absolute bottom-0 left-full z-50 ml-2 w-72 origin-bottom-left rounded-xl border border-outline-variant bg-surface p-md shadow-card-hover">
+          {/* Anchored to the bell's TOP so it grows down into the open sidebar space
+              below it (the editor makes it tall); capped to the viewport with scroll. */}
+          <div className="pop absolute top-0 left-full z-50 ml-2 max-h-[calc(100vh-2rem)] w-72 origin-top-left overflow-y-auto rounded-xl border border-outline-variant bg-surface p-md shadow-card-hover">
             {stored ? (
               <>
                 <div className="mb-3 flex items-center gap-2.5">
@@ -128,7 +131,7 @@ export function WeeklySubscribe() {
                     <p className="truncate text-[12px] text-secondary">{stored}</p>
                   </div>
                 </div>
-                <p className="mb-3 text-[12px] text-secondary">A confirmation just landed in your inbox. Then one email every Monday with the whole weekly summary.</p>
+                <p className="mb-3 text-[12px] text-secondary">A confirmation just landed in your inbox. Then one email every week with the whole weekly summary — on the schedule below.</p>
                 <button
                   onClick={unsubscribe}
                   disabled={busy}
@@ -145,7 +148,7 @@ export function WeeklySubscribe() {
                   </span>
                   <div className="min-w-0">
                     <p className="text-[14px] font-semibold text-on-surface">Weekly brief in your inbox</p>
-                    <p className="text-[12px] text-secondary">Every Monday — this whole summary.</p>
+                    <p className="text-[12px] text-secondary">One email a week — this whole summary.</p>
                   </div>
                 </div>
                 <input
@@ -174,6 +177,7 @@ export function WeeklySubscribe() {
                 )}
               </form>
             )}
+            <WeeklyScheduleEditor />
           </div>
         </>
       )}

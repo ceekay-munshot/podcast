@@ -3,6 +3,7 @@ import { kvSummaryStore, type KVNamespace } from '../../../server/summaryStore'
 import { kvSubscriberStore } from '../../../server/subscriberStore'
 import { kvReportStore, reportUrl } from '../../../server/reportStore'
 import { checkCronAuth, runWeeklyDigest } from '../../../server/weeklyDigest'
+import { DEFAULT_SCHEDULE, dueToSend, kvScheduleStore } from '../../../server/scheduleStore'
 import { sendRawEmail } from '../../../src/lib/email'
 import { weeklyPdfBytes } from '../../../src/lib/pdfRender'
 
@@ -40,6 +41,21 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
   if (!checkCronAuth(request.headers.get('authorization'), env.CRON_SECRET)) return json(401, { error: 'unauthorized' })
 
   try {
+    // The workflow now pings every 30 min; gate the actual send on the user's chosen
+    // day/time/timezone (DEFAULT_SCHEDULE = the old Mon 13:00 UTC until one is set).
+    // `?force=1` (a manual workflow_dispatch) bypasses the gate to send immediately.
+    const force = new URL(request.url).searchParams.get('force') === '1'
+    const scheduleStore = env.SUMMARIES ? kvScheduleStore(env.SUMMARIES) : null
+    let sentMarker: string | null = null
+    if (!force) {
+      // No store ⇒ can't gate or de-dupe ⇒ refuse rather than send on every tick.
+      if (!scheduleStore) return json(200, { ok: true, skipped: 'no_schedule_store' })
+      const schedule = (await scheduleStore.getSchedule()) ?? DEFAULT_SCHEDULE
+      const gate = dueToSend(schedule, new Date(), await scheduleStore.getLastSent())
+      if (!gate.due) return json(200, { ok: true, skipped: 'not_scheduled', schedule })
+      sentMarker = gate.dateStr
+    }
+
     const summaryStore = env.SUMMARIES ? kvSummaryStore(env.SUMMARIES) : undefined
     const subscriberStore = env.SUMMARIES ? kvSubscriberStore(env.SUMMARIES) : null
     // Host the PDF only when we can build an absolute link to it (KV + SITE_URL).
@@ -59,6 +75,13 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
           }
         : {}),
     })
+    // Claim this week's slot only once an edition was actually built + mailed, so a
+    // later tick the same day won't re-send; a skip (no subscribers / no ready
+    // episodes) stays unmarked so a transient gap can still retry on the next tick.
+    if (sentMarker && scheduleStore) {
+      const recipients = (result.body as { recipients?: number }).recipients
+      if (typeof recipients === 'number' && recipients > 0) await scheduleStore.setLastSent(sentMarker)
+    }
     return json(result.status, result.body)
   } catch {
     return json(500, { error: 'digest_failed' })

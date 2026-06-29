@@ -13,6 +13,8 @@ import { handleProcessed } from './server/processedStore'
 import { fileProcessedStore } from './server/processedStore.node'
 import { handleSubscribers } from './server/subscriberStore'
 import { fileSubscriberStore } from './server/subscriberStore.node'
+import { handleSchedule } from './server/scheduleStore'
+import { fileScheduleStore } from './server/scheduleStore.node'
 import { checkCronAuth, runWeeklyDigest } from './server/weeklyDigest'
 import { sendRawEmail, type RawEmail } from './src/lib/email'
 import { reportId, reportUrl } from './server/reportStore'
@@ -75,6 +77,7 @@ function liveApiPlugin(config: {
   // The weekly-brief subscriber list for dev (one global file, mirroring the
   // single prod KV value the Monday digest reads).
   const subscribers = fileSubscriberStore(path.resolve(process.cwd(), '.cache/weekly-subscribers.json'))
+  const schedule = fileScheduleStore(path.resolve(process.cwd(), '.cache/weekly-schedule.json'))
   // Hosted PDF reports for dev — an in-process map mirroring the prod KV store. Good
   // enough for a click-through in the same dev session (a real recipient would need
   // a public origin, which dev isn't — see SITE_URL).
@@ -127,6 +130,18 @@ function liveApiPlugin(config: {
           json(res, status, body)
         } catch {
           json(res, 500, { error: 'subscribers_failed' })
+        }
+      })
+
+      // Weekly-digest send schedule (day · time · timezone) — mirrors
+      // functions/api/schedule/weekly.ts. GET reads, PUT updates.
+      server.middlewares.use('/api/schedule/weekly', async (req, res) => {
+        try {
+          const method = req.method ?? 'GET'
+          const { status, body } = await handleSchedule(schedule, method, method === 'GET' ? '' : await readBody(req))
+          json(res, status, body)
+        } catch {
+          json(res, 500, { error: 'schedule_failed' })
         }
       })
 

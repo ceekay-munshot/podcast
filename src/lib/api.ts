@@ -1,4 +1,4 @@
-import type { Episode, Podcast, PodcastSearchResult, Summary, TranscriptSegment, WeeklySummary } from './types'
+import type { Episode, Podcast, PodcastSearchResult, Summary, TranscriptSegment, WeeklySchedule, WeeklySummary } from './types'
 import { EPISODES, PODCASTS, WEEKLY } from './mock-data'
 import { stableHash } from './hash'
 import { apiFetch } from './apiFetch'
@@ -197,6 +197,30 @@ export function registerWeeklyRecipient(email: string): Promise<void> {
 }
 export function unregisterWeeklyRecipient(email: string): Promise<void> {
   return persistSubscription('DELETE', email)
+}
+
+// The global weekly-digest send schedule (day · time · timezone). GET returns the
+// effective schedule (defaulted server-side); PUT saves a new one. The cron endpoint
+// reads this to decide when the Monday brief actually goes out.
+export async function getWeeklySchedule(): Promise<WeeklySchedule | null> {
+  try {
+    const r = await apiFetch('/api/schedule/weekly')
+    if (!r.ok) return null
+    return ((await r.json()) as { schedule?: WeeklySchedule }).schedule ?? null
+  } catch {
+    return null
+  }
+}
+
+export async function setWeeklySchedule(s: WeeklySchedule): Promise<{ ok: boolean; schedule?: WeeklySchedule; message?: string }> {
+  try {
+    const r = await apiFetch('/api/schedule/weekly', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(s) })
+    const data = (await r.json().catch(() => null)) as { schedule?: WeeklySchedule; error?: string } | null
+    if (!r.ok) return { ok: false, message: data?.error || `Couldn't save (HTTP ${r.status}).` }
+    return { ok: true, schedule: data?.schedule }
+  } catch {
+    return { ok: false, message: "Couldn't reach the server." }
+  }
 }
 
 // Add/remove this address on the server-side subscriber list (/api/subscriptions/
