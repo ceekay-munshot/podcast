@@ -28,7 +28,7 @@ const THEME_STYLES = [
 ]
 
 export default function Weekly() {
-  const { episodes, podcasts, episodeById, podcastById, loading, identity } = useAppData()
+  const { episodes, podcasts, episodeById, podcastById, loading, identity, summarizeEpisode, needsApiKey } = useAppData()
   const { on: sentimentOn } = useSentiment()
   const [params, setParams] = useSearchParams()
   const [weekly, setWeekly] = useState<WeeklySummary | null | undefined>(undefined) // undefined = generating
@@ -144,6 +144,44 @@ export default function Weekly() {
     }
   }
 
+  // ── "Process this week" — summarise every not-yet-processed episode from the last
+  //    7 days (across the tracked podcasts) so the Monday brief includes everything.
+  //    Sequential + paced, so it never hammers the API; cancellable.
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000
+  const unprocessed = useMemo(() => {
+    const cutoff = Date.now() - WEEK_MS
+    return episodes.filter(
+      (e) =>
+        +new Date(e.publishedAt) >= cutoff &&
+        e.status !== 'ready' &&
+        e.status !== 'summarizing' &&
+        !e.summary &&
+        (!!e.transcriptUrl || !!e.audioUrl || !!(e.notes && e.notes.trim())),
+    )
+  }, [episodes])
+  const [processing, setProcessing] = useState(false)
+  const [progress, setProgress] = useState({ done: 0, total: 0, title: '' })
+  const cancelRef = useRef(false)
+
+  async function processAll() {
+    if (processing || !unprocessed.length || needsApiKey) return
+    const targets = [...unprocessed]
+    cancelRef.current = false
+    setProcessing(true)
+    setProgress({ done: 0, total: targets.length, title: '' })
+    for (let i = 0; i < targets.length; i++) {
+      if (cancelRef.current) break
+      setProgress({ done: i, total: targets.length, title: targets[i].title })
+      await summarizeEpisode(targets[i], podcastById(targets[i].podcastId))
+      if (cancelRef.current) break
+      await new Promise((r) => setTimeout(r, 400)) // gentle pacing between episodes
+    }
+    setProgress((p) => ({ ...p, done: p.total, title: '' }))
+    setProcessing(false)
+    // The newly-ready episodes now surface via the "new episodes" banner → Refresh
+    // folds them into the edition, then it's ready to email.
+  }
+
   function selectEdition(key: string) {
     const next = new URLSearchParams(params)
     if (key === (editions[0]?.weekKey ?? 'all')) next.delete('week') // latest → clean URL
@@ -201,6 +239,53 @@ export default function Weekly() {
           )}
         </div>
       </div>
+
+      {/* Process this week's not-yet-summarised episodes so the Monday brief is complete. */}
+      {(unprocessed.length > 0 || processing) && (
+        <div className="animate-fade-up mb-md flex items-center gap-3 rounded-xl border border-[#ecddb6] bg-[#fdf8ee] px-4 py-3">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#b8902f] text-white">
+            <Icon name={processing ? 'progress_activity' : 'bolt'} size={18} className={processing ? 'animate-spin' : ''} />
+          </span>
+          <div className="min-w-0 flex-1">
+            {processing ? (
+              <>
+                <p className="text-[13.5px] font-semibold text-on-surface">
+                  Processing {Math.min(progress.done + 1, progress.total)} of {progress.total}…
+                </p>
+                <p className="truncate text-[12px] text-secondary">{progress.title || 'Finishing up…'}</p>
+                <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[#efe3c6]">
+                  <div className="h-full rounded-full bg-[#b8902f] transition-[width] duration-300 ease-out" style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }} />
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-[13.5px] font-semibold text-on-surface">
+                  {unprocessed.length} episode{unprocessed.length === 1 ? '' : 's'} from this week {unprocessed.length === 1 ? "isn't" : "aren't"} processed yet
+                </p>
+                <p className="text-[12px] text-secondary">{needsApiKey ? 'Connect an AI key to process them.' : 'Process them so the Monday brief includes everything.'}</p>
+              </>
+            )}
+          </div>
+          {processing ? (
+            <button
+              onClick={() => {
+                cancelRef.current = true
+              }}
+              className="press shrink-0 rounded-lg border border-outline-variant bg-surface px-3 py-2 text-metadata font-semibold text-on-surface hover:bg-surface-container-low"
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              onClick={processAll}
+              disabled={needsApiKey}
+              className="press inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[#b8902f] px-3.5 py-2 text-metadata font-semibold text-white hover:bg-[#a87f28] disabled:opacity-50"
+            >
+              <Icon name="auto_awesome" size={15} /> Process all
+            </button>
+          )}
+        </div>
+      )}
 
       {/* New episodes detected since the saved edition — visible, opt-in refresh. */}
       {weekly && newEpisodes.length > 0 && (
