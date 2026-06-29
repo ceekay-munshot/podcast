@@ -4,6 +4,7 @@ import { stableHash } from './hash'
 import { apiFetch } from './apiFetch'
 import { episodeBriefEmailHtml, weeklyBriefEmailHtml, welcomeEmailHtml, type EmailResult } from './email'
 import { weeklyPdfBytes } from './pdfRender'
+import { weeklyReportFilename, weeklyReportTitle, withReportDownloadName } from './reportName'
 import { normalizeRecipients } from './recipientsStore'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -177,7 +178,9 @@ async function hostWeeklyPdf(weekly: WeeklySummary, episodeById: (id: string) =>
     const r = await apiFetch('/api/report', { method: 'POST', headers: { 'content-type': 'application/pdf' }, body: bytes })
     if (!r.ok) return null
     const { url } = (await r.json()) as { url?: string }
-    return url ?? null
+    // Carry the dated brand filename on the link so the emailed PDF saves as
+    // "Munshot AI Podcasts — <week>.pdf" instead of a generic slug.
+    return url ? withReportDownloadName(url, weeklyReportFilename(weekly.rangeLabel)) : null
   } catch {
     return null
   }
@@ -254,7 +257,7 @@ export async function emailWeeklyEdition(
   // The PDF is the deliverable: render + host it ONCE, then reuse the link for all.
   // A failed render/upload degrades to a brief with no link, never a hard fail.
   const pdfUrl = (await hostWeeklyPdf(weekly, episodeById, podcastById)) ?? undefined
-  const subject = `Munshot Weekly — ${weekly.rangeLabel}`
+  const subject = weeklyReportTitle(weekly.rangeLabel)
   const html = weeklyBriefEmailHtml(weekly, episodeById, podcastById, { pdfUrl })
 
   const results = await Promise.all(to.map((addr) => postEmail({ to: addr, subject, html })))

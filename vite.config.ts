@@ -18,6 +18,7 @@ import { fileScheduleStore } from './server/scheduleStore.node'
 import { checkCronAuth, processPendingBatch, runWeeklyDigest } from './server/weeklyDigest'
 import { sendRawEmail, type RawEmail } from './src/lib/email'
 import { reportId, reportUrl } from './server/reportStore'
+import { contentDispositionInline, REPORT_DL_PARAM } from './src/lib/reportName'
 import { weeklyPdfBytes } from './src/lib/pdfRender'
 import { USER_HEADER, userKeyFrom } from './server/identity'
 import { resolveVideoId } from './server/resolveVideo'
@@ -179,6 +180,7 @@ function liveApiPlugin(config: {
             }
             res.statusCode = 200
             res.setHeader('content-type', 'application/pdf')
+            res.setHeader('content-disposition', contentDispositionInline(url.searchParams.get(REPORT_DL_PARAM)))
             return res.end(Buffer.from(bytes))
           }
           if (req.method === 'POST') {
@@ -218,7 +220,7 @@ function liveApiPlugin(config: {
             sendEmail: (msg) => sendRawEmail(msg, { token: config.emailToken }),
             summarizeConfig: { ...config, store },
             generatePdf: (weekly, episodeById, podcastById) => weeklyPdfBytes(weekly, episodeById, podcastById),
-            storePdf: async (bytes) => reportUrl(originFor(req), await devReportStore.put(bytes)),
+            storePdf: async (bytes, downloadName) => reportUrl(originFor(req), await devReportStore.put(bytes), downloadName),
           })
           json(res, result.status, { ...result.body, batch })
         } catch (e) {

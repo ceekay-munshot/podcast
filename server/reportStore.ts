@@ -1,4 +1,5 @@
 import type { KVNamespace } from './summaryStore'
+import { withReportDownloadName } from '../src/lib/reportName'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hosted PDF report store — the weekly brief's deliverable.
@@ -51,7 +52,9 @@ export function kvReportStore(kv: KVNamespace): ReportStore {
 
 /** Absolute, click-from-an-inbox URL for a stored report. The cron has no request,
  *  so `SITE_URL` is the source of truth there; the on-demand path can fall back to
- *  the request origin. */
-export function reportUrl(origin: string, id: string): string {
-  return `${origin.replace(/\/$/, '')}/api/report/${id}`
+ *  the request origin. An optional `downloadName` rides along as `?dl=` so the GET
+ *  endpoint can serve the bytes with a proper "Munshot AI Podcasts — <week>.pdf". */
+export function reportUrl(origin: string, id: string, downloadName?: string): string {
+  const url = `${origin.replace(/\/$/, '')}/api/report/${id}`
+  return downloadName ? withReportDownloadName(url, downloadName) : url
 }

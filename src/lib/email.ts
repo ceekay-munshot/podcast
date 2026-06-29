@@ -1,5 +1,6 @@
 import type { Episode, EpisodeInsight, Idea, Podcast, QAItem, QuantPoint, WeeklyShowDigest, WeeklySummary } from './types'
 import { esc } from './exportDoc'
+import { weeklyReportTitle } from './reportName'
 import { formatDuration, longDate } from './format'
 import { groupQuantByEpisode } from './weeklyQuant'
 
@@ -447,7 +448,7 @@ export function weeklyBriefEmailHtml(
   const bodyRow = `<tr><td style="padding:8px 36px 30px;">${ctaRow}${overview}${keyPoints}${shows}${quant}${readout}${interesting}${sourcesBody}</td></tr>`
 
   return shell(
-    `Munshot Weekly — ${weekly.rangeLabel}`,
+    weeklyReportTitle(weekly.rangeLabel),
     header('AI Podcast Intelligence', 'Weekly Summary', weekly.rangeLabel, [
       `${weekly.episodeCount} episode${weekly.episodeCount === 1 ? '' : 's'}`,
       `${weekly.readMinutes} min read`,

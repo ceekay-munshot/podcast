@@ -2,6 +2,7 @@ import type { Episode, Podcast, Summary, WeeklySummary } from '../src/lib/types'
 import { PODCASTS } from '../src/lib/mock-data'
 import { assembleWeekly, buildCitations, buildWeeklySources, hashKey, mergeWeeklyAi } from '../src/lib/weeklyAssemble'
 import { weeklyBriefEmailHtml } from '../src/lib/email'
+import { weeklyReportFilename, weeklyReportTitle } from '../src/lib/reportName'
 import { summarizeEpisode, synthesizeWeekly, type SummarizeConfig } from './summarize'
 import type { SummaryStore } from './summaryStore'
 import type { SubscriberStore } from './subscriberStore'
@@ -119,8 +120,9 @@ export interface DigestDeps {
   /** Render the weekly edition to PDF bytes (jsPDF). Optional — paired with
    *  storePdf; when either is absent or throws, the brief sends without a link. */
   generatePdf?: (weekly: WeeklySummary, episodeById: (id: string) => Episode | undefined, podcastById: (id: string) => Podcast | undefined) => Promise<ArrayBuffer>
-  /** Store the rendered PDF and return its hosted URL (the brief's download link). */
-  storePdf?: (bytes: ArrayBuffer) => Promise<string>
+  /** Store the rendered PDF and return its hosted URL (the brief's download link).
+   *  `downloadName` is the filename the link should save as (e.g. the dated brand name). */
+  storePdf?: (bytes: ArrayBuffer, downloadName?: string) => Promise<string>
   /** Summarise one not-yet-processed episode and return its summary (writing it to
    *  the shared store). Powers the pre-send backfill. Injected so tests don't hit the
    *  wire; in production it is derived from `summarizeConfig` when omitted. */
@@ -232,14 +234,15 @@ export async function runWeeklyDigest(deps: DigestDeps): Promise<{ status: numbe
   let pdfUrl: string | undefined
   if (deps.generatePdf && deps.storePdf) {
     try {
-      pdfUrl = await deps.storePdf(await deps.generatePdf(weekly, episodeById, podcastById))
+      const bytes = await deps.generatePdf(weekly, episodeById, podcastById)
+      pdfUrl = await deps.storePdf(bytes, weeklyReportFilename(weekly.rangeLabel))
     } catch {
       pdfUrl = undefined
     }
   }
 
   const html = weeklyBriefEmailHtml(weekly, episodeById, podcastById, { pdfUrl })
-  const subject = `Munshot Weekly — ${weekly.rangeLabel}`
+  const subject = weeklyReportTitle(weekly.rangeLabel)
 
   let sent = 0
   let failed = 0

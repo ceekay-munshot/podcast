@@ -2,6 +2,7 @@ import type { jsPDF as JsPdf } from 'jspdf'
 import type { Episode, Idea, Podcast, WeeklyIdea, WeeklySummary } from './types'
 import { formatDuration, longDate } from './format'
 import { sanitizeFilename } from './exportDoc'
+import { weeklyReportBaseName } from './reportName'
 import { COVER_BG } from './coverBg'
 import { groupQuantByEpisode } from './weeklyQuant'
 
@@ -1594,7 +1595,7 @@ async function buildAndSave(blocks: Block[], baseName: string, footerRight: stri
 }
 
 export function downloadWeeklyPdf(weekly: WeeklySummary, episodeById: ById<Episode>, podcastById: ById<Podcast>): Promise<void> {
-  return buildAndSave(weeklyBlocks(weekly, episodeById, podcastById), `Munshot Weekly — ${weekly.rangeLabel}`, weekly.rangeLabel)
+  return buildAndSave(weeklyBlocks(weekly, episodeById, podcastById), weeklyReportBaseName(weekly.rangeLabel), weekly.rangeLabel)
 }
 
 export function downloadSummaryPdf(episode: Episode, podcast?: Podcast): Promise<void> {
@@ -1607,6 +1608,6 @@ export function downloadSummaryPdf(episode: Episode, podcast?: Podcast): Promise
 // there's no canvas (see makeCoverBg / COVER_BG_FALLBACK).
 export async function weeklyPdfBytes(weekly: WeeklySummary, episodeById: ById<Episode>, podcastById: ById<Podcast>): Promise<ArrayBuffer> {
   const [{ jsPDF }, { MUNSHOT_LOGO }] = await Promise.all([import('jspdf'), import('./brandLogo')])
-  const doc = renderDoc(jsPDF, weeklyBlocks(weekly, episodeById, podcastById), MUNSHOT_LOGO, weekly.rangeLabel, `Munshot Weekly — ${weekly.rangeLabel}`)
+  const doc = renderDoc(jsPDF, weeklyBlocks(weekly, episodeById, podcastById), MUNSHOT_LOGO, weekly.rangeLabel, weeklyReportBaseName(weekly.rangeLabel))
   return doc.output('arraybuffer')
 }

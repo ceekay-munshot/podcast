@@ -173,7 +173,7 @@ describe('runWeeklyDigest', () => {
     expect(calls[1][0].email).toBe('b@muns.io')
     expect(calls[0][0].subject).toBe(calls[1][0].subject)
     expect(calls[0][0].html).toBe(calls[1][0].html)
-    expect(calls[0][0].subject).toContain('Munshot Weekly')
+    expect(calls[0][0].subject).toContain('Munshot AI Podcasts')
     expect(calls[0][0].html).toContain('Weekly Summary')
   })
 

@@ -79,7 +79,7 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
       ...(reportStore && siteUrl
         ? {
             generatePdf: (weekly, episodeById, podcastById) => weeklyPdfBytes(weekly, episodeById, podcastById),
-            storePdf: async (bytes) => reportUrl(siteUrl, await reportStore.put(bytes)),
+            storePdf: async (bytes, downloadName) => reportUrl(siteUrl, await reportStore.put(bytes), downloadName),
           }
         : {}),
     })
