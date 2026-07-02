@@ -1,4 +1,4 @@
-import { sendRawEmail, type RawEmail } from '../../../src/lib/email'
+import { sendRawEmail, cleanAttachments, type RawEmail } from '../../../src/lib/email'
 import type { KVNamespace } from '../../../server/summaryStore'
 
 // Cloudflare Pages Function → POST /api/email/send (production).
@@ -25,6 +25,9 @@ interface Env {
   MUNSHOT_EMAIL_TOKEN?: string
   SUMMARIES?: KVNamespace
   SITE_URL?: string
+  // "1" ⇒ forward file attachments to the raw-email endpoint. Off by default so the
+  // proxy stays a plain text/html relay until the endpoint supports attachments.
+  EMAIL_ATTACHMENTS?: string
 }
 
 const EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/
@@ -61,7 +64,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
     if (!allowed.has(origin)) return json(403, { ok: false, message: 'Forbidden origin.' })
   }
 
-  let body: { to?: unknown; subject?: unknown; text?: unknown; html?: unknown }
+  let body: { to?: unknown; subject?: unknown; text?: unknown; html?: unknown; attachments?: unknown }
   try {
     body = (await request.json()) as typeof body
   } catch {
@@ -71,6 +74,9 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
   const subject = typeof body.subject === 'string' ? body.subject : ''
   const text = typeof body.text === 'string' ? body.text : undefined
   const html = typeof body.html === 'string' ? body.html : undefined
+  // Attachments only ride along when the feature is enabled; otherwise the client's
+  // bytes are simply ignored and the brief goes out with its hosted link as before.
+  const attachments = env.EMAIL_ATTACHMENTS === '1' ? cleanAttachments(body.attachments) : []
   // Exactly one valid recipient, no header-injection newlines.
   if (!EMAIL_RE.test(to) || /[\r\n]/.test(to)) return json(400, { ok: false, message: 'A valid recipient email is required.' })
   if (!subject || /[\r\n]/.test(subject) || (!!text === !!html)) return json(400, { ok: false, message: 'A subject and exactly one of text or html are required.' })
@@ -93,7 +99,8 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
     }
   }
 
-  const msg: RawEmail = html ? { email: to, subject, html } : { email: to, subject, text: text as string }
+  const base = { email: to, subject, ...(attachments.length ? { attachments } : {}) }
+  const msg: RawEmail = html ? { ...base, html } : { ...base, text: text as string }
   const res = await sendRawEmail(msg, { token: env.MUNSHOT_EMAIL_TOKEN })
   return json(res.ok ? 200 : 502, res)
 }

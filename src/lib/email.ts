@@ -32,9 +32,20 @@ export interface EmailResult {
   message: string
 }
 
+/** A file attached to an email. `content` is base64 (no `data:` prefix). Delivery
+ *  depends on the endpoint supporting an `attachments` field — the send paths gate
+ *  this behind EMAIL_ATTACHMENTS, so a build without endpoint support simply omits it. */
+export interface EmailAttachment {
+  filename: string
+  content: string
+  contentType: string
+}
 interface BaseEmail {
   email: string
   subject: string
+  /** Optional attachments — only sent through when non-empty (else the body is byte-
+   *  for-byte the historical text/html contract). */
+  attachments?: EmailAttachment[]
 }
 /** Send EITHER text OR html — never both, never neither (the endpoint's contract). */
 export type RawEmail = BaseEmail & ({ text: string; html?: never } | { html: string; text?: never })
@@ -58,9 +69,13 @@ export async function sendRawEmail(message: RawEmail, opts: { token?: string } =
   if (!subject) return { ok: false, message: 'An email subject is required.' }
   if (hasText === hasHtml) return { ok: false, message: 'Send exactly one of text or html.' }
 
-  const body: Record<string, string> = { email, subject }
+  const body: Record<string, unknown> = { email, subject }
   if (hasText) body.text = (message as { text: string }).text
   else body.html = (message as { html: string }).html
+  // Only attach the key when there's something to send, so a plain brief stays
+  // byte-for-byte the historical text/html contract (and the endpoint never sees an
+  // empty `attachments: []` it might choke on).
+  if (message.attachments?.length) body.attachments = message.attachments
 
   const headers: Record<string, string> = { 'content-type': 'application/json' }
   if (opts.token) headers.authorization = `Bearer ${opts.token}`
@@ -93,6 +108,55 @@ export async function sendRawEmail(message: RawEmail, opts: { token?: string } =
 /** Only a non-empty string survives — guards the UI from a nested error object. */
 function str(v: unknown): string {
   return typeof v === 'string' && v.trim() ? v : ''
+}
+
+// ── base64 (runtime-agnostic) ────────────────────────────────────────────────
+// Pure-JS so it behaves identically in the browser, a Cloudflare Worker, and Node
+// without depending on btoa/Buffer being typed in every tsconfig lib. Used to encode
+// the weekly PDF bytes into an email attachment.
+const B64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+export function bytesToBase64(buf: ArrayBuffer): string {
+  const b = new Uint8Array(buf)
+  let out = ''
+  let i = 0
+  for (; i + 2 < b.length; i += 3) {
+    const n = (b[i] << 16) | (b[i + 1] << 8) | b[i + 2]
+    out += B64_ALPHABET[(n >> 18) & 63] + B64_ALPHABET[(n >> 12) & 63] + B64_ALPHABET[(n >> 6) & 63] + B64_ALPHABET[n & 63]
+  }
+  const rem = b.length - i
+  if (rem === 1) {
+    const n = b[i] << 16
+    out += B64_ALPHABET[(n >> 18) & 63] + B64_ALPHABET[(n >> 12) & 63] + '=='
+  } else if (rem === 2) {
+    const n = (b[i] << 16) | (b[i + 1] << 8)
+    out += B64_ALPHABET[(n >> 18) & 63] + B64_ALPHABET[(n >> 12) & 63] + B64_ALPHABET[(n >> 6) & 63] + '='
+  }
+  return out
+}
+
+// ── attachment hardening (shared by the prod proxy + dev middleware) ─────────
+export const MAX_ATTACHMENTS = 5
+export const MAX_ATTACH_TOTAL_B64 = 8_000_000 // ~6MB of raw bytes across all attachments
+
+/** Keep only well-formed, base64, header-safe attachments within the size budget.
+ *  Malformed entries are dropped (never fatal), so a bad attachment can't block a send. */
+export function cleanAttachments(raw: unknown): EmailAttachment[] {
+  if (!Array.isArray(raw)) return []
+  const out: EmailAttachment[] = []
+  let total = 0
+  for (const a of raw) {
+    if (out.length >= MAX_ATTACHMENTS) break
+    if (!a || typeof a !== 'object') continue
+    const { filename, content, contentType } = a as Record<string, unknown>
+    if (typeof filename !== 'string' || typeof content !== 'string' || typeof contentType !== 'string') continue
+    if (!filename || !content || /[\r\n]/.test(filename) || /[\r\n]/.test(contentType)) continue
+    const compact = content.replace(/\s+/g, '')
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compact)) continue // must be clean base64
+    total += compact.length
+    if (total > MAX_ATTACH_TOTAL_B64) break
+    out.push({ filename, content: compact, contentType })
+  }
+  return out
 }
 
 // ── HTML email templates (email-client-safe) ────────────────────────────────

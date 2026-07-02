@@ -19,6 +19,7 @@ import { checkCronAuth, processPendingBatch, runWeeklyDigest } from './server/we
 import { sendRawEmail, type RawEmail } from './src/lib/email'
 import { reportId, reportUrl } from './server/reportStore'
 import { contentDispositionInline, REPORT_DL_PARAM } from './src/lib/reportName'
+import { cleanAttachments } from './src/lib/email'
 import { weeklyPdfBytes } from './src/lib/pdfRender'
 import { USER_HEADER, userKeyFrom } from './server/identity'
 import { resolveVideoId } from './server/resolveVideo'
@@ -58,6 +59,7 @@ function liveApiPlugin(config: {
   cronSecret?: string
   emailToken?: string
   siteUrl?: string
+  emailAttachments?: boolean
 }): Plugin {
   // Shared summary store for dev: a filesystem mirror of the prod KV namespace, so
   // a summary generated once is reused across reloads and across every browser that
@@ -151,14 +153,16 @@ function liveApiPlugin(config: {
       server.middlewares.use('/api/email/send', async (req, res) => {
         if (req.method !== 'POST') return json(res, 405, { ok: false, message: 'method_not_allowed' })
         try {
-          const b = JSON.parse((await readBody(req)) || '{}') as { to?: string; subject?: string; text?: string; html?: string }
+          const b = JSON.parse((await readBody(req)) || '{}') as { to?: string; subject?: string; text?: string; html?: string; attachments?: unknown }
           const to = (b.to ?? '').trim()
           const text = typeof b.text === 'string' ? b.text : undefined
           const html = typeof b.html === 'string' ? b.html : undefined
           // Same recipient hardening as prod: one valid address, no header-injection newlines.
           if (!/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(to) || /[\r\n]/.test(to)) return json(res, 400, { ok: false, message: 'A valid recipient email is required.' })
           if (!b.subject || /[\r\n]/.test(b.subject) || !!text === !!html) return json(res, 400, { ok: false, message: 'A subject and exactly one of text or html are required.' })
-          const msg: RawEmail = html ? { email: to, subject: b.subject, html } : { email: to, subject: b.subject, text: text as string }
+          const attachments = config.emailAttachments ? cleanAttachments(b.attachments) : []
+          const base = { email: to, subject: b.subject, ...(attachments.length ? { attachments } : {}) }
+          const msg: RawEmail = html ? { ...base, html } : { ...base, text: text as string }
           const result = await sendRawEmail(msg, { token: config.emailToken })
           json(res, result.ok ? 200 : 502, result)
         } catch {
@@ -221,6 +225,7 @@ function liveApiPlugin(config: {
             summarizeConfig: { ...config, store },
             generatePdf: (weekly, episodeById, podcastById) => weeklyPdfBytes(weekly, episodeById, podcastById),
             storePdf: async (bytes, downloadName) => reportUrl(originFor(req), await devReportStore.put(bytes), downloadName),
+            attachPdf: !!config.emailAttachments,
           })
           json(res, result.status, { ...result.body, batch })
         } catch (e) {
@@ -294,6 +299,7 @@ export default defineConfig(({ mode }) => {
     cronSecret: pick('CRON_SECRET') || undefined, // guards /api/cron/weekly-digest (open locally if unset)
     emailToken: pick('MUNSHOT_EMAIL_TOKEN') || undefined, // service token for server-side sends
     siteUrl: pick('SITE_URL') || undefined, // absolute origin for hosted-PDF links
+    emailAttachments: pick('EMAIL_ATTACHMENTS') === '1', // attach the weekly PDF (endpoint must support it)
   }
 
   return {

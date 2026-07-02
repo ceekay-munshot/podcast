@@ -1,7 +1,7 @@
 import type { Episode, Podcast, Summary, WeeklySummary } from '../src/lib/types'
 import { PODCASTS } from '../src/lib/mock-data'
 import { assembleWeekly, buildCitations, buildWeeklySources, hashKey, mergeWeeklyAi } from '../src/lib/weeklyAssemble'
-import { weeklyBriefEmailHtml } from '../src/lib/email'
+import { weeklyBriefEmailHtml, bytesToBase64, type EmailAttachment } from '../src/lib/email'
 import { weeklyReportFilename, weeklyReportTitle } from '../src/lib/reportName'
 import { summarizeEpisode, synthesizeWeekly, type SummarizeConfig } from './summarize'
 import type { SummaryStore } from './summaryStore'
@@ -112,7 +112,7 @@ export interface DigestDeps {
   summaryStore?: SummaryStore
   subscriberStore: SubscriberStore | null
   /** Sends one email; returns whether it went out. Injected so tests don't hit the wire. */
-  sendEmail: (msg: { email: string; subject: string; html: string }) => Promise<{ ok: boolean; message: string }>
+  sendEmail: (msg: { email: string; subject: string; html: string; attachments?: EmailAttachment[] }) => Promise<{ ok: boolean; message: string }>
   /** LLM config for the cross-episode synthesis. When present (a key is set), the
    *  emailed edition gets the SAME Guidepoint AI layer as the on-screen one; absent,
    *  it falls back to the deterministic base. */
@@ -123,6 +123,10 @@ export interface DigestDeps {
   /** Store the rendered PDF and return its hosted URL (the brief's download link).
    *  `downloadName` is the filename the link should save as (e.g. the dated brand name). */
   storePdf?: (bytes: ArrayBuffer, downloadName?: string) => Promise<string>
+  /** Attach the rendered PDF to each email (in ADDITION to the hosted link). Gated so
+   *  it only turns on once the send endpoint supports attachments (EMAIL_ATTACHMENTS).
+   *  Requires `generatePdf`; a render failure silently falls back to the link only. */
+  attachPdf?: boolean
   /** Summarise one not-yet-processed episode and return its summary (writing it to
    *  the shared store). Powers the pre-send backfill. Injected so tests don't hit the
    *  wire; in production it is derived from `summarizeConfig` when omitted. */
@@ -229,25 +233,32 @@ export async function runWeeklyDigest(deps: DigestDeps): Promise<{ status: numbe
   }
   const episodeById = (id: string): Episode | undefined => ready.find((e) => e.id === id)
 
-  // Generate + host the PDF once per edition (reused across every subscriber), then
-  // link it from the brief. Best-effort: a render/store failure just drops the link.
+  // Render the PDF ONCE per edition, then reuse those bytes for BOTH the hosted
+  // download link and (when enabled) the email attachment. Best-effort throughout: a
+  // render/store failure just drops the link/attachment, never the send.
+  const fileName = weeklyReportFilename(weekly.rangeLabel)
   let pdfUrl: string | undefined
-  if (deps.generatePdf && deps.storePdf) {
+  let pdfBytes: ArrayBuffer | undefined
+  if (deps.generatePdf) {
     try {
-      const bytes = await deps.generatePdf(weekly, episodeById, podcastById)
-      pdfUrl = await deps.storePdf(bytes, weeklyReportFilename(weekly.rangeLabel))
+      pdfBytes = await deps.generatePdf(weekly, episodeById, podcastById)
+      if (deps.storePdf) pdfUrl = await deps.storePdf(pdfBytes, fileName)
     } catch {
+      pdfBytes = undefined
       pdfUrl = undefined
     }
   }
 
   const html = weeklyBriefEmailHtml(weekly, episodeById, podcastById, { pdfUrl })
   const subject = weeklyReportTitle(weekly.rangeLabel)
+  // Attach the same bytes when enabled; encoded once and shared across all recipients.
+  const attachments: EmailAttachment[] | undefined =
+    deps.attachPdf && pdfBytes ? [{ filename: fileName, content: bytesToBase64(pdfBytes), contentType: 'application/pdf' }] : undefined
 
   let sent = 0
   let failed = 0
   for (const sub of subscribers) {
-    const res = await deps.sendEmail({ email: sub.email, subject, html })
+    const res = await deps.sendEmail({ email: sub.email, subject, html, ...(attachments ? { attachments } : {}) })
     if (res.ok) sent++
     else failed++
   }

@@ -30,6 +30,10 @@ interface CronEnv {
   // The deployed origin (e.g. https://podcast-afg.pages.dev) — required to build an
   // absolute, click-from-an-inbox link to the hosted PDF (a cron has no request).
   SITE_URL?: string
+  // Set to "1" to ALSO attach the weekly PDF to each brief (not just link it). Leave
+  // unset until the raw-email endpoint accepts an `attachments` field — otherwise the
+  // extra field is simply never sent.
+  EMAIL_ATTACHMENTS?: string
 }
 
 const json = (status: number, body: unknown): Response =>
@@ -69,6 +73,7 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
     // Host the PDF only when we can build an absolute link to it (KV + SITE_URL).
     const reportStore = env.SUMMARIES && env.SITE_URL ? kvReportStore(env.SUMMARIES) : null
     const siteUrl = env.SITE_URL
+    const attachPdf = env.EMAIL_ATTACHMENTS === '1'
     const result = await runWeeklyDigest({
       getEpisodes: getLiveEpisodes,
       summaryStore,
@@ -76,12 +81,17 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
       // No browser session server-side, so authenticate the send with the service token.
       sendEmail: (msg) => sendRawEmail(msg, { token: env.MUNSHOT_EMAIL_TOKEN }),
       summarizeConfig,
+      // Render the PDF when it will be used: hosted as a link (needs KV + origin) and/or
+      // attached to the email (needs only the bytes).
       ...(reportStore && siteUrl
         ? {
             generatePdf: (weekly, episodeById, podcastById) => weeklyPdfBytes(weekly, episodeById, podcastById),
             storePdf: async (bytes, downloadName) => reportUrl(siteUrl, await reportStore.put(bytes), downloadName),
           }
-        : {}),
+        : attachPdf
+          ? { generatePdf: (weekly, episodeById, podcastById) => weeklyPdfBytes(weekly, episodeById, podcastById) }
+          : {}),
+      attachPdf,
     })
     // Claim this week's slot only once an edition was actually built + mailed, so a
     // later tick the same day won't re-send; a skip (no subscribers / no ready

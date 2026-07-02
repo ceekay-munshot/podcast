@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { episodeBriefEmailHtml, sendRawEmail, welcomeEmailHtml, weeklyBriefEmailHtml } from './email'
+import { episodeBriefEmailHtml, sendRawEmail, welcomeEmailHtml, weeklyBriefEmailHtml, bytesToBase64, cleanAttachments } from './email'
 import { EPISODES, PODCASTS, WEEKLY } from './mock-data'
+
+const buf = (s: string) => new Uint8Array([...s].map((c) => c.charCodeAt(0))).buffer
 
 const episodeById = (id: string) => EPISODES.find((e) => e.id === id)
 const podcastById = (id: string) => PODCASTS.find((p) => p.id === id)
@@ -63,6 +65,63 @@ describe('sendRawEmail — contract + transport', () => {
     const res = await sendRawEmail({ email: 'a@b.com', subject: 'Hi', text: 'B' })
     expect(res.ok).toBe(false)
     expect(res.message).toMatch(/couldn't reach/i)
+  })
+
+  it('includes attachments in the body when provided', async () => {
+    fetchMock.mockResolvedValue(ok())
+    const attachments = [{ filename: 'Munshot AI Podcasts.pdf', content: 'TWFu', contentType: 'application/pdf' }]
+    await sendRawEmail({ email: 'a@b.com', subject: 'S', html: '<p>h</p>', attachments })
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)
+    expect(body.attachments).toEqual(attachments)
+  })
+
+  it('omits the attachments key when empty — byte-for-byte the historical contract', async () => {
+    fetchMock.mockResolvedValue(ok())
+    await sendRawEmail({ email: 'a@b.com', subject: 'S', text: 'T', attachments: [] })
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)
+    expect('attachments' in body).toBe(false)
+    expect(body).toEqual({ email: 'a@b.com', subject: 'S', text: 'T' })
+  })
+})
+
+describe('bytesToBase64', () => {
+  it('encodes with correct padding for every remainder', () => {
+    expect(bytesToBase64(buf(''))).toBe('')
+    expect(bytesToBase64(buf('M'))).toBe('TQ==') // 1 byte → 2 pad
+    expect(bytesToBase64(buf('Ma'))).toBe('TWE=') // 2 bytes → 1 pad
+    expect(bytesToBase64(buf('Man'))).toBe('TWFu') // 3 bytes → none
+    expect(bytesToBase64(buf('Munshot'))).toBe('TXVuc2hvdA==')
+  })
+
+  it('handles high bytes (round-trips through atob)', () => {
+    const bytes = new Uint8Array([0x00, 0xff, 0x80, 0x7f, 0x25]).buffer
+    const b64 = bytesToBase64(bytes)
+    const back = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+    expect([...back]).toEqual([0x00, 0xff, 0x80, 0x7f, 0x25])
+  })
+})
+
+describe('cleanAttachments — hardening', () => {
+  const a = (over: Record<string, unknown> = {}) => ({ filename: 'f.pdf', content: 'TWFu', contentType: 'application/pdf', ...over })
+
+  it('returns [] for non-arrays', () => {
+    expect(cleanAttachments(undefined)).toEqual([])
+    expect(cleanAttachments('nope')).toEqual([])
+  })
+
+  it('keeps valid entries and strips whitespace from base64 content', () => {
+    expect(cleanAttachments([a({ content: 'TW\nFu ' })])).toEqual([a({ content: 'TWFu' })])
+  })
+
+  it('drops entries missing fields, with CRLF in filename/type, or non-base64 content', () => {
+    expect(cleanAttachments([{ filename: 'f', content: 'TWFu' }])).toEqual([]) // no contentType
+    expect(cleanAttachments([a({ filename: 'a\nb' })])).toEqual([])
+    expect(cleanAttachments([a({ contentType: 'x\r\ny' })])).toEqual([])
+    expect(cleanAttachments([a({ content: 'not base64!' })])).toEqual([])
+  })
+
+  it('caps the number of attachments at 5', () => {
+    expect(cleanAttachments(Array.from({ length: 8 }, () => a()))).toHaveLength(5)
   })
 })
 
