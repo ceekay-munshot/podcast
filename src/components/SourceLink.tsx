@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Episode, Podcast } from '../lib/types'
 import { resolveVideo } from '../lib/api'
-import { episodeSourceUrl, sourceLabel, youtubeVideoId } from '../lib/source'
+import { sourceTarget, youtubeVideoId, type SourceMarkKind } from '../lib/source'
 import { Icon } from './Icon'
 
 interface SourceLinkProps {
@@ -13,16 +13,17 @@ interface SourceLinkProps {
   className?: string
 }
 
-// Branded "Listen on Apple Podcasts" / "Watch on YouTube" entry point. YouTube
-// shows ALWAYS play in the in-app modal (YouTube's /embed/ endpoint is built
-// for iframes): navigating to youtube.com breaks when the app itself runs
+// Entry point to the episode at its origin, branded for wherever the link
+// actually goes (see sourceTarget): Apple, YouTube, or the publisher's own site.
+// YouTube shows ALWAYS play in the in-app modal (YouTube's /embed/ endpoint is
+// built for iframes): navigating to youtube.com breaks when the app itself runs
 // inside an embedded/sandboxed context — popups inherit the sandbox and the
 // tab dies with ERR_BLOCKED_BY_RESPONSE. Episodes with a direct video link
 // play immediately; RSS-fed ones (e.g. All-In) resolve their id on open via
-// /api/resolve-video. Apple links keep the plain new-tab anchor.
+// /api/resolve-video. Every other destination keeps the plain new-tab anchor.
 export function SourceLink({ episode, podcast, variant = 'button', className = '' }: SourceLinkProps) {
-  const href = episodeSourceUrl(episode, podcast)
-  const label = sourceLabel(podcast)
+  const target = sourceTarget(episode, podcast)
+  const { href, label } = target
   const youtube = podcast?.source === 'youtube'
   const videoId = youtube ? youtubeVideoId(episode) : null
   const [open, setOpen] = useState(false)
@@ -51,7 +52,7 @@ export function SourceLink({ episode, podcast, variant = 'button', className = '
             aria-haspopup="dialog"
             className={`press grid h-8 w-8 shrink-0 place-items-center rounded-lg hover:bg-surface-container ${className}`}
           >
-            <SourceMark youtube={youtube} size={18} />
+            <SourceMark mark={target.mark} audio={!!episode.audioUrl} size={18} />
           </button>
         ) : (
           <a
@@ -63,7 +64,7 @@ export function SourceLink({ episode, podcast, variant = 'button', className = '
             aria-label={label}
             className={`press grid h-8 w-8 shrink-0 place-items-center rounded-lg hover:bg-surface-container ${className}`}
           >
-            <SourceMark youtube={youtube} size={18} />
+            <SourceMark mark={target.mark} audio={!!episode.audioUrl} size={18} />
           </a>
         )}
         {player}
@@ -83,12 +84,12 @@ export function SourceLink({ episode, podcast, variant = 'button', className = '
           aria-haspopup="dialog"
           className={pillClass}
         >
-          <SourceMark youtube={youtube} size={22} />
+          <SourceMark mark={target.mark} audio={!!episode.audioUrl} size={22} />
           {label}
         </button>
       ) : (
         <a href={href} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className={pillClass}>
-          <SourceMark youtube={youtube} size={22} />
+          <SourceMark mark={target.mark} audio={!!episode.audioUrl} size={22} />
           {label}
         </a>
       )}
@@ -209,7 +210,7 @@ function WatchModal({
           ) : (
             <div className="grid h-full w-full place-items-center">
               <div className="animate-pulse flex flex-col items-center gap-2.5">
-                <SourceMark youtube size={34} />
+                <SourceMark mark="youtube" size={34} />
                 <p className="text-metadata font-medium text-white/70">Finding this episode on YouTube…</p>
               </div>
             </div>
@@ -221,10 +222,13 @@ function WatchModal({
   )
 }
 
-// Recognisable platform mark: Apple Podcasts (purple gradient + mic) or
-// YouTube (red rounded-rect + play). Drawn as SVG so it stays crisp at any size.
-function SourceMark({ youtube, size }: { youtube: boolean; size: number }) {
-  if (youtube) {
+// Mark for wherever the link goes: Apple Podcasts (purple gradient + mic),
+// YouTube (red rounded-rect + play), or — for a publisher's own site — a
+// neutral slate tile carrying a waveform (audio) or text lines (a written
+// piece). Same silhouette and weight across all three so a mixed list reads
+// evenly. Drawn as SVG so it stays crisp at any size.
+function SourceMark({ mark, audio = false, size }: { mark: SourceMarkKind; audio?: boolean; size: number }) {
+  if (mark === 'youtube') {
     return (
       <span
         className="grid shrink-0 place-items-center rounded-[5px]"
@@ -232,6 +236,30 @@ function SourceMark({ youtube, size }: { youtube: boolean; size: number }) {
       >
         <svg width={size * 0.5} height={size * 0.5} viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
           <path d="M8 5v14l11-7z" />
+        </svg>
+      </span>
+    )
+  }
+  if (mark === 'web') {
+    return (
+      <span
+        className="grid shrink-0 place-items-center rounded-[6px]"
+        style={{ width: size, height: size, background: 'linear-gradient(150deg, #64748b 0%, #475569 45%, #1e293b 100%)' }}
+      >
+        <svg width={size * 0.6} height={size * 0.6} viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
+          {audio ? (
+            // Waveform — five bars, legible down to ~11px.
+            [7, 13, 18, 11, 6].map((h, i) => (
+              <rect key={i} x={2.4 + i * 4.2} y={(24 - h) / 2} width="2.4" height={h} rx="1.2" />
+            ))
+          ) : (
+            // Text lines — a written dispatch (Sources et al).
+            <>
+              <rect x="4" y="6.2" width="16" height="2.6" rx="1.3" />
+              <rect x="4" y="11.2" width="16" height="2.6" rx="1.3" />
+              <rect x="4" y="16.2" width="11" height="2.6" rx="1.3" />
+            </>
+          )}
         </svg>
       </span>
     )
