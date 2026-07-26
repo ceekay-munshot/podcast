@@ -127,6 +127,24 @@ export const PODCASTS: Podcast[] = [
     feedUrl: 'https://feeds.transistor.fm/cheeky-pint-with-john-collison',
     tracked: true,
   },
+  {
+    id: 'sources',
+    title: 'Sources',
+    author: 'Alex Heath',
+    category: 'AI · Tech',
+    description: `Exclusive reporting on the AI race — the labs, the deals, and the people behind them, from the reporter who broke most of them.`,
+    cadence: '3–4 / week',
+    episodeCount: 100,
+    source: 'podcast',
+    // Substack's transparent @-eye mark: the brand color shows THROUGH it, so this
+    // has to stay light enough for a black glyph to read (see CoverTile).
+    color: '#ff6719',
+    monogram: 'SO',
+    artworkUrl:
+      'https://substackcdn.com/image/fetch/$s_!s0YI!,w_600,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F1f002c1d-85fe-4b4b-813f-2ea6e9242782_256x256.png',
+    feedUrl: 'https://sources.news/feed',
+    tracked: true,
+  },
   // ── Discover suggestions (not yet tracked) ──────────────────────────────────
   {
     id: 'access',

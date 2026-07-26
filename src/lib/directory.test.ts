@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { formatDuration } from './format'
 import { isPublicHttpUrl } from '../../server/safeUrl'
-import { parseAtomEntries } from '../../server/feeds'
+import { audioEnclosure, parseAtomEntries, parseEpisodes } from '../../server/feeds'
 import { youtubePlaylistId } from '../../server/search'
 
 // The SSRF guard is the security boundary for every user-supplied URL we fetch
@@ -118,6 +119,136 @@ describe('parseAtomEntries (YouTube)', () => {
 
   it('returns [] for a feed with no entries', () => {
     expect(parseAtomEntries('<feed><title>Empty</title></feed>', 'yt-x')).toEqual([])
+  })
+})
+
+// `<enclosure>` is not an audio-only tag. Substack-hosted feeds (Sources) enclose
+// a hero image on every written post, and an untyped read would send that JPEG to
+// Whisper — a real download + upload, then a guaranteed failure.
+describe('audioEnclosure', () => {
+  it('takes an audio enclosure by declared MIME type', () => {
+    expect(audioEnclosure('<item><enclosure url="https://cdn.example.com/ep1.mp3" length="0" type="audio/mpeg"/></item>')).toBe(
+      'https://cdn.example.com/ep1.mp3',
+    )
+  })
+
+  it('ignores image and video enclosures', () => {
+    expect(audioEnclosure('<item><enclosure url="https://cdn.example.com/hero.jpeg" length="0" type="image/jpeg"/></item>')).toBe('')
+    expect(audioEnclosure('<item><enclosure url="https://cdn.example.com/clip.mp4" type="video/mp4"/></item>')).toBe('')
+  })
+
+  it('picks the audio one when an item carries both', () => {
+    expect(
+      audioEnclosure(
+        '<item><enclosure url="https://cdn.example.com/hero.jpg" type="image/jpeg"/><enclosure url="https://cdn.example.com/ep.m4a" type="audio/x-m4a"/></item>',
+      ),
+    ).toBe('https://cdn.example.com/ep.m4a')
+  })
+
+  it('falls back to the file extension when the feed omits `type`', () => {
+    expect(audioEnclosure('<item><enclosure url="https://cdn.example.com/ep2.mp3?token=abc"/></item>')).toBe(
+      'https://cdn.example.com/ep2.mp3?token=abc',
+    )
+    expect(audioEnclosure('<item><enclosure url="https://cdn.example.com/hero.png"/></item>')).toBe('')
+  })
+
+  it('returns "" when there is no enclosure at all', () => {
+    expect(audioEnclosure('<item><title>No media</title></item>')).toBe('')
+  })
+})
+
+// Sources (sources.news) is a Substack: one RSS feed carrying mostly written
+// dispatches plus the occasional audio drop, with the editor's subtitle in
+// <description> and the piece itself in <content:encoded> — the inverse of a
+// normal podcast feed. Both shapes have to come out right.
+describe('parseEpisodes (RSS)', () => {
+  const substack = `<rss><channel>
+    <item>
+      <title><![CDATA[OpenAI closes the Simo chapter]]></title>
+      <description><![CDATA[A look back at Fidji Simo's brief, ambitious tenure.]]></description>
+      <link>https://sources.news/p/openai-closes-fidji-simo-chapter</link>
+      <guid isPermaLink="false">https://sources.news/p/openai-closes-fidji-simo-chapter</guid>
+      <pubDate>Fri, 10 Jul 2026 20:28:53 GMT</pubDate>
+      <enclosure url="https://substackcdn.com/image/fetch/hero.jpeg" length="0" type="image/jpeg"/>
+      <content:encoded><![CDATA[<p>Anyone closely following the reorg knows the real story is org structure, not the headline. ${'Reporting detail. '.repeat(20)}</p>]]></content:encoded>
+    </item>
+    <item>
+      <title><![CDATA[Subscriber Q&amp;A: Live @ Apple WWDC]]></title>
+      <description><![CDATA[Taking your questions from Cupertino.]]></description>
+      <link>https://sources.news/p/subscriber-q-and-a-live-apple-wwdc</link>
+      <pubDate>Tue, 09 Jun 2026 17:02:00 GMT</pubDate>
+      <enclosure url="https://api.substack.com/feed/podcast/201179474/6b70.mp3" length="0" type="audio/mpeg"/>
+    </item>
+  </channel></rss>`
+
+  it('keeps an image enclosure out of audioUrl', () => {
+    const [written] = parseEpisodes(substack, 'sources')
+    expect(written.audioUrl).toBeUndefined()
+    expect(written.sourceUrl).toBe('https://sources.news/p/openai-closes-fidji-simo-chapter')
+  })
+
+  it('summarises from <content:encoded> but teases from <description>', () => {
+    const [written] = parseEpisodes(substack, 'sources')
+    expect(written.notes).toContain('the real story is org structure')
+    expect(written.notes!.length).toBeGreaterThan(200)
+    // The blurb stays the hand-written précis, not the article's opening line.
+    expect(written.blurb).toBe(`A look back at Fidji Simo's brief, ambitious tenure.`)
+  })
+
+  it('still picks up the audio drops in the same feed', () => {
+    const audio = parseEpisodes(substack, 'sources')[1]
+    expect(audio.title).toBe('Subscriber Q&A: Live @ Apple WWDC')
+    expect(audio.audioUrl).toBe('https://api.substack.com/feed/podcast/201179474/6b70.mp3')
+  })
+
+  it('leaves an ordinary podcast feed unchanged — notes and blurb both from <description>', () => {
+    const notes = 'Full show notes. '.repeat(30)
+    const rss = `<rss><channel><item>
+      <title>Episode 12</title>
+      <description><![CDATA[${notes}]]></description>
+      <link>https://example.com/ep12</link>
+      <pubDate>Wed, 01 Jul 2026 09:00:00 GMT</pubDate>
+      <itunes:duration>1:02:03</itunes:duration>
+      <enclosure url="https://cdn.example.com/ep12.mp3" type="audio/mpeg"/>
+    </item></channel></rss>`
+    const [ep] = parseEpisodes(rss, 'demo')
+    expect(ep.audioUrl).toBe('https://cdn.example.com/ep12.mp3')
+    expect(ep.durationSec).toBe(3723)
+    expect(ep.notes).toContain('Full show notes.')
+    expect(ep.blurb.startsWith('Full show notes.')).toBe(true)
+    expect(ep.blurb.length).toBeLessThanOrEqual(201) // truncated + ellipsis
+  })
+
+  it('falls back to the audio URL for sourceUrl when the item has no <link>', () => {
+    const rss = `<rss><channel><item>
+      <title>Linkless</title>
+      <pubDate>Wed, 01 Jul 2026 09:00:00 GMT</pubDate>
+      <enclosure url="https://cdn.example.com/linkless.mp3" type="audio/mpeg"/>
+    </item></channel></rss>`
+    expect(parseEpisodes(rss, 'demo')[0].sourceUrl).toBe('https://cdn.example.com/linkless.mp3')
+  })
+
+  it('gives an image-only item no sourceUrl rather than pointing at the image', () => {
+    const rss = `<rss><channel><item>
+      <title>Linkless and imageful</title>
+      <pubDate>Wed, 01 Jul 2026 09:00:00 GMT</pubDate>
+      <enclosure url="https://cdn.example.com/hero.jpeg" type="image/jpeg"/>
+    </item></channel></rss>`
+    expect(parseEpisodes(rss, 'demo')[0].sourceUrl).toBeUndefined()
+  })
+})
+
+// Feeds that carry no <itunes:duration> (YouTube Atom, written Substack posts)
+// land as durationSec 0 — which must read as "unknown", not "zero minutes long".
+describe('formatDuration', () => {
+  it('renders known durations', () => {
+    expect(formatDuration(2520)).toBe('42m')
+    expect(formatDuration(6420)).toBe('1h 47m')
+    expect(formatDuration(3599)).toBe('1h 0m') // rounds minutes before splitting
+  })
+
+  it('renders an unknown duration as an em dash', () => {
+    for (const v of [0, -5, 20, NaN, Infinity]) expect(formatDuration(v), String(v)).toBe('—')
   })
 })
 

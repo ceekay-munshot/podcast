@@ -28,6 +28,9 @@ const SOURCES: Source[] = [
   { id: 'ingoodcompany', feedUrl: 'https://feeds.acast.com/public/shows/622618c7057f3400120d15db' },
   { id: 'acquired', feedUrl: 'https://feeds.transistor.fm/acquired' },
   { id: 'cheekypint', feedUrl: 'https://feeds.transistor.fm/cheeky-pint-with-john-collison' },
+  // Substack: one feed carries both the written dispatches and the occasional
+  // audio drop. Written items enclose a hero IMAGE, not audio — see audioEnclosure().
+  { id: 'sources', feedUrl: 'https://sources.news/feed' },
   { id: 'access', feedUrl: null }, // no resolvable public feed
   { id: 'bg2', feedUrl: 'https://anchor.fm/s/f06c2370/podcast/rss' },
   { id: 'lennys', feedUrl: 'https://api.substack.com/feed/podcast/10845.rss' },
@@ -99,6 +102,21 @@ function transcriptUrlFrom(block: string): string {
   return urlOf(srt || vtt || tags[0] || '')
 }
 
+// The item's AUDIO enclosure, or '' when it has none. `<enclosure>` is not
+// audio-only — Substack-hosted feeds enclose a hero image on every written post —
+// so an untyped read would hand a JPEG to Whisper (a real download + upload, then
+// a guaranteed failure). Trust the declared MIME type, falling back to the file
+// extension for the feeds that leave `type` off.
+export function audioEnclosure(block: string): string {
+  for (const tag of block.match(/<enclosure\b[^>]*>/gi) || []) {
+    const url = (tag.match(/\burl\s*=\s*["']([^"']+)["']/i)?.[1] || '').trim()
+    if (!url) continue
+    const type = tag.match(/\btype\s*=\s*["']([^"']+)["']/i)?.[1] || ''
+    if (type ? /^audio\//i.test(type) : /\.(mp3|m4a|aac|ogg|opus|wav|flac)(\?|#|$)/i.test(url)) return url
+  }
+  return ''
+}
+
 export function unwrapCdata(s: string): string {
   return s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').trim()
 }
@@ -156,7 +174,7 @@ export function hashKey(s: string): string {
   return (h >>> 0).toString(36)
 }
 
-function parseEpisodes(xml: string, podcastId: string): Episode[] {
+export function parseEpisodes(xml: string, podcastId: string): Episode[] {
   const blocks = [...xml.matchAll(/<item\b[\s\S]*?<\/item>/gi)].map((m) => m[0])
   const out: Episode[] = []
   for (const block of blocks) {
@@ -168,11 +186,17 @@ function parseEpisodes(xml: string, podcastId: string): Episode[] {
     const publishedAt = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString()
     // Decode entities on the URLs too — RSS routinely XML-escapes query separators
     // (`?a=1&amp;b=2`), and a literal "&amp;" in audioUrl makes the Whisper fetch 404.
-    const link = decodeEntities(unwrapCdata(innerTag(block, 'link')).trim() || attrOf(block, 'enclosure', 'url'))
-    const audioUrl = decodeEntities(attrOf(block, 'enclosure', 'url'))
+    const audioUrl = decodeEntities(audioEnclosure(block))
+    const link = decodeEntities(unwrapCdata(innerTag(block, 'link')).trim()) || audioUrl
     const guid = plainText(innerTag(block, 'guid'))
-    const description = innerTag(block, 'description') || innerTag(block, 'content:encoded')
-    const notes = plainText(description)
+    // Two fields, two jobs. Podcast feeds put the show notes in <description> and
+    // little or nothing in <content:encoded>; Substack inverts that — a one-line
+    // editor's subtitle in <description>, the written piece in <content:encoded>.
+    // So the teaser takes <description> when there is one (it's the hand-written
+    // précis) and the AI's material takes whichever field is actually longer.
+    const teaser = plainText(innerTag(block, 'description'))
+    const body = plainText(innerTag(block, 'content:encoded'))
+    const notes = body.length > teaser.length ? body : teaser
     // Stable id from the feed's own identifiers (guid → link → title+date) rather
     // than the item's position. The old positional index shifted every time a new
     // episode published, which would re-point a saved summary at the wrong episode.
@@ -185,7 +209,7 @@ function parseEpisodes(xml: string, podcastId: string): Episode[] {
       durationSec: parseDuration(innerTag(block, 'itunes:duration')),
       status: 'detected', // real episode found on the feed; AI summary not yet generated
       signal: 'normal',
-      blurb: truncate(notes, 200) || 'New episode — open the source to listen.',
+      blurb: truncate(teaser || notes, 200) || 'New episode — open the source to listen.',
       sourceUrl: link || undefined,
       notes: notes ? notes.slice(0, 2500) : undefined, // fallback material for the AI summary
       transcriptUrl: transcriptUrlFrom(block) || undefined, // free publisher transcript, when present

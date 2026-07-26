@@ -1,10 +1,15 @@
 import type { ProcessingStatus } from './types'
 
-/** 6420 → "1h 47m" · 2520 → "42m". */
+/** 6420 → "1h 47m" · 2520 → "42m" · unknown → "—". */
 export function formatDuration(totalSeconds: number): string {
   // Round to whole minutes FIRST, then split — rounding minutes independently of
   // the hour division produced "60m" (e.g. 3599s) and "1h 60m" (e.g. 7170s).
   const total = Number.isFinite(totalSeconds) ? Math.round(Math.max(0, totalSeconds) / 60) : 0
+  // 0 means "the feed didn't say", not "zero minutes long" — YouTube's Atom feed
+  // carries no duration, and neither do written Substack dispatches. Printing
+  // "0m" next to a clock states a length we don't have; "—" is the same
+  // unknown-marker the summary timestamps already use.
+  if (total <= 0) return '—'
   const h = Math.floor(total / 60)
   const m = total % 60
   return h > 0 ? `${h}h ${m}m` : `${m}m`
