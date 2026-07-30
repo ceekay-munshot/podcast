@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { formatDuration } from './format'
 import { isPublicHttpUrl } from '../../server/safeUrl'
 import { audioEnclosure, parseAtomEntries, parseEpisodes } from '../../server/feeds'
-import { youtubePlaylistId } from '../../server/search'
+import { advertisedFeedUrl, youtubePlaylistId } from '../../server/search'
 
 // The SSRF guard is the security boundary for every user-supplied URL we fetch
 // server-side (search input + /api/episodes?feed=). These are the cases the
@@ -249,6 +249,54 @@ describe('formatDuration', () => {
 
   it('renders an unknown duration as an em dash', () => {
     for (const v of [0, -5, 20, NaN, Infinity]) expect(formatDuration(v), String(v)).toBe('—')
+  })
+})
+
+// People paste the site, not the feed — it's what's in the address bar. Pasting
+// https://sources.news/ used to add a show whose feedUrl WAS that HTML page:
+// the page's <title> became the show name and no episode could ever load.
+describe('advertisedFeedUrl', () => {
+  it('absolutises a relative href against the page URL (Substack)', () => {
+    const html = `<head><title>Sources | Alex Heath | Substack</title>
+      <link rel="alternate" type="application/rss+xml" href="/feed" title="Sources"/></head>`
+    expect(advertisedFeedUrl(html, 'https://sources.news/')).toBe('https://sources.news/feed')
+  })
+
+  it('keeps an absolute href, and handles an entity-escaped one', () => {
+    expect(
+      advertisedFeedUrl('<link rel="alternate" type="application/rss+xml" href="https://cdn.example.com/f.rss"/>', 'https://example.com/blog'),
+    ).toBe('https://cdn.example.com/f.rss')
+    expect(
+      advertisedFeedUrl('<link rel="alternate" type="application/rss+xml" href="/f?a=1&amp;b=2"/>', 'https://example.com/blog/'),
+    ).toBe('https://example.com/f?a=1&b=2')
+  })
+
+  it('accepts atom and multi-token rel, and resolves a path-relative href', () => {
+    expect(advertisedFeedUrl('<link rel="alternate home" type="application/atom+xml" href="atom.xml"/>', 'https://example.com/blog/')).toBe(
+      'https://example.com/blog/atom.xml',
+    )
+  })
+
+  it('ignores link tags that are not feeds', () => {
+    for (const tag of [
+      '<link rel="stylesheet" href="/app.css"/>',
+      '<link rel="canonical" href="https://example.com/"/>',
+      '<link rel="alternate" type="text/html" href="/amp"/>',
+      '<link rel="alternate" hreflang="fr" href="/fr"/>',
+      '<link rel="alternate" type="application/rss+xml"/>', // no href
+    ]) {
+      expect(advertisedFeedUrl(tag, 'https://example.com/'), tag).toBeNull()
+    }
+  })
+
+  it('returns null for a page that advertises nothing', () => {
+    expect(advertisedFeedUrl('<html><head><title>No feed here</title></head></html>', 'https://example.com/')).toBeNull()
+  })
+
+  it('takes the first usable feed link when a page lists several', () => {
+    const html = `<link rel="alternate" type="application/rss+xml" href="/feed"/>
+      <link rel="alternate" type="application/rss+xml" href="/comments/feed"/>`
+    expect(advertisedFeedUrl(html, 'https://example.com/')).toBe('https://example.com/feed')
   })
 })
 

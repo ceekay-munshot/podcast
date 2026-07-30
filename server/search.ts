@@ -12,6 +12,7 @@ import { attrOf, decodeEntities, fetchFeedHead, hashKey, innerTag, plainText, un
 //   apple URL   → iTunes lookup by collection id (…/id123456)
 //   youtube URL → playlist URLs resolve to the playlist's videos.xml feed
 //                 (shows published as playlists); otherwise the channel's
+//   site URL    → follow the page's advertised <link rel="alternate"> to its feed
 //   rss URL     → accept the feed and read its channel metadata
 //
 // Every user-supplied URL (and the feedUrl a result carries) is validated by the
@@ -162,12 +163,48 @@ async function searchDirectory(term: string, limit = LIMIT): Promise<PodcastSear
 
 // ── Raw RSS feed URL ──────────────────────────────────────────────────────────
 
+/** A feed's document element. Anything without one is a web page, not a feed. */
+const FEED_ROOT = /<(?:rss|feed|rdf:RDF)[\s>]/i
+
+/** The feed a WEB PAGE advertises, absolutised against the page's own URL.
+ *  Pasting the site rather than the feed is the normal case — people copy what's
+ *  in the address bar — and essentially every publisher (Substack, WordPress,
+ *  Ghost) declares its feed in <head>. Substack's href is relative ("/feed"). */
+export function advertisedFeedUrl(html: string, pageUrl: string): string | null {
+  for (const tag of html.match(/<link\b[^>]*>/gi) || []) {
+    if (!/\brel\s*=\s*["']?[^"'>]*\balternate\b/i.test(tag)) continue
+    if (!/\btype\s*=\s*["']\s*application\/(?:rss|atom)\+xml\s*["']/i.test(tag)) continue
+    const href = tag.match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1]
+    if (!href) continue
+    try {
+      return new URL(decodeEntities(href).trim(), pageUrl).toString()
+    } catch {
+      /* unusable href — keep looking */
+    }
+  }
+  return null
+}
+
 // The channel-level <title> etc. — read AFTER stripping <item> blocks so an
 // episode's title isn't mistaken for the show title.
-async function resolveRssFeed(url: string): Promise<PodcastSearchResult[]> {
+//
+// `discover` guards the one hop from a web page to its feed. Without the
+// is-this-actually-a-feed check below, an HTML page sailed through: its <title>
+// became the show name ("Sources | Alex Heath | Substack") and the PAGE URL
+// became feedUrl, so the show was added but could never yield an episode —
+// parseEpisodes finds no <item> in HTML.
+async function resolveRssFeed(url: string, discover = true): Promise<PodcastSearchResult[]> {
   if (!isPublicHttpUrl(url)) return []
   const xml = await fetchFeedHead(url, 200_000)
   if (!xml) return []
+  if (!FEED_ROOT.test(xml)) {
+    // No feed root. Follow the page's advertised feed exactly once (the hop is
+    // re-validated by the SSRF guard on re-entry), and only fall back to
+    // treating this as a feed if it at least carries items.
+    const advertised = discover ? advertisedFeedUrl(xml, url) : null
+    if (advertised && advertised !== url) return resolveRssFeed(advertised, false)
+    if (!/<(?:item|entry)[\s>]/i.test(xml)) return []
+  }
   const head = xml.replace(/<item\b[\s\S]*?<\/item>/gi, '')
   const title = decodeEntities(unwrapCdata(innerTag(head, 'title'))).trim()
   if (!title) return []
