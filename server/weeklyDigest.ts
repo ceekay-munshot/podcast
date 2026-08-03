@@ -3,7 +3,7 @@ import { PODCASTS } from '../src/lib/mock-data'
 import { assembleWeekly, buildCitations, buildWeeklySources, hashKey, mergeWeeklyAi } from '../src/lib/weeklyAssemble'
 import { weeklyBriefEmailHtml, bytesToBase64, type EmailAttachment } from '../src/lib/email'
 import { weeklyReportFilename, weeklyReportTitle } from '../src/lib/reportName'
-import { summarizeEpisode, synthesizeWeekly, type SummarizeConfig } from './summarize'
+import { hasLlmKey, summarizeEpisode, synthesizeWeekly, type SummarizeConfig } from './summarize'
 import type { SummaryStore } from './summaryStore'
 import type { SubscriberStore } from './subscriberStore'
 
@@ -95,7 +95,7 @@ export function pickPendingThisWeek(episodes: Episode[], now: number): Episode[]
  *  publisher transcript when the feed carries one, else the show-notes — keeping the
  *  Monday run fast and bounded instead of transcribing a dozen full episodes inline. */
 export function makeEpisodeProcessor(cfg: SummarizeConfig | undefined): ((ep: Episode) => Promise<Summary | null>) | undefined {
-  if (!cfg || (!cfg.openaiKey && !cfg.anthropicKey)) return undefined
+  if (!cfg || !hasLlmKey(cfg)) return undefined
   return async (ep) => {
     const show = PODCASTS.find((p) => p.id === ep.podcastId)?.title ?? ep.podcastId
     const res = await summarizeEpisode(

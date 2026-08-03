@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 import path from 'node:path'
 import { episodesForFeed, getLiveEpisodes, SEED_IDS } from './server/feeds'
 import { searchPodcasts } from './server/search'
-import { summarizeEpisode, synthesizeWeekly } from './server/summarize'
+import { hasLlmKey, summarizeEpisode, synthesizeWeekly } from './server/summarize'
 import { fileSummaryStore } from './server/summaryStore.node'
 import { handleChannels } from './server/channelStore'
 import { fileChannelStore } from './server/channelStore.node'
@@ -60,6 +60,10 @@ function liveApiPlugin(config: {
   emailToken?: string
   siteUrl?: string
   emailAttachments?: boolean
+  llmProvider?: string
+  bedrockKey?: string
+  bedrockModel?: string
+  bedrockRegion?: string
 }): Plugin {
   // Shared summary store for dev: a filesystem mirror of the prod KV namespace, so
   // a summary generated once is reused across reloads and across every browser that
@@ -267,7 +271,7 @@ function liveApiPlugin(config: {
 
       server.middlewares.use('/api/summary', async (req, res) => {
         if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' })
-        if (!config.openaiKey && !config.anthropicKey) return json(res, 503, { error: 'no_api_key' })
+        if (!hasLlmKey(config)) return json(res, 503, { error: 'no_api_key' })
         try {
           const input = JSON.parse((await readBody(req)) || '{}')
           if (input.mode === 'weekly') {
@@ -300,6 +304,11 @@ export default defineConfig(({ mode }) => {
     emailToken: pick('MUNSHOT_EMAIL_TOKEN') || undefined, // service token for server-side sends
     siteUrl: pick('SITE_URL') || undefined, // absolute origin for hosted-PDF links
     emailAttachments: pick('EMAIL_ATTACHMENTS') === '1', // attach the weekly PDF (endpoint must support it)
+    // Opt-in Claude-via-Bedrock path (server/bedrock.ts) — mirrors the Pages Functions.
+    llmProvider: pick('LLM_PROVIDER') || undefined,
+    bedrockKey: pick('temp_claude_token') || undefined,
+    bedrockModel: pick('BEDROCK_MODEL_ID') || undefined,
+    bedrockRegion: pick('BEDROCK_REGION') || undefined,
   }
 
   return {
