@@ -146,6 +146,43 @@ describe('summarizeEpisode — ideas extraction', () => {
   })
 })
 
+describe('summarizeEpisode — Claude-via-Bedrock opt-in path', () => {
+  const minimalArgs = { synthesis: ['point'], qa: [], highlights: [], tone: { overall: 'neutral', rationale: 'r', aspects: [] } }
+  const bedrockLLM = () => ({ ok: true, json: async () => ({ output: { message: { content: [{ toolUse: { name: 'emit_summary', input: minimalArgs } }] } } }) })
+
+  it('stays on OpenAI when both an openaiKey and a bedrockKey are present but LLM_PROVIDER is unset (default)', async () => {
+    fetchMock.mockResolvedValueOnce(okLLM())
+    await summarizeEpisode(
+      { id: 'live-toggle-default', title: 'T', show: 'S', notes: 'n' },
+      { openaiKey: 'sk-test', bedrockKey: 'bedrock-key', store: memStore() },
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.openai.com/v1/chat/completions') // untouched default
+  })
+
+  it('routes to Bedrock only when LLM_PROVIDER=claude AND a bedrockKey is set, producing the same result shape', async () => {
+    fetchMock.mockResolvedValueOnce(bedrockLLM())
+    const result = await summarizeEpisode(
+      { id: 'live-toggle-claude', title: 'T', show: 'S', notes: 'n' },
+      { openaiKey: 'sk-test', llmProvider: 'claude', bedrockKey: 'bedrock-key', store: memStore() },
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0][0])).toContain('bedrock-runtime')
+    expect(result).toHaveProperty('summary')
+    expect(result).toHaveProperty('transcript')
+    expect(result.summary.synthesis).toEqual(['point']) // same normalize() pipeline, same output shape
+  })
+
+  it('falls back to the untouched openai/anthropic selection when LLM_PROVIDER=claude but no bedrockKey is set', async () => {
+    fetchMock.mockResolvedValueOnce(okLLM())
+    await summarizeEpisode(
+      { id: 'live-toggle-nokey', title: 'T', show: 'S', notes: 'n' },
+      { openaiKey: 'sk-test', llmProvider: 'claude', store: memStore() },
+    )
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.openai.com/v1/chat/completions')
+  })
+})
+
 describe('summarizeEpisode — investable insight + quant extraction', () => {
   it('passes through a valid insight and drops malformed parties / questions', async () => {
     fetchMock.mockResolvedValueOnce(
