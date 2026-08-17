@@ -31,6 +31,17 @@ export type FeedAccess = 'open' | 'partial' | 'private' | 'paid' | 'closed'
  *  trackable, so they can't imply analyzable content. */
 export const UNFETCHABLE_ACCESS: readonly FeedAccess[] = ['paid', 'closed']
 
+/** One feed behind a show. A show published in several places (a members-only
+ *  audio feed, a free YouTube channel, an article RSS) carries several of these
+ *  and is ingested as ONE pooled show — see src/lib/pool.ts. */
+export interface PodcastFeed {
+  feedUrl: string
+  /** How much of the show THIS feed carries. Absent = 'open'. */
+  access?: FeedAccess
+  /** Short human label for the source, e.g. "YouTube", "Articles", "Member feed". */
+  label?: string
+}
+
 export interface Podcast {
   id: string
   title: string
@@ -47,8 +58,13 @@ export interface Podcast {
   /** Real cover art (square). When absent, the UI falls back to color + monogram. */
   artworkUrl?: string
   /** Canonical RSS/Atom feed. Set for user-added shows (carried from search so
-   *  their episodes can be detected); seed shows keep their feeds server-side. */
+   *  their episodes can be detected); seed shows keep their feeds server-side.
+   *  When `feeds` is set this is its first entry — the primary. */
   feedUrl?: string
+  /** Every feed this show publishes to, when it publishes to more than one. All of
+   *  them are fetched and merged into a single de-duplicated episode list, so the
+   *  user sees one show rather than three near-identical ones. */
+  feeds?: PodcastFeed[]
   tracked: boolean
   /** No public feed → episodes can't be ingested or transcribed. Rendered as a
    *  locked show; its episodes are suppressed so users never see fabricated data.
@@ -61,9 +77,12 @@ export interface Podcast {
   /** The human page behind the source (Spotify show, YouTube channel, publisher
    *  site) — the only link a paywalled show can offer, having no feed. */
   webUrl?: string
-  /** Where a subscriber copies their own private member feed from. Set only on a
-   *  paywalled show, whose paid episodes that feed is the only route to. */
+  /** Where a subscriber copies their own private member feed from. Set while the
+   *  show's paid episodes are still out of reach — that feed is the only route in. */
   memberFeedPage?: string
+  /** What exactly is behind the paywall, for the Discover notice. Set only while
+   *  part of the show can't be fetched. */
+  paidNote?: string
 }
 
 /** A directory search hit (Apple Podcasts / resolved RSS / YouTube channel).
@@ -76,10 +95,15 @@ export interface PodcastSearchResult {
   category: string
   description: string
   artworkUrl?: string
-  /** '' when the source has no feed to fetch (a paywalled or exclusive platform). */
+  /** '' when the source has no feed to fetch (a paywalled or exclusive platform).
+   *  When `feeds` is set this is its first entry — the primary. */
   feedUrl: string
   source: SourceKind
-  /** How much of this source we can ingest. Absent = 'open' (a plain public feed). */
+  /** Every feed behind this result, for a show published in several places. Tracking
+   *  it pools them into one de-duplicated episode list. */
+  feeds?: PodcastFeed[]
+  /** How much of this source we can ingest. Absent = 'open' (a plain public feed).
+   *  For a pooled result, the state of the WHOLE pool. */
   access?: FeedAccess
   /** One honest line about the access state, shown on the Discover card. */
   accessNote?: string
@@ -87,6 +111,8 @@ export interface PodcastSearchResult {
   webUrl?: string
   /** Where a subscriber copies their own private member feed from (paywalled results). */
   memberFeedPage?: string
+  /** What exactly is behind the paywall, for the Discover notice. */
+  paidNote?: string
 }
 
 /** A plain conclusion — title + supporting detail. Used by the weekly digest,
@@ -255,6 +281,10 @@ export interface Episode {
   transcriptUrl?: string
   /** Audio enclosure URL — source for Whisper transcription (paid/free-tier providers). */
   audioUrl?: string
+  /** For an episode pooled from several of a show's feeds: the labels that carried
+   *  it, in feed order (e.g. ["Member feed", "YouTube"]). Absent for a single-feed
+   *  show — there is nothing to disclose. */
+  sources?: string[]
   entities: EpisodeEntities
   /** Present once status === 'ready'. */
   summary?: Summary

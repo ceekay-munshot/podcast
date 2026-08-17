@@ -1,5 +1,5 @@
-import { stableHash } from './hash'
-import type { FeedAccess, PodcastSearchResult, SourceKind } from './types'
+import { mergeFeeds } from './pool'
+import type { FeedAccess, PodcastFeed, PodcastSearchResult, SourceKind } from './types'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Known paywalled shows + the sources we CAN actually ingest for them.
@@ -13,54 +13,54 @@ import type { FeedAccess, PodcastSearchResult, SourceKind } from './types'
 // So for the handful of shows the customer actually subscribes to, we record —
 // by hand, each URL verified — what is paid, what is free, and where the member
 // feed comes from. Every entry answers three questions honestly:
-//   • which source is behind a paywall (→ rendered as a locked card, never as
+//   • which of the show's sources is behind a paywall (→ never presented as
 //     something we can summarize),
-//   • which sources we can fetch today (→ trackable straight from Discover),
+//   • which we can fetch today (→ pooled into ONE trackable show),
 //   • where the subscriber copies their OWN private feed from, since that is the
 //     only way the paid episodes become reachable.
+//
+// One show, one card, one episode list. The show ships the same instalment as
+// members-only audio, a free video and a written post; Discover offers a single
+// pooled entry and the feeds are merged with duplicates removed (src/lib/pool.ts),
+// rather than making the user track three lookalike shows and read three summaries
+// of one thing.
 //
 // This registry deliberately does NOT try to guess at arbitrary shows. It exists
 // to stop us from mislabelling the ones we know, in either direction: a paid show
 // is never presented as fetchable, and a free show is never written off as paid.
 //
 // Shared by the browser and the server on purpose (client fast-path search in
-// src/lib/api.ts, resolvers in server/search.ts + server/spotify.ts) so both
-// paths surface the same cards with the same ids.
+// src/lib/api.ts, resolvers in server/search.ts + server/spotify.ts, seed feeds in
+// server/feeds.ts) so every path produces the same show with the same id.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** A concrete source for a show, ready to render as a Discover card. */
-export interface KnownSourceSeed {
-  /** MUST match the id the server's resolver derives for the same URL
-   *  (`yt-<channelId>`, `feed-<hash>`, `spotify-<showId>`), so a pasted URL and
-   *  this entry dedupe to ONE card instead of two near-identical ones. */
-  id: string
+export interface KnownShow {
+  /** Canonical lowercase key. Also the show's id, so the seed catalog entry, the
+   *  search card and a pasted member feed all resolve to ONE show. */
+  key: string
+  /** Lowercase search terms that should surface this show. */
+  aliases: readonly string[]
   title: string
   author: string
   category: string
   description: string
+  /** The dominant medium of the pooled show, for the cover glyph. */
   source: SourceKind
+  artworkUrl?: string
+  /** Access state of the pool as configured — 'partial' while the paid feed is
+   *  missing (the free sources work, the paid instalments arrive as teasers). */
   access: FeedAccess
   accessNote: string
-  /** '' for a source with nothing to fetch (a paywalled platform). */
-  feedUrl: string
-  /** The human page behind the source — the only link a paywalled card can offer. */
+  /** The paywalled home of the show — a link, never a feed. */
   webUrl?: string
-  artworkUrl?: string
-}
-
-export interface KnownShow {
-  /** Canonical lowercase key. */
-  key: string
-  /** Lowercase search terms that should surface this show. */
-  aliases: readonly string[]
+  /** One line about what is behind the paywall, for the Discover notice. */
+  paidNote: string
+  /** Feeds we can fetch, in priority order. Pooled into one episode list. */
+  feeds: readonly PodcastFeed[]
   /** Spotify show id, when the paid show is distributed there. */
   spotifyShowId?: string
-  /** The paywalled source itself — a locked card, never trackable. */
-  paid: KnownSourceSeed
-  /** Sources whose episodes we can genuinely fetch today. */
-  fetchable: readonly KnownSourceSeed[]
   /** Host serving this publisher's personal member feeds — how a pasted member
-   *  URL is recognized as this show's private feed. */
+   *  URL is recognized as belonging to this show. */
   memberFeedHost?: string
   /** Where a subscriber copies their own private feed URL from. */
   memberFeedPage?: string
@@ -69,60 +69,42 @@ export interface KnownShow {
 const STRATECHERY_ART = 'https://stratechery.com/wp-content/uploads/2020/05/Stratechery-Podcast-Artwork.png'
 const STRATECHERY_YT_CHANNEL = 'UC9AHywQeW9BOcOl7dg-YMqA'
 
-// Stratechery — Ben Thompson. The paid podcast (Daily Updates + Interviews +
-// Sharp Tech/China crossovers) is distributed to subscribers via Spotify and a
-// personal Passport feed; neither is fetchable without the subscriber's own
-// credentials. The YouTube channel and the site's article feed are free.
+// Stratechery — Ben Thompson. The paid podcast (Daily Updates, Interviews, the
+// Sharp Tech/China crossovers) reaches subscribers via Spotify and a personal
+// Passport feed; neither is fetchable without the subscriber's own credentials.
+// The YouTube channel and the site's article feed are free, and both carry the
+// same instalments the paid feed does — so pooled, the show works without a
+// subscription and gets complete (audio included) with one.
 const STRATECHERY: KnownShow = {
   key: 'stratechery',
   aliases: ['stratechery', 'stratechery by ben thompson', 'stratechery podcast', 'ben thompson'],
+  title: 'Stratechery',
+  author: 'Ben Thompson',
+  category: 'Tech Strategy',
+  description: `Ben Thompson's analysis of the strategy and business behind technology and media — pooled from the video, the articles, and your member feed.`,
+  source: 'podcast',
+  artworkUrl: STRATECHERY_ART,
+  access: 'partial',
+  accessNote: `Free video + articles, pooled. Connect your member feed to add the paid Daily Updates.`,
+  webUrl: 'https://open.spotify.com/show/1jRACH7L8EQCYKc5uW7aPk',
+  paidNote: `The Stratechery podcast (Daily Updates and Interviews) is subscriber-only on Spotify — there's no public feed for it, so those episodes can't be fetched from there.`,
   spotifyShowId: '1jRACH7L8EQCYKc5uW7aPk',
   memberFeedHost: 'stratechery.passport.online',
   memberFeedPage: 'https://stratechery.passport.online/member/account/delivery',
-  paid: {
-    id: 'spotify-1jRACH7L8EQCYKc5uW7aPk',
-    title: 'Stratechery',
-    author: 'Ben Thompson',
-    category: 'Tech Strategy',
-    description: `Ben Thompson's daily analysis of the strategy and business behind technology and media.`,
-    source: 'podcast',
-    access: 'paid',
-    accessNote: `Subscriber-only on Spotify — no public feed, so paid episodes can't be fetched.`,
-    feedUrl: '',
-    webUrl: 'https://open.spotify.com/show/1jRACH7L8EQCYKc5uW7aPk',
-    artworkUrl: STRATECHERY_ART,
-  },
-  fetchable: [
-    {
-      id: `yt-${STRATECHERY_YT_CHANNEL}`,
-      title: 'Stratechery on YouTube',
-      author: 'Ben Thompson',
-      category: 'Tech Strategy',
-      description: `The free Stratechery video — Ben Thompson's weekly article, read and illustrated on YouTube.`,
-      source: 'youtube',
-      access: 'open',
-      accessNote: 'Free on YouTube — fetched and summarized in full.',
-      feedUrl: `https://www.youtube.com/feeds/videos.xml?channel_id=${STRATECHERY_YT_CHANNEL}`,
-      webUrl: 'https://www.youtube.com/@Stratechery',
-      artworkUrl: STRATECHERY_ART,
-    },
-    {
-      id: `feed-${stableHash('https://stratechery.com/feed/')}`,
-      title: 'Stratechery Articles',
-      author: 'Ben Thompson',
-      category: 'Tech Strategy',
-      description: `The written Stratechery — free weekly articles plus the paid Daily Updates.`,
-      source: 'podcast',
-      access: 'partial',
-      accessNote: `Free weekly articles in full; the paid Daily Updates arrive as a teaser only.`,
-      feedUrl: 'https://stratechery.com/feed/',
-      webUrl: 'https://stratechery.com',
-      artworkUrl: STRATECHERY_ART,
-    },
+  feeds: [
+    // YouTube first: it's free, carries the full weekly video, and its watch link
+    // is what the in-app player uses.
+    { feedUrl: `https://www.youtube.com/feeds/videos.xml?channel_id=${STRATECHERY_YT_CHANNEL}`, access: 'open', label: 'YouTube' },
+    // The site feed carries free articles in full; the paid Updates appear here
+    // too, but truncated to a teaser — which is exactly what 'partial' means.
+    { feedUrl: 'https://stratechery.com/feed/', access: 'partial', label: 'Articles' },
   ],
 }
 
 export const KNOWN_SHOWS: readonly KnownShow[] = [STRATECHERY]
+
+/** The label a pasted member feed gets in a pooled show's feed list. */
+export const MEMBER_FEED_LABEL = 'Member feed'
 
 const norm = (s: string) =>
   (s || '')
@@ -153,35 +135,41 @@ export function knownShowByMemberHost(host: string): KnownShow | null {
   return h ? (KNOWN_SHOWS.find((s) => s.memberFeedHost === h) ?? null) : null
 }
 
-function toResult(seed: KnownSourceSeed, memberFeedPage?: string): PodcastSearchResult {
+/** The show as ONE pooled Discover result. `extraFeeds` appends feeds the caller
+ *  has in hand — a member feed the user just pasted — which upgrades the pool from
+ *  'partial' (free sources only) to 'private' (the paid episodes are in too). */
+export function knownShowResult(show: KnownShow, extraFeeds: PodcastFeed[] = []): PodcastSearchResult {
+  const feeds = mergeFeeds([...show.feeds], extraFeeds)
+  const unlocked = feeds.some((f) => f.access === 'private')
   return {
-    id: seed.id,
-    title: seed.title,
-    author: seed.author,
-    category: seed.category,
-    description: seed.description,
-    artworkUrl: seed.artworkUrl,
-    feedUrl: seed.feedUrl,
-    source: seed.source,
-    access: seed.access,
-    accessNote: seed.accessNote,
-    webUrl: seed.webUrl,
-    // Only a paywalled card needs the "where do I get my feed" pointer; a free
-    // source carrying it would imply you need a subscription to use it.
-    memberFeedPage: seed.access === 'paid' ? memberFeedPage : undefined,
+    id: show.key,
+    title: show.title,
+    author: show.author,
+    category: show.category,
+    description: show.description,
+    artworkUrl: show.artworkUrl,
+    feedUrl: feeds[0]?.feedUrl ?? '',
+    feeds,
+    source: show.source,
+    access: unlocked ? 'private' : show.access,
+    // Precise, not triumphant: the pool now carries everything the member feed
+    // publishes, which is not necessarily everything the subscription includes —
+    // publishers routinely leave some content out of their feeds.
+    accessNote: unlocked
+      ? `${feeds.length} sources pooled, including everything your member feed carries. Keep that URL secret — it carries your subscription.`
+      : show.accessNote,
+    webUrl: show.webUrl,
+    // The pointer to "where do I get my feed" is only useful while the pool is
+    // still missing it.
+    memberFeedPage: unlocked ? undefined : show.memberFeedPage,
+    paidNote: unlocked ? undefined : show.paidNote,
   }
 }
 
-/** Every source we know for a show, paywalled one first — the paid reality is the
- *  headline, and the free alternatives read as the answer to it. */
-export function knownShowResults(show: KnownShow): PodcastSearchResult[] {
-  return [toResult(show.paid, show.memberFeedPage), ...show.fetchable.map((s) => toResult(s, show.memberFeedPage))]
-}
-
-/** Known-show cards for a plain-text query, or [] when the query names none. */
+/** The known-show card for a plain-text query, or [] when the query names none. */
 export function knownResultsForQuery(term: string): PodcastSearchResult[] {
   const show = knownShowByTerm(term)
-  return show ? knownShowResults(show) : []
+  return show ? [knownShowResult(show)] : []
 }
 
 // ── Private member feeds ─────────────────────────────────────────────────────
@@ -232,10 +220,19 @@ export function memberFeedInfo(rawUrl: string): MemberFeedInfo | null {
   const platform = MEMBER_FEED_HOSTS.some((h) => host === h || host.endsWith(`.${h}`))
   const tokenParam = TOKEN_PARAMS.some((p) => (u.searchParams.get(p) || '').length >= 8)
   if (!show && !platform && !tokenParam) return null
-  const who = show ? show.paid.title : 'this publisher'
+  const who = show ? show.title : 'this publisher'
   return {
     access: 'private',
     note: `Unlocks your paid ${who} episodes. Keep the URL secret — it carries your subscription.`,
     show,
   }
+}
+
+/** A pasted member feed, resolved as the known show it belongs to: the pooled show
+ *  with this feed added, so it lands in ONE list with the free sources instead of
+ *  becoming a second near-identical show. Null when no known show claims the host. */
+export function pooledResultForMemberFeed(rawUrl: string): PodcastSearchResult | null {
+  const info = memberFeedInfo(rawUrl)
+  if (!info?.show) return null
+  return knownShowResult(info.show, [{ feedUrl: rawUrl, access: 'private', label: MEMBER_FEED_LABEL }])
 }

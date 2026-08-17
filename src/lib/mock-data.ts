@@ -1,4 +1,9 @@
 import type { Episode, Podcast, WeeklySummary } from './types'
+import { KNOWN_SHOWS } from './knownSources'
+
+// Stratechery below is assembled from the source registry rather than repeating its
+// feeds here — one definition, used by the catalog, Discover, and the server.
+const STRATECHERY = KNOWN_SHOWS.find((s) => s.key === 'stratechery')!
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mock data. Modelled on the customer's actual lineup (Stratechery, Invest Like
@@ -9,26 +14,29 @@ import type { Episode, Podcast, WeeklySummary } from './types'
 
 export const PODCASTS: Podcast[] = [
   {
-    id: 'stratechery',
-    title: 'Stratechery',
-    author: 'Ben Thompson',
-    category: 'Tech Strategy',
+    id: STRATECHERY.key,
+    title: STRATECHERY.title,
+    author: STRATECHERY.author,
+    category: STRATECHERY.category,
     description: `Ben Thompson's analysis of the strategy and business behind technology and media, and the impact of technology on society.`,
     cadence: '3–4 / week',
     episodeCount: 312,
-    source: 'podcast',
+    source: STRATECHERY.source,
     color: '#0058bc',
     monogram: 'ST',
-    tracked: false, // subscriber-only, no public feed — can't be ingested
-    locked: true,
-    // The paid podcast ships via Spotify and a personal Passport feed; neither is
-    // fetchable without the subscriber's own credentials. The free YouTube channel
-    // and article feed ARE fetchable and are offered in Discover — see
-    // src/lib/knownSources.ts, which is where those sources are defined.
-    access: 'paid',
-    accessNote: `Subscriber-only — no public feed, so paid episodes can't be fetched.`,
-    webUrl: 'https://open.spotify.com/show/1jRACH7L8EQCYKc5uW7aPk',
-    memberFeedPage: 'https://stratechery.passport.online/member/account/delivery',
+    artworkUrl: STRATECHERY.artworkUrl,
+    // ONE show pooled from every source we can fetch: the free YouTube video and
+    // the article feed, plus the subscriber's own member feed once connected. The
+    // paid podcast itself has no public feed (Spotify) — hence 'partial', not
+    // 'open', and not locked either: the free sources are genuinely ingestible.
+    feeds: [...STRATECHERY.feeds],
+    feedUrl: STRATECHERY.feeds[0].feedUrl,
+    access: STRATECHERY.access,
+    accessNote: STRATECHERY.accessNote,
+    webUrl: STRATECHERY.webUrl,
+    memberFeedPage: STRATECHERY.memberFeedPage,
+    paidNote: STRATECHERY.paidNote,
+    tracked: true,
   },
   {
     id: 'iltb',

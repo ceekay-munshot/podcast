@@ -69,24 +69,65 @@ episodes we're able to transcribe. Where the state comes from:
   registry for the shows in the customer's lineup. A directory search can't list a
   show that has no public feed (searching "Stratechery" in Apple returns Sharp Tech,
   Exponent and Acquired — everything except Stratechery), so the registry supplies
-  that show's own cards: what's paid, what's free, and where the member feed comes
-  from. It is shared by the browser fast path and the server so both produce the
-  same cards with the same ids.
+  that show as one pooled card: what's paid, what's free, and where the member feed
+  comes from. It is shared by the browser fast path and the server so both produce
+  the same show with the same id.
 
-**Stratechery** is the worked example (all four verified against the live sources):
+### One show, one pooled feed
 
-| Source | Access | Ingestible |
-|--------|--------|-----------|
-| [Spotify show](https://open.spotify.com/show/1jRACH7L8EQCYKc5uW7aPk) | `paid` | ✗ subscriber-only, no public audio |
-| [YouTube channel](https://www.youtube.com/@Stratechery) | `open` | ✓ the weekly video, in full |
-| [stratechery.com/feed](https://stratechery.com/feed/) | `partial` | ✓ free weekly articles; paid Updates are teasers |
-| `stratechery.passport.online/feed/podcast/<token>` | `private` | ✓ all paid episodes, with audio |
+A show that publishes to several places is ONE entry in Discover and ONE episode
+list. Its feeds are fetched together and merged with duplicates removed
+([`src/lib/pool.ts`](./src/lib/pool.ts)), because the alternative — three lookalike
+shows and three summaries of the same instalment — is worse than useless.
 
-**Member feed tokens are credentials and are not stored in this repo.** The registry
-holds only the publisher's feed *host* and the account page a subscriber copies their
-own URL from. Pasting that URL into Discover tracks it like any other feed — which
-means it is persisted with the user's tracked shows (`localStorage` + the channel
-roster in KV), the same as every other `feedUrl`. The UI says so on the card.
+The merge is a **union, not a pick**. For each instalment: audio from whichever feed
+has it (so the episode becomes transcribable), the longest text (an article body beats
+a video description), the YouTube watch link when one exists (it plays in-app), the
+earliest publish date, and the title without the platform's channel branding. The
+result is richer material than any single source, and the free sources keep working
+when the paid one is absent. Two rules keep de-duplication honest: items from the
+*same* feed are never merged (a feed's own items are distinct by definition), and
+titles must match *and* publish within 45 days — a reused heading a year later is its
+own episode. Each episode discloses which sources carried it (`Episode.sources`).
+
+**Stratechery** is the worked example. Its four sources pool into one show — verified
+live: 30 raw items in, 12 episodes out, 3 of them merged across sources, no duplicate
+titles:
+
+| Source | Access | What it contributes |
+|--------|--------|--------------------|
+| [Spotify show](https://open.spotify.com/show/1jRACH7L8EQCYKc5uW7aPk) | `paid` | nothing fetchable — subscriber-only, no public feed |
+| [YouTube channel](https://www.youtube.com/@Stratechery) | `open` | the weekly video + its watch link, free |
+| [stratechery.com/feed](https://stratechery.com/feed/) | `partial` | free articles in full; paid Updates as teasers |
+| `…passport.online/feed/podcast/<token>` | `private` | the paid audio (→ transcription), with durations |
+| `…passport.online/feed/rss/<token>` | `private` | the paid articles in full text |
+
+Pasting a member feed adds it to the *same* pooled show rather than creating a second
+one — the publisher's feed host identifies which show it belongs to. Both Passport
+feeds are worth adding: one carries the audio, the other the full text, and pooled
+they give an episode with both.
+
+Known limitation: Stratechery's Passport feeds carry the Articles, not the daily
+Updates, so those still arrive as public teasers (~150 characters) and summarize
+thinly. That's what `partial` means on the card, and it's the publisher's choice of
+what to syndicate — not something a different feed URL fixes.
+
+### Member feed credentials
+
+**No token is stored in this repo.** The registry holds only the publisher's feed
+*host* and the account page a subscriber copies their own URL from.
+
+For normal use nothing needs configuring: the user pastes their member feed in
+Discover and it's persisted with their tracked shows (`localStorage` + the per-user
+channel roster in KV), exactly like any other `feedUrl`, and the app fetches their
+paid episodes from then on. The UI says on the card that the URL is a credential.
+
+The one path that can't see a user's feed is the **Monday digest cron** — it has no
+user session and builds one shared edition from the seed shows. `MEMBER_FEEDS`
+(see [`.env.example`](./.env.example)) exists for that case only, and is inert unless
+set. Set it on single-tenant deployments only: the seed episode list is shared, so a
+member feed there exposes one subscriber's paid content to every visitor of that
+space.
 
 ## Architecture
 

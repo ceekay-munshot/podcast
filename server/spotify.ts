@@ -1,5 +1,5 @@
 import type { PodcastSearchResult } from '../src/lib/types'
-import { knownShowBySpotifyId, knownShowByTerm, knownShowResults } from '../src/lib/knownSources'
+import { knownShowBySpotifyId, knownShowByTerm, knownShowResult } from '../src/lib/knownSources'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Spotify show URLs in Discover — keyless, no Spotify app credentials.
@@ -9,11 +9,13 @@ import { knownShowBySpotifyId, knownShowByTerm, knownShowResults } from '../src/
 // only tell us WHICH show is meant and whether Spotify would even let anyone
 // stream it. From there:
 //
+//   known show  → the show's own pooled card (src/lib/knownSources.ts): every feed
+//                 we can fetch, merged into one episode list, with the paywalled
+//                 part labelled and a route to unlock it.
 //   free show   → find its real public RSS in the directory (by exact title) and
 //                 hand back THAT — the feed is what gets fetched, not Spotify.
-//   paid show   → a locked "paid" card plus every free source we know for the
-//                 show, so the user leaves with something trackable instead of a
-//                 dead end.
+//   paid show   → a locked "paid" card, so the user is told plainly rather than
+//                 tracking something that can never produce an episode.
 //   no feed and
 //   free anyway → a locked "closed" card. Honest: a platform exclusive is not a
 //                 paywall, and must not be labelled as one.
@@ -220,20 +222,17 @@ export async function resolveSpotifyShow(rawUrl: string, opts: SpotifyResolveOpt
   const known = knownShowBySpotifyId(id) ?? (meta ? knownShowByTerm(meta.name) : null)
   // Spotify unreachable (bot wall, outage) but the show is one we know: the
   // registry already holds everything the live lookup would have told us.
-  if (!meta) return known ? knownShowResults(known) : []
+  if (!meta) return known ? [knownShowResult(known)] : []
+
+  // A show we know: one pooled card carrying every source we can fetch, with the
+  // paywalled part labelled. Its sources are hand-verified, so a directory guess
+  // could only add duplicates of them — don't even ask.
+  if (known) return [knownShowResult(known)]
 
   const showUrl = `https://open.spotify.com/show/${id}`
   // Whatever Spotify says, the ingestible thing is a public RSS feed — look for
   // one under the show's real name.
   const feeds = titleMatches(meta.name, await opts.directory(meta.name, limit))
-
-  if (known) {
-    // Curated, hand-verified sources win over a directory guess; anything the
-    // directory found that the registry doesn't already cover rides along.
-    const cards = knownShowResults(known)
-    const seen = new Set(cards.map((c) => c.id))
-    return [...cards, ...feeds.filter((f) => !seen.has(f.id))]
-  }
 
   if (meta.playable) {
     // Free to stream. The feed IS the answer when we found one; when we didn't,

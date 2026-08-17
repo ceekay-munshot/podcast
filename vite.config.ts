@@ -3,7 +3,7 @@ import type { Connect, Plugin } from 'vite'
 import type { ServerResponse } from 'node:http'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
-import { episodesForFeed, getLiveEpisodes, SEED_IDS } from './server/feeds'
+import { episodesForFeeds, getLiveEpisodes, parseMemberFeeds, SEED_IDS, type MemberFeeds } from './server/feeds'
 import { searchPodcasts } from './server/search'
 import { hasLlmKey, summarizeEpisode, synthesizeWeekly } from './server/summarize'
 import { fileSummaryStore } from './server/summaryStore.node'
@@ -64,6 +64,8 @@ function liveApiPlugin(config: {
   bedrockKey?: string
   bedrockModel?: string
   bedrockRegion?: string
+  /** Optional server-side member feeds per seed show id (see server/feeds.ts). */
+  memberFeeds?: MemberFeeds
 }): Plugin {
   // Shared summary store for dev: a filesystem mirror of the prod KV namespace, so
   // a summary generated once is reused across reloads and across every browser that
@@ -220,9 +222,12 @@ function liveApiPlugin(config: {
         }
         try {
           // Mirror prod: chip away at this week's pending episodes on every tick.
-          const batch = await processPendingBatch({ getEpisodes: getLiveEpisodes, summaryStore: store, summarizeConfig: { ...config, store } }, { limit: 5, budgetMs: 75_000 }).catch(() => ({ processed: 0, remaining: 0 }))
+          // The digest builds one SHARED edition, so it reads the seed sources — plus
+          // any configured member feeds, the only route for paid episodes here.
+          const getEpisodes = (s?: typeof store) => getLiveEpisodes(s, config.memberFeeds)
+          const batch = await processPendingBatch({ getEpisodes, summaryStore: store, summarizeConfig: { ...config, store } }, { limit: 5, budgetMs: 75_000 }).catch(() => ({ processed: 0, remaining: 0 }))
           const result = await runWeeklyDigest({
-            getEpisodes: getLiveEpisodes,
+            getEpisodes,
             summaryStore: store,
             subscriberStore: subscribers,
             sendEmail: (msg) => sendRawEmail(msg, { token: config.emailToken }),
@@ -241,11 +246,16 @@ function liveApiPlugin(config: {
         try {
           // req.url is the remainder after the mount prefix; base it to read query params.
           const params = new URL(req.url ?? '', 'http://localhost').searchParams
-          const feed = params.get('feed')
+          // `feed` repeats for a show pooled from several feeds.
+          const feeds = params.getAll('feed').filter(Boolean)
           const id = params.get('id')
           // The summary store rides along on both paths, so episodes already
           // processed by ANY user come back ready — shared state for everyone.
-          json(res, 200, feed && id ? await episodesForFeed(feed, id, store) : await getLiveEpisodes(store))
+          json(
+            res,
+            200,
+            feeds.length && id ? await episodesForFeeds(feeds, id, store) : await getLiveEpisodes(store, config.memberFeeds),
+          )
         } catch {
           json(res, 200, [])
         }
@@ -309,6 +319,10 @@ export default defineConfig(({ mode }) => {
     bedrockKey: pick('temp_claude_token') || undefined,
     bedrockModel: pick('BEDROCK_MODEL_ID') || undefined,
     bedrockRegion: pick('BEDROCK_REGION') || undefined,
+    // Optional server-side member feeds ("<showId>=<feedUrl>", comma-separated) —
+    // the only way paid episodes reach the cron digest, which has no user session.
+    // See the MEMBER_FEEDS note in server/feeds.ts before setting it.
+    memberFeeds: parseMemberFeeds(pick('MEMBER_FEEDS')),
   }
 
   return {

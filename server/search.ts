@@ -1,5 +1,5 @@
-import type { FeedAccess, SourceKind } from '../src/lib/types'
-import { knownResultsForQuery, memberFeedInfo } from '../src/lib/knownSources'
+import type { FeedAccess, PodcastFeed, SourceKind } from '../src/lib/types'
+import { knownResultsForQuery, memberFeedInfo, pooledResultForMemberFeed } from '../src/lib/knownSources'
 import { isPublicHttpUrl, safeFetch } from './safeUrl'
 import { attrOf, decodeEntities, fetchFeedHead, hashKey, innerTag, plainText, unwrapCdata } from './feeds'
 import { isSpotifyShowUrl, resolveSpotifyShow } from './spotify'
@@ -39,11 +39,14 @@ export interface PodcastSearchResult {
   description: string
   artworkUrl?: string
   feedUrl: string // canonical RSS / YouTube videos.xml; '' when there's nothing to fetch
+  /** Several feeds for one show (pooled into a single de-duplicated episode list). */
+  feeds?: PodcastFeed[]
   source: SourceKind
   access?: FeedAccess
   accessNote?: string
   webUrl?: string
   memberFeedPage?: string
+  paidNote?: string
 }
 
 const UA = 'MunshotPodcasts/1.0 (+https://munshot.io)'
@@ -442,6 +445,15 @@ export async function searchPodcasts(rawQuery: string, limit = LIMIT): Promise<P
     // Spotify serves no feed — the resolver hands back the real RSS behind the
     // show, or a labelled paid card plus whatever free sources exist.
     if (isSpotifyShowUrl(q)) return resolveSpotifyShow(q, { directory: searchDirectory, limit: cap })
+    // A member feed for a show we know resolves to that show POOLED — the member
+    // feed alongside its free sources, one card, one episode list. Verify the feed
+    // is real and reachable first: a mistyped token 200s with an error page, and
+    // pooling that would silently add a source carrying nothing.
+    const pooled = pooledResultForMemberFeed(q)
+    if (pooled) {
+      const live = await resolveRssFeed(q)
+      return live.length ? [pooled] : []
+    }
     return resolveRssFeed(q)
   }
   return withKnownShow(q, await searchDirectory(q, cap))

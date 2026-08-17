@@ -1,5 +1,7 @@
-import type { Episode } from '../src/lib/types'
-import { EPISODES } from '../src/lib/mock-data'
+import type { Episode, PodcastFeed } from '../src/lib/types'
+import { EPISODES, PODCASTS } from '../src/lib/mock-data'
+import { KNOWN_SHOWS, MEMBER_FEED_LABEL } from '../src/lib/knownSources'
+import { feedsOf, mergeFeeds, poolEpisodes } from '../src/lib/pool'
 import { sharedSummaryKey, type SummaryStore } from './summaryStore'
 import { isPublicHttpUrl, safeFetch } from './safeUrl'
 
@@ -17,11 +19,17 @@ import { isPublicHttpUrl, safeFetch } from './safeUrl'
 interface Source {
   id: string // matches a Podcast.id in mock-data
   feedUrl: string | null // verified real RSS feed; null → seed fallback
+  /** For a show published in several places: every feed, pooled into one
+   *  de-duplicated episode list. Takes precedence over `feedUrl`. */
+  feeds?: PodcastFeed[]
 }
 
 // Feed URLs resolved + verified via the iTunes Search API.
 const SOURCES: Source[] = [
-  { id: 'stratechery', feedUrl: null }, // subscriber-only, no public feed (see knownSources.ts)
+  // Pooled: the free YouTube video + the article feed, and the subscriber's own
+  // member feed when one is configured (see memberFeedsFor below). The paid podcast
+  // itself has no public feed — server/spotify.ts explains that side.
+  { id: 'stratechery', feedUrl: null, feeds: [...(KNOWN_SHOWS.find((s) => s.key === 'stratechery')?.feeds ?? [])] },
   { id: 'iltb', feedUrl: 'https://feeds.megaphone.fm/CLS2859450455' },
   { id: 'allin', feedUrl: 'https://rss.libsyn.com/shows/254861/destinations/1928300.xml' },
   { id: 'oddlots', feedUrl: 'https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/8a94442e-5a74-4fa2-8b8d-ae27003a8d6b/982f5071-765c-403d-969d-ae27003a8d83/podcast.rss' },
@@ -44,12 +52,20 @@ const SOURCES: Source[] = [
 export const SEED_IDS: ReadonlySet<string> = new Set(SOURCES.map((s) => s.id))
 
 const PER_SOURCE = 4 // recent episodes to surface per show
+// A pooled show reads MORE per feed, then trims after merging. Its feeds publish on
+// their own schedules — the video edit of an instalment can land a week after the
+// audio drop — so taking only the newest few from each would leave the windows
+// barely overlapping and the duplicates never meeting to be removed.
+const POOL_PER_FEED = 10
+const POOLED_MAX = 12 // episodes kept after merging — the pooled list stays a list
 
 // Stream only the head of a feed — items are newest-first, so the first ~800 KB
-// (or first 8 closed <item>/<entry>s) covers the recent episodes without
-// downloading multi-megabyte archives. Goes through safeFetch so redirects are
-// followed manually and every hop is re-validated against the SSRF guard.
-export async function fetchFeedHead(url: string, maxBytes = 800_000, timeoutMs = 9000): Promise<string> {
+// (or first `maxItems` closed <item>/<entry>s) covers the recent episodes without
+// downloading multi-megabyte archives. A pooled show asks for more items, since it
+// has to reach back far enough for its feeds' publish windows to overlap.
+// Goes through safeFetch so redirects are followed manually and every hop is
+// re-validated against the SSRF guard.
+export async function fetchFeedHead(url: string, maxBytes = 800_000, timeoutMs = 9000, maxItems = 8): Promise<string> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -70,7 +86,7 @@ export async function fetchFeedHead(url: string, maxBytes = 800_000, timeoutMs =
       if (done) break
       received += value.byteLength
       text += decoder.decode(value, { stream: true })
-      if (received >= maxBytes || (text.match(/<\/(?:item|entry)>/gi)?.length ?? 0) >= 8) {
+      if (received >= maxBytes || (text.match(/<\/(?:item|entry)>/gi)?.length ?? 0) >= maxItems) {
         await reader.cancel().catch(() => {})
         break
       }
@@ -175,11 +191,11 @@ export function hashKey(s: string): string {
   return (h >>> 0).toString(36)
 }
 
-export function parseEpisodes(xml: string, podcastId: string): Episode[] {
+export function parseEpisodes(xml: string, podcastId: string, limit = PER_SOURCE): Episode[] {
   const blocks = [...xml.matchAll(/<item\b[\s\S]*?<\/item>/gi)].map((m) => m[0])
   const out: Episode[] = []
   for (const block of blocks) {
-    if (out.length >= PER_SOURCE) break // take the first PER_SOURCE *valid* items, not raw items
+    if (out.length >= limit) break // take the first `limit` *valid* items, not raw items
     const title = decodeEntities(unwrapCdata(innerTag(block, 'title'))).trim()
     if (!title) continue
     const pub = unwrapCdata(innerTag(block, 'pubDate')).trim()
@@ -224,11 +240,11 @@ export function parseEpisodes(xml: string, podcastId: string): Episode[] {
 // YouTube channel feeds are Atom (<entry>), not RSS (<item>). Map each entry to
 // the app's Episode shape. No audio enclosure / transcript / duration exists in
 // a YouTube feed, so those stay undefined and durationSec is 0.
-export function parseAtomEntries(xml: string, podcastId: string): Episode[] {
+export function parseAtomEntries(xml: string, podcastId: string, limit = PER_SOURCE): Episode[] {
   const blocks = [...xml.matchAll(/<entry\b[\s\S]*?<\/entry>/gi)].map((m) => m[0])
   const out: Episode[] = []
   for (const block of blocks) {
-    if (out.length >= PER_SOURCE) break // first PER_SOURCE *valid* entries, not raw entries
+    if (out.length >= limit) break // first `limit` *valid* entries, not raw entries
     const title = decodeEntities(unwrapCdata(innerTag(block, 'title'))).trim()
     if (!title) continue
     const pub = unwrapCdata(innerTag(block, 'published')).trim() || unwrapCdata(innerTag(block, 'updated')).trim()
@@ -281,31 +297,105 @@ async function overlaySummaries(episodes: Episode[], store?: SummaryStore): Prom
 // Pass the shared summary store to overlay already-processed episodes as READY;
 // the seed path (episodesForSource) deliberately does NOT pass it — seeds are
 // overlaid once, in getLiveEpisodes, never twice.
-export async function episodesForFeed(feedUrl: string, podcastId: string, store?: SummaryStore): Promise<Episode[]> {
+export async function episodesForFeed(feedUrl: string, podcastId: string, store?: SummaryStore, limit = PER_SOURCE): Promise<Episode[]> {
   if (!isPublicHttpUrl(feedUrl)) return []
-  const xml = await fetchFeedHead(feedUrl)
+  // Reading deeper into a pooled feed needs more of the document than the default
+  // head — otherwise the extra items simply aren't in the text we parsed. The +2 is
+  // slack for items that turn out unusable (no title), so a deep read still yields
+  // `limit` valid episodes.
+  const deep = limit > PER_SOURCE
+  const xml = await fetchFeedHead(feedUrl, deep ? 1_600_000 : undefined, deep ? 12_000 : undefined, deep ? limit + 2 : undefined)
   if (!xml) return []
   const isAtom = /<entry[\s>]/i.test(xml) && !/<item[\s>]/i.test(xml)
-  const episodes = isAtom ? parseAtomEntries(xml, podcastId) : parseEpisodes(xml, podcastId)
+  const episodes = isAtom ? parseAtomEntries(xml, podcastId, limit) : parseEpisodes(xml, podcastId, limit)
   return store ? overlaySummaries(episodes, store) : episodes
 }
 
-async function episodesForSource(src: Source): Promise<Episode[]> {
-  // No public feed → locked show. Never serve its seed episodes: a fabricated
+/** Most feeds one show may pool — bounds the work a single request can trigger. */
+export const MAX_POOLED_FEEDS = 6
+
+/** Recent episodes for a show published to SEVERAL feeds: fetch them all, then
+ *  merge into one list with the same instalment appearing once (src/lib/pool.ts).
+ *  A feed that fails contributes nothing and the rest still pool — a dead member
+ *  feed must not empty the show. */
+export async function episodesForFeeds(
+  feeds: (PodcastFeed | string)[],
+  podcastId: string,
+  store?: SummaryStore,
+  show?: { title?: string; author?: string },
+): Promise<Episode[]> {
+  const list = feeds
+    .map((f) => (typeof f === 'string' ? { feedUrl: f } : f))
+    .filter((f) => !!f?.feedUrl)
+    .slice(0, MAX_POOLED_FEEDS)
+  if (!list.length) return []
+  if (list.length === 1) return episodesForFeed(list[0].feedUrl, podcastId, store)
+  const settled = await Promise.allSettled(list.map((f) => episodesForFeed(f.feedUrl, podcastId, undefined, POOL_PER_FEED)))
+  const lists = settled.map((r) => (r.status === 'fulfilled' ? r.value : []))
+  const pooled = poolEpisodes(lists, { labels: list.map((f) => f.label), show }).slice(0, POOLED_MAX)
+  // Overlay AFTER pooling: the shared cache is keyed by the pooled episode's id,
+  // which is the id the app will ask about.
+  return store ? overlaySummaries(pooled, store) : pooled
+}
+
+async function episodesForSource(src: Source, memberFeeds?: MemberFeeds): Promise<Episode[]> {
+  const feeds = mergeFeeds(src.feeds ?? (src.feedUrl ? [{ feedUrl: src.feedUrl }] : []), memberFeedsFor(src.id, memberFeeds))
+  // No feed at all → locked show. Never serve its seed episodes: a fabricated
   // summary/transcript must not reach users. The UI renders it as a locked show.
-  if (!src.feedUrl) return []
-  const episodes = await episodesForFeed(src.feedUrl, src.id)
+  if (!feeds.length) return []
+  const show = PODCASTS.find((p) => p.id === src.id)
+  const episodes = await episodesForFeeds(feeds, src.id, undefined, show)
   // Seed shows may fall back to their seeded episodes if a live fetch comes back
   // empty (transient feed error) — this is the ONLY place that fallback lives.
   return episodes.length ? episodes : mockFor(src.id)
+}
+
+// ── Server-side member feeds (optional) ──────────────────────────────────────
+// A member feed pasted in the app is stored per user, so it only reaches code
+// paths that have a user: the browser session, and anything reading that user's
+// roster. The Monday digest cron has NEITHER — it builds one shared edition from
+// the seed sources below — so paid episodes can't reach the emailed brief unless
+// the server itself holds the feed.
+//
+// MEMBER_FEEDS supplies exactly that, as ordinary deployment config:
+//
+//   MEMBER_FEEDS="stratechery=https://<publisher>.passport.online/feed/podcast/<token>"
+//
+// (comma- or newline-separated for several shows; the key is a seed show id.)
+//
+// Set it ONLY on a single-tenant deployment. The seed episode list is shared by
+// everyone using the space, so a member feed here puts one subscriber's paid audio
+// URLs in front of every visitor — fine for an internal/one-customer install,
+// wrong for a multi-customer one, and a redistribution of content the publisher
+// sold to one person. Unset (the default), everything below is inert.
+
+export type MemberFeeds = Record<string, string[]>
+
+/** Parse the MEMBER_FEEDS env value. Unparseable entries and unsafe URLs are
+ *  dropped rather than failing the request; never throws. */
+export function parseMemberFeeds(raw: string | undefined): MemberFeeds {
+  const out: MemberFeeds = {}
+  for (const entry of (raw || '').split(/[\n,]+/)) {
+    const at = entry.indexOf('=')
+    if (at <= 0) continue
+    const id = entry.slice(0, at).trim()
+    const url = entry.slice(at + 1).trim()
+    if (!id || !isPublicHttpUrl(url)) continue
+    ;(out[id] ??= []).push(url)
+  }
+  return out
+}
+
+function memberFeedsFor(showId: string, configured?: MemberFeeds): PodcastFeed[] {
+  return (configured?.[showId] ?? []).map((feedUrl) => ({ feedUrl, access: 'private' as const, label: MEMBER_FEED_LABEL }))
 }
 
 // All shows' recent episodes, newest first. Never throws — each source degrades
 // to its seeded episodes independently. When a shared summary store is provided,
 // episodes already processed by ANY user are overlaid as READY (with their tone),
 // so the dashboard reflects shared state for everyone.
-export async function getLiveEpisodes(store?: SummaryStore): Promise<Episode[]> {
-  const settled = await Promise.allSettled(SOURCES.map(episodesForSource))
+export async function getLiveEpisodes(store?: SummaryStore, memberFeeds?: MemberFeeds): Promise<Episode[]> {
+  const settled = await Promise.allSettled(SOURCES.map((src) => episodesForSource(src, memberFeeds)))
   const episodes = settled.flatMap((r, i) => (r.status === 'fulfilled' ? r.value : mockFor(SOURCES[i].id)))
   await overlaySummaries(episodes, store)
   return episodes.sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt))

@@ -424,10 +424,15 @@ export function resolveVideo(query: string, signal?: AbortSignal): Promise<strin
     })
 }
 
-// Recent episodes for a single user-added feed. The server validates the URL
-// (SSRF guard) and parses RSS or YouTube/Atom. Returns [] on any failure.
-export function fetchFeedEpisodes(feedUrl: string, podcastId: string): Promise<Episode[]> {
-  return apiFetch(`/api/episodes?feed=${encodeURIComponent(feedUrl)}&id=${encodeURIComponent(podcastId)}`)
+// Recent episodes for a tracked show's feed(s). The server validates every URL
+// (SSRF guard) and parses RSS or YouTube/Atom. Pass several feeds for a show
+// published in more than one place and the server pools them into ONE
+// de-duplicated list. Returns [] on any failure.
+export function fetchFeedEpisodes(feeds: string | string[], podcastId: string): Promise<Episode[]> {
+  const list = (Array.isArray(feeds) ? feeds : [feeds]).filter(Boolean)
+  if (!list.length) return Promise.resolve([])
+  const query = list.map((f) => `feed=${encodeURIComponent(f)}`).join('&')
+  return apiFetch(`/api/episodes?${query}&id=${encodeURIComponent(podcastId)}`)
     .then((r) => (r.ok ? (r.json() as Promise<Episode[]>) : []))
     .catch(() => [])
 }

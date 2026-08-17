@@ -1,4 +1,4 @@
-import type { Podcast } from '../src/lib/types'
+import type { FeedAccess, Podcast, PodcastFeed } from '../src/lib/types'
 import type { KVNamespace } from './summaryStore'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,6 +70,29 @@ export function kvChannelStore(kv: KVNamespace, key: string = CHANNELS_KEY): Cha
 const str = (v: unknown, max: number, fallback = ''): string =>
   typeof v === 'string' && v ? v.slice(0, max) : fallback
 
+const ACCESS: readonly FeedAccess[] = ['open', 'partial', 'private', 'paid', 'closed']
+const MAX_FEEDS = 6 // a pooled show's feed list — matches MAX_POOLED_FEEDS server-side
+
+/** The `feeds` of a pooled show, coerced from an untrusted payload. Each entry
+ *  needs a URL; access/label are optional garnish and are dropped when unusable. */
+function sanitizeFeeds(raw: unknown): PodcastFeed[] {
+  if (!Array.isArray(raw)) return []
+  const out: PodcastFeed[] = []
+  for (const item of raw.slice(0, MAX_FEEDS)) {
+    if (!item || typeof item !== 'object') continue
+    const x = item as Record<string, unknown>
+    const feedUrl = str(x.feedUrl, 600)
+    if (!feedUrl || out.some((f) => f.feedUrl === feedUrl)) continue
+    const feed: PodcastFeed = { feedUrl }
+    const access = str(x.access, 20)
+    const label = str(x.label, 40)
+    if ((ACCESS as readonly string[]).includes(access)) feed.access = access as FeedAccess
+    if (label) feed.label = label
+    out.push(feed)
+  }
+  return out
+}
+
 /** Coerce an untrusted wire object into a storable Podcast (or null). Strings are
  *  length-capped so one hostile/buggy payload can't bloat the shared roster. */
 export function sanitizeChannel(raw: unknown): Podcast | null {
@@ -93,9 +116,13 @@ export function sanitizeChannel(raw: unknown): Podcast | null {
     tracked: x.tracked !== false,
   }
   const artworkUrl = str(x.artworkUrl, 600)
-  const feedUrl = str(x.feedUrl, 600)
+  const feeds = sanitizeFeeds(x.feeds)
+  // A pooled show's primary feed is the first of its list, so the roster stays
+  // readable by anything that only knows `feedUrl`.
+  const feedUrl = str(x.feedUrl, 600) || feeds[0]?.feedUrl || ''
   if (artworkUrl) channel.artworkUrl = artworkUrl
   if (feedUrl) channel.feedUrl = feedUrl
+  if (feeds.length > 1) channel.feeds = feeds
   return channel
 }
 

@@ -1,4 +1,4 @@
-import { getLiveEpisodes } from '../../../server/feeds'
+import { getLiveEpisodes, parseMemberFeeds } from '../../../server/feeds'
 import { kvSummaryStore, type KVNamespace } from '../../../server/summaryStore'
 import { kvSubscriberStore } from '../../../server/subscriberStore'
 import { kvReportStore, reportUrl } from '../../../server/reportStore'
@@ -39,6 +39,11 @@ interface CronEnv {
   // unset until the raw-email endpoint accepts an `attachments` field — otherwise the
   // extra field is simply never sent.
   EMAIL_ATTACHMENTS?: string
+  // Optional "<showId>=<feedUrl>" list of member feeds. The digest is the one path
+  // with no user session, so a paid show's episodes can only reach the emailed
+  // brief through this. Read the MEMBER_FEEDS note in server/feeds.ts first — it
+  // puts one subscriber's paid audio in a SHARED edition.
+  MEMBER_FEEDS?: string
 }
 
 const json = (status: number, body: unknown): Response =>
@@ -71,7 +76,11 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
     // this week's pending episodes (writes to the shared store). Over the 30-min ticks
     // the backlog clears, so the Monday send goes out with the whole week processed —
     // no manual "Process all" needed. Bounded so a tick never exceeds the curl budget.
-    const batch = await processPendingBatch({ getEpisodes: getLiveEpisodes, summaryStore, summarizeConfig }, { limit: 5, budgetMs: 75_000 }).catch(() => ({ processed: 0, remaining: 0 }))
+    // One SHARED edition, so episodes come from the seed sources — plus any
+    // configured member feeds, the only route for paid episodes without a session.
+    const memberFeeds = parseMemberFeeds(env.MEMBER_FEEDS)
+    const getEpisodes = (store?: typeof summaryStore) => getLiveEpisodes(store, memberFeeds)
+    const batch = await processPendingBatch({ getEpisodes, summaryStore, summarizeConfig }, { limit: 5, budgetMs: 75_000 }).catch(() => ({ processed: 0, remaining: 0 }))
 
     let sentMarker: string | null = null
     if (!force) {
@@ -89,7 +98,7 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
     const siteUrl = env.SITE_URL
     const attachPdf = env.EMAIL_ATTACHMENTS === '1'
     const result = await runWeeklyDigest({
-      getEpisodes: getLiveEpisodes,
+      getEpisodes,
       summaryStore,
       subscriberStore,
       // No browser session server-side, so authenticate the send with the service token.

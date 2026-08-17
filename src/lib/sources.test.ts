@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { knownResultsForQuery, knownShowBySpotifyId, knownShowByTerm, memberFeedInfo } from './knownSources'
+import { knownResultsForQuery, knownShowBySpotifyId, knownShowByTerm, knownShowResult, memberFeedInfo, pooledResultForMemberFeed } from './knownSources'
 import { parseSpotifyEmbed, parseSpotifyOembed, spotifyShowId, titleMatches } from '../../server/spotify'
 import type { PodcastSearchResult } from './types'
 
@@ -28,37 +28,69 @@ describe('knownShowByTerm', () => {
 })
 
 describe('knownResultsForQuery', () => {
-  const cards = knownResultsForQuery('stratechery')
+  const [card, ...rest] = knownResultsForQuery('stratechery')
 
-  it('leads with the paywalled source, carrying nothing that could be fetched', () => {
-    expect(cards[0].access).toBe('paid')
-    expect(cards[0].feedUrl).toBe('') // no feed → the card renders locked
-    expect(cards[0].webUrl).toContain('open.spotify.com/show/')
-    expect(cards[0].accessNote).toMatch(/subscriber-only/i)
+  it('returns ONE pooled show, not one card per source', () => {
+    expect(rest).toEqual([])
+    expect(card.id).toBe('stratechery') // the catalog's own id — search and catalog are one show
+    expect(card.title).toBe('Stratechery')
   })
 
-  it('offers the free sources with real, fetchable feeds', () => {
-    const free = cards.slice(1)
-    expect(free.length).toBeGreaterThan(0)
-    for (const c of free) {
-      expect(c.feedUrl, c.title).toMatch(/^https:\/\//)
-      expect(c.access, c.title).not.toBe('paid')
-    }
-    const youtube = free.find((c) => c.source === 'youtube')!
-    expect(youtube.feedUrl).toBe('https://www.youtube.com/feeds/videos.xml?channel_id=UC9AHywQeW9BOcOl7dg-YMqA')
-    // Same id the server derives from a pasted channel URL, so the two dedupe.
-    expect(youtube.id).toBe('yt-UC9AHywQeW9BOcOl7dg-YMqA')
-    // The article feed carries free articles in full and paid ones as teasers.
-    expect(free.find((c) => c.access === 'partial')?.feedUrl).toBe('https://stratechery.com/feed/')
+  it('pools every feed we can fetch, and makes the first one the primary', () => {
+    const urls = (card.feeds ?? []).map((f) => f.feedUrl)
+    expect(urls).toContain('https://www.youtube.com/feeds/videos.xml?channel_id=UC9AHywQeW9BOcOl7dg-YMqA')
+    expect(urls).toContain('https://stratechery.com/feed/')
+    expect(card.feedUrl).toBe(urls[0])
+    for (const url of urls) expect(url, url).toMatch(/^https:\/\//)
   })
 
-  it('points only the paid card at the member-feed page — a free source needs no subscription', () => {
-    expect(cards[0].memberFeedPage).toContain('passport.online')
-    for (const c of cards.slice(1)) expect(c.memberFeedPage, c.title).toBeUndefined()
+  it("reads as 'partial' while the paid feed is missing, and says what's behind the paywall", () => {
+    expect(card.access).toBe('partial') // free sources work; the paid Updates don't
+    expect(card.paidNote).toMatch(/subscriber-only/i)
+    expect(card.memberFeedPage).toContain('passport.online')
+    expect(card.webUrl).toContain('open.spotify.com/show/')
+  })
+
+  it('upgrades to a private pool once a member feed joins, and stops advertising the account page', () => {
+    const show = knownShowByTerm('stratechery')!
+    const unlocked = knownShowResult(show, [{ feedUrl: 'https://x.passport.online/feed/podcast/TOK', access: 'private', label: 'Member feed' }])
+    expect(unlocked.access).toBe('private')
+    expect(unlocked.feeds).toHaveLength((card.feeds?.length ?? 0) + 1)
+    expect(unlocked.accessNote).toMatch(/secret/i)
+    expect(unlocked.memberFeedPage).toBeUndefined()
+    expect(unlocked.paidNote).toBeUndefined()
+  })
+
+  it('never adds the same feed twice', () => {
+    const show = knownShowByTerm('stratechery')!
+    const again = knownShowResult(show, [{ feedUrl: 'https://stratechery.com/feed/', label: 'Articles' }])
+    expect(again.feeds).toHaveLength(card.feeds?.length ?? 0)
   })
 
   it('returns nothing for a query that names no known show', () => {
     expect(knownResultsForQuery('odd lots')).toEqual([])
+  })
+})
+
+// Pasting a member feed must join the show already on the list, not create a
+// second near-identical one.
+describe('pooledResultForMemberFeed', () => {
+  const MEMBER = 'https://stratechery.passport.online/feed/podcast/TOKEN123456789'
+
+  it('resolves to the pooled show with the member feed added last', () => {
+    const r = pooledResultForMemberFeed(MEMBER)!
+    expect(r.id).toBe('stratechery')
+    expect(r.access).toBe('private')
+    const feeds = r.feeds ?? []
+    expect(feeds[feeds.length - 1].feedUrl).toBe(MEMBER)
+    expect(feeds[feeds.length - 1].access).toBe('private')
+    // The free sources are still in the pool — the member feed adds, never replaces.
+    expect(feeds.map((f) => f.feedUrl)).toContain('https://stratechery.com/feed/')
+  })
+
+  it('is null for a member feed no known show claims', () => {
+    expect(pooledResultForMemberFeed('https://example.supercast.com/feed/abc')).toBeNull()
+    expect(pooledResultForMemberFeed('https://feeds.megaphone.fm/CLS2859450455')).toBeNull()
   })
 })
 

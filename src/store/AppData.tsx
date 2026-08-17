@@ -7,6 +7,7 @@ import { getIdentity, onIdentityChange, resolveIdentity, type Identity } from '.
 import { setStorageUser } from '../lib/storageScope'
 import { leanEpisode, loadProcessed, mirrorProcessed, saveProcessed } from '../lib/processedStore'
 import { loadTracked, mirrorTracked, removeTracked, saveTracked } from '../lib/trackedStore'
+import { feedsOf, feedUrlsOf, mergeFeeds } from '../lib/pool'
 
 // One provider loads everything through the api seam and hands it to the app
 // via context, so individual pages stay synchronous and snappy. The boot fetch
@@ -225,10 +226,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       setEpisodes([...byId.values()].filter((ep) => !locked.has(ep.podcastId)))
       setWeekly(w)
       setLoading(false)
-      // Detect each user-added feed's recent episodes (best-effort, non-blocking).
+      // Detect each user-added show's recent episodes (best-effort, non-blocking).
+      // A show with several feeds sends all of them in one call and gets back one
+      // pooled, de-duplicated list.
       for (const tp of persisted) {
-        if (!tp.feedUrl) continue
-        api.fetchFeedEpisodes(tp.feedUrl, tp.id).then((eps) => {
+        const feeds = feedUrlsOf(tp)
+        if (!feeds.length) continue
+        api.fetchFeedEpisodes(feeds, tp.id).then((eps) => {
           if (alive && identityEpoch.current === epoch) mergeEpisodes(eps)
         })
       }
@@ -284,9 +288,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     if (!seedIds.current.has(id)) {
       if (nowTracked) {
         saveTracked({ ...current, tracked: true })
-        if (current.feedUrl) {
+        const feeds = feedUrlsOf(current)
+        if (feeds.length) {
           const epoch = identityEpoch.current
-          api.fetchFeedEpisodes(current.feedUrl, id).then((eps) => {
+          api.fetchFeedEpisodes(feeds, id).then((eps) => {
             if (identityEpoch.current === epoch) mergeEpisodes(eps)
           })
         }
@@ -306,12 +311,37 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const entry: Podcast = { ...incoming, tracked: true }
       const match = podcastsRef.current.find((p) => samePodcast(p, entry))
       if (match) {
-        // Already known (often a seed show surfaced by search) — just ensure it's tracked.
-        setPodcasts((prev) => prev.map((p) => (p.id === match.id ? { ...p, tracked: true } : p)))
-        void api.upsertChannel({ ...match, tracked: true })
-        if (!seedIds.current.has(match.id)) {
-          saveTracked({ ...match, tracked: true })
-          if (match.feedUrl) api.fetchFeedEpisodes(match.feedUrl, match.id).then(mergeIfSameUser)
+        // Already known (a seed show surfaced by search, or a second source for a
+        // show already tracked). Ensure it's tracked and POOL any feed the incoming
+        // copy brings that this one doesn't — that's how connecting a member feed
+        // adds the paid episodes to the show already on the list, rather than
+        // creating a near-identical second show.
+        const feeds = mergeFeeds(feedsOf(match), feedsOf(entry))
+        const gained = feeds.length > feedsOf(match).length
+        const merged: Podcast = {
+          ...match,
+          tracked: true,
+          ...(gained
+            ? {
+                feeds,
+                feedUrl: feeds[0].feedUrl,
+                // The pool's access + copy come from the incoming result, which is
+                // the one that knows a member feed just joined.
+                access: entry.access ?? match.access,
+                accessNote: entry.accessNote ?? match.accessNote,
+                memberFeedPage: entry.memberFeedPage,
+                paidNote: entry.paidNote,
+              }
+            : {}),
+        }
+        setPodcasts((prev) => prev.map((p) => (p.id === match.id ? merged : p)))
+        void api.upsertChannel(merged)
+        // Seed shows aren't mirrored locally (their overrides live in the roster),
+        // but a seed that just gained a feed still needs its episodes re-detected.
+        if (!seedIds.current.has(match.id)) saveTracked(merged)
+        if (gained || !seedIds.current.has(match.id)) {
+          const feedUrls = feedUrlsOf(merged)
+          if (feedUrls.length) api.fetchFeedEpisodes(feedUrls, merged.id).then(mergeIfSameUser)
         }
         return
       }
@@ -320,7 +350,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       )
       saveTracked(entry)
       void api.upsertChannel(entry)
-      if (entry.feedUrl) api.fetchFeedEpisodes(entry.feedUrl, entry.id).then(mergeIfSameUser)
+      const feeds = feedUrlsOf(entry)
+      if (feeds.length) api.fetchFeedEpisodes(feeds, entry.id).then(mergeIfSameUser)
     },
     [mergeEpisodes],
   )

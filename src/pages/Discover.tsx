@@ -5,6 +5,7 @@ import { useAppData } from '../store/AppData'
 import { searchPodcasts } from '../lib/api'
 import type { FeedAccess, Podcast, PodcastSearchResult } from '../lib/types'
 import { UNFETCHABLE_ACCESS } from '../lib/types'
+import { feedsOf } from '../lib/pool'
 import { stableHash } from '../lib/hash'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
@@ -40,10 +41,12 @@ function toPodcast(r: PodcastSearchResult): Podcast {
     monogram: monogramOf(r.title),
     artworkUrl: r.artworkUrl,
     feedUrl: r.feedUrl,
+    feeds: r.feeds,
     access,
     accessNote: r.accessNote,
     webUrl: r.webUrl,
     memberFeedPage: r.memberFeedPage,
+    paidNote: r.paidNote,
     // No feed to fetch (paywalled, or a platform that publishes none) → locked, so
     // it can never imply episodes we're able to ingest.
     locked: !r.feedUrl || UNFETCHABLE_ACCESS.includes(access),
@@ -100,34 +103,58 @@ function AccessBadge({ access }: { access: FeedAccess }) {
   )
 }
 
-// Shown above the results whenever one of them is paywalled — the "you won't get
-// these episodes" answer, plus the two things that actually work.
-function PaidNotice({ shows }: { shows: Podcast[] }) {
+// Shown above the results whenever part of a show is out of reach — a wholly
+// paywalled show (nothing to track) or a pooled one whose paid instalments are
+// still missing (trackable, but incomplete). Different problem, different ask.
+function UnlockNotice({ shows }: { shows: Podcast[] }) {
   const memberPage = shows.find((s) => s.memberFeedPage)?.memberFeedPage
+  const locked = shows.filter((s) => s.locked)
+  const pooled = shows.filter((s) => !s.locked)
   const names = shows.map((s) => s.title)
+  const one = names.length === 1 ? names[0] : ''
   return (
     <div className="mb-md rounded-xl border border-accent-amber/30 bg-[#fdf9f0] p-md">
       <div className="flex items-start gap-2.5">
         <Icon name="lock" size={18} className="mt-0.5 shrink-0 text-accent-amber" />
         <div className="min-w-0">
           <p className="text-[15px] font-semibold text-on-surface">
-            {names.length === 1 ? `${names[0]} is paid — we can't fetch those episodes` : `Some of these are paid — we can't fetch those episodes`}
+            {locked.length && !pooled.length
+              ? one
+                ? `${one} is paid — we can't fetch those episodes`
+                : `These are paid — we can't fetch those episodes`
+              : one
+                ? `Part of ${one} is paid — the free sources are pooled and ready`
+                : `Part of these shows is paid — the free sources are pooled and ready`}
           </p>
+          {/* Say exactly what is behind the paywall, in the publisher's own terms. */}
           <p className="mt-1 text-metadata text-on-surface-variant">
-            Subscriber-only episodes are in no public feed, so there's nothing for us to transcribe or summarize — they stay out of your
-            episodes list and the weekly digest. Two things do work:
+            {shows.find((s) => s.paidNote)?.paidNote ??
+              `Subscriber-only episodes are in no public feed, so there's nothing for us to transcribe or summarize.`}
           </p>
           <ul className="mt-1.5 space-y-1 text-metadata text-on-surface-variant">
-            <li className="flex gap-1.5">
-              <Icon name="check" size={15} className="mt-0.5 shrink-0 text-success" />
-              <span>
-                Track the show's free sources below — a YouTube channel or an article feed is processed end to end.
-              </span>
-            </li>
+            {pooled.length > 0 && (
+              <li className="flex gap-1.5">
+                <Icon name="check" size={15} className="mt-0.5 shrink-0 text-success" />
+                <span>
+                  Tracking {one || 'a show'} now gives you{' '}
+                  <span className="font-semibold">
+                    {pooled[0].feeds?.map((f) => f.label).filter(Boolean).join(' + ') || 'its free sources'}
+                  </span>{' '}
+                  as one episode list — duplicates removed, processed end to end.
+                </span>
+              </li>
+            )}
+            {locked.length > 0 && pooled.length === 0 && (
+              <li className="flex gap-1.5">
+                <Icon name="check" size={15} className="mt-0.5 shrink-0 text-success" />
+                <span>Track the show's free sources when it has any — a YouTube channel or an article feed is processed end to end.</span>
+              </li>
+            )}
             <li className="flex gap-1.5">
               <Icon name="key" size={15} className="mt-0.5 shrink-0 text-primary" />
               <span>
-                Paste your own member feed URL in the search box above — that unlocks every paid episode your subscription includes.{' '}
+                Paste your own member feed URL in the search box above and it joins {pooled.length ? 'the same pooled show' : 'this show'} —
+                every paid episode your subscription includes, merged in with the free ones.{' '}
                 {memberPage ? (
                   <a href={memberPage} target="_blank" rel="noreferrer" className="font-semibold text-primary underline underline-offset-2">
                     Copy it from your account page
@@ -191,9 +218,14 @@ export default function Discover() {
   const isTracked = (r: PodcastSearchResult) =>
     podcasts.some((p) => p.tracked && (p.id === r.id || (!!p.feedUrl && trimFeed(p.feedUrl) === trimFeed(r.feedUrl))))
 
-  // Paywalled hits in the current results drive the explainer above them; a mixed
-  // set is also what makes a "Free" badge on the others worth showing.
-  const paidResults = useMemo(() => results.filter((r) => accessOf(r) === 'paid').map(toPodcast), [results])
+  // Results with something out of reach drive the explainer above them: a wholly
+  // paywalled show, or a pooled one still missing its paid instalments (which is
+  // what `paidNote` marks). A mixed set is also what makes a "Free" badge on the
+  // others worth showing.
+  const gatedResults = useMemo(
+    () => results.filter((r) => accessOf(r) === 'paid' || !!r.paidNote).map(toPodcast),
+    [results],
+  )
   const mixedAccess = useMemo(() => results.some((r) => accessOf(r) !== 'open'), [results])
 
   function onAdd(r: PodcastSearchResult) {
@@ -352,9 +384,9 @@ export default function Discover() {
                 </div>
               ) : (
                 <>
-                  {/* Paid shows in the results → say plainly what we can't get,
-                      before the user picks. */}
-                  {paidResults.length > 0 && <PaidNotice shows={paidResults} />}
+                  {/* Something in the results is out of reach → say plainly what,
+                      and how to pool it in, before the user picks. */}
+                  {gatedResults.length > 0 && <UnlockNotice shows={gatedResults} />}
                   <div className="grid grid-cols-1 gap-gutter md:grid-cols-2">
                     {results.map((r) => {
                       const trackedNow = isTracked(r)
@@ -581,6 +613,9 @@ function PodcastCard({ podcast, onToggle, labelFree = false }: { podcast: Podcas
   // and never repeat the generic note — the extra line would say nothing.
   const showBadge = access !== 'open' || labelFree
   const showNote = access !== 'open' || !!podcast.accessNote
+  const pooledLabels = feedsOf(podcast)
+    .map((f, i) => f.label || `Source ${i + 1}`)
+    .filter((l, i, all) => all.indexOf(l) === i)
   return (
     <div
       className={`lift flex items-center gap-md rounded-xl border bg-surface-container-lowest p-md hover:shadow-card ${
@@ -596,6 +631,19 @@ function PodcastCard({ podcast, onToggle, labelFree = false }: { podcast: Podcas
         <p className="text-[12px] text-secondary">{podcast.category}</p>
         <p className="mt-0.5 line-clamp-1 text-metadata text-on-surface-variant">{podcast.description || podcast.author}</p>
         {showNote && <p className="mt-0.5 line-clamp-2 text-[12px] leading-snug text-secondary">{note}</p>}
+        {/* A pooled show is one row here but several feeds underneath — name them,
+            so "one show" never means "we quietly picked one source". */}
+        {pooledLabels.length > 1 && (
+          <p className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-secondary">
+            <Icon name="merge" size={13} className="text-outline" />
+            {pooledLabels.map((label) => (
+              <span key={label} className="rounded border border-outline-variant bg-surface-container-low px-1.5 py-0.5 font-medium">
+                {label}
+              </span>
+            ))}
+            <span className="text-outline">pooled · duplicates removed</span>
+          </p>
+        )}
       </div>
       <button
         onClick={onToggle}
