@@ -1,6 +1,8 @@
-import type { SourceKind } from '../src/lib/types'
+import type { FeedAccess, SourceKind } from '../src/lib/types'
+import { knownResultsForQuery, memberFeedInfo } from '../src/lib/knownSources'
 import { isPublicHttpUrl, safeFetch } from './safeUrl'
 import { attrOf, decodeEntities, fetchFeedHead, hashKey, innerTag, plainText, unwrapCdata } from './feeds'
+import { isSpotifyShowUrl, resolveSpotifyShow } from './spotify'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Keyless podcast directory search. Runtime-agnostic (Vite dev middleware AND
@@ -8,27 +10,40 @@ import { attrOf, decodeEntities, fetchFeedHead, hashKey, innerTag, plainText, un
 //
 //   plain text  → Apple/iTunes Search API (free, no key); when Apple fails or
 //                 returns nothing — its WAF blocks datacenter IPs, so Workers
-//                 egress is often refused — fyyd.de answers instead
+//                 egress is often refused — fyyd.de answers instead. A term
+//                 naming a known paywalled show (src/lib/knownSources.ts) also
+//                 gets that show's own cards up front, since the directory has
+//                 no entry for a show with no public feed.
 //   apple URL   → iTunes lookup by collection id (…/id123456)
 //   youtube URL → playlist URLs resolve to the playlist's videos.xml feed
 //                 (shows published as playlists); otherwise the channel's
+//   spotify URL → Spotify publishes no feed, so a show link resolves to the real
+//                 RSS behind it, or to a clearly-labelled paid card (server/spotify.ts)
 //   site URL    → follow the page's advertised <link rel="alternate"> to its feed
 //   rss URL     → accept the feed and read its channel metadata
 //
+// Every result carries an `access` state — the honest answer to "will we actually
+// get these episodes?" — so Discover can never present a paywalled source as
+// something it can summarize. See FeedAccess in src/lib/types.ts.
+//
 // Every user-supplied URL (and the feedUrl a result carries) is validated by the
-// SSRF guard before we fetch or return it. Fixed Apple hosts aren't user-
+// SSRF guard before we fetch or return it. Fixed Apple/Spotify hosts aren't user-
 // controlled, so those calls use plain fetch.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface PodcastSearchResult {
-  id: string // itunes-<collectionId> | feed-<hashKey(feedUrl)> | yt-<channelId>
+  id: string // itunes-<collectionId> | feed-<hashKey(feedUrl)> | yt-<channelId> | spotify-<showId>
   title: string
   author: string
   category: string
   description: string
   artworkUrl?: string
-  feedUrl: string // canonical RSS / YouTube videos.xml
+  feedUrl: string // canonical RSS / YouTube videos.xml; '' when there's nothing to fetch
   source: SourceKind
+  access?: FeedAccess
+  accessNote?: string
+  webUrl?: string
+  memberFeedPage?: string
 }
 
 const UA = 'MunshotPodcasts/1.0 (+https://munshot.io)'
@@ -66,6 +81,9 @@ function mapItunes(r: ItunesPodcast): PodcastSearchResult | null {
     artworkUrl: r.artworkUrl600 || undefined,
     feedUrl,
     source: 'podcast',
+    // A directory listing means a public feed. `accessNote` stays empty: 'open' is
+    // the unremarkable case, and a note on every card would be noise.
+    access: 'open',
   }
 }
 
@@ -145,6 +163,7 @@ async function searchFyyd(term: string, limit = LIMIT): Promise<PodcastSearchRes
         artworkUrl: row.smallImageURL || row.imgURL || undefined,
         feedUrl,
         source: 'podcast',
+        access: 'open',
       })
     }
     return out
@@ -213,6 +232,11 @@ async function resolveRssFeed(url: string, discover = true): Promise<PodcastSear
     decodeEntities(unwrapCdata(innerTag(head, 'managingEditor'))).trim()
   const category = attrOf(head, 'itunes:category', 'text').trim() || decodeEntities(unwrapCdata(innerTag(head, 'category'))).trim()
   const artworkUrl = attrOf(head, 'itunes:image', 'href').trim() || plainText(innerTag(innerTag(head, 'image'), 'url')).trim()
+  // A personal member feed is the ONE route to a show's paid episodes, so it's
+  // tracked like any other — but it carries a credential, and the card has to say
+  // so. The token itself never leaves this object: the UI renders title/notes, not
+  // the URL.
+  const member = memberFeedInfo(url)
   return [
     {
       id: `feed-${hashKey(url)}`,
@@ -223,6 +247,8 @@ async function resolveRssFeed(url: string, discover = true): Promise<PodcastSear
       artworkUrl: artworkUrl || undefined,
       feedUrl: url,
       source: 'podcast',
+      access: member?.access ?? 'open',
+      accessNote: member?.note,
     },
   ]
 }
@@ -258,7 +284,7 @@ async function resolveYouTubePlaylist(rawUrl: string): Promise<PodcastSearchResu
   const title = decodeEntities(unwrapCdata(innerTag(head, 'title'))).trim()
   if (!title) return [] // private / deleted playlist → let the channel path try
   const author = decodeEntities(unwrapCdata(innerTag(innerTag(head, 'author'), 'name'))).trim() || title
-  return [{ id: `yt-pl-${listId}`, title, author, category: 'YouTube', description: '', feedUrl, source: 'youtube' }]
+  return [{ id: `yt-pl-${listId}`, title, author, category: 'YouTube', description: '', feedUrl, source: 'youtube', access: 'open' }]
 }
 
 function youtubeHandleName(u: URL): string {
@@ -269,8 +295,35 @@ function youtubeHandleName(u: URL): string {
   return 'YouTube channel'
 }
 
-async function readCapped(res: Response, maxBytes: number): Promise<string> {
-  if (!res.body) return ''
+// Where a channel page states its own id, best first. The canonical <link> is the
+// dependable one; `"channelId":"…"` no longer appears in the served markup at all
+// (kept because it costs nothing and older/alternate variants still carry it).
+export const CHANNEL_ID_PATTERNS: readonly RegExp[] = [
+  /<link[^>]+rel=["']canonical["'][^>]+href=["'][^"']*\/channel\/(UC[\w-]+)/i,
+  /"(?:channelId|externalId)":"(UC[\w-]+)"/,
+  /\/channel\/(UC[\w-]+)/,
+]
+
+/** First channel id in `html`, or null. Exported for the parser tests. */
+export function channelIdIn(html: string): string | null {
+  for (const re of CHANNEL_ID_PATTERNS) {
+    const m = html.match(re)
+    if (m) return m[1]
+  }
+  return null
+}
+
+// Stream the page and stop at the first id instead of reading a fixed prefix and
+// hoping. This matters: YouTube emits the canonical <link> ~700 KB into the
+// document, BELOW the whole inlined player bundle, so the old 300 KB read never
+// saw it — every pasted /@handle URL quietly degraded to a name search, which for
+// a show with no directory entry returns everything except the show. Each chunk is
+// scanned with a small overlap so a match straddling a chunk boundary is still found.
+const CHANNEL_PAGE_MAX = 1_200_000
+const OVERLAP = 512
+
+async function scanForChannelId(res: Response, maxBytes = CHANNEL_PAGE_MAX): Promise<string | null> {
+  if (!res.body) return null
   const reader = res.body.getReader()
   const decoder = new TextDecoder('utf-8')
   let text = ''
@@ -280,16 +333,18 @@ async function readCapped(res: Response, maxBytes: number): Promise<string> {
       const { done, value } = await reader.read()
       if (done) break
       received += value.byteLength
+      const before = text.length
       text += decoder.decode(value, { stream: true })
-      if (received >= maxBytes) {
+      const found = channelIdIn(text.slice(Math.max(0, before - OVERLAP)))
+      if (found || received >= maxBytes) {
         await reader.cancel().catch(() => {})
-        break
+        return found ?? channelIdIn(text)
       }
     }
   } catch {
-    /* return whatever we managed to read */
+    /* fall through and match on whatever arrived */
   }
-  return text
+  return channelIdIn(text)
 }
 
 async function resolveYouTubeChannelId(rawUrl: string): Promise<string | null> {
@@ -305,17 +360,12 @@ async function resolveYouTubeChannelId(rawUrl: string): Promise<string | null> {
   if (param && /^UC[\w-]+$/.test(param)) return param
   // /@handle, /c/Name, /user/Name → scrape the channel page for the id. The
   // consent cookies matter: without them YouTube often serves a consent
-  // interstitial (especially to datacenter IPs) that carries no channelId.
+  // interstitial (especially to datacenter IPs) that carries no channel id.
   const res = await safeFetch(rawUrl, {
     headers: { 'user-agent': UA, accept: 'text/html,*/*', 'accept-language': 'en', cookie: 'CONSENT=YES+1; SOCS=CAI' },
   })
   if (!res || !res.ok) return null
-  const html = await readCapped(res, 300_000)
-  const m =
-    html.match(/"channelId":"(UC[\w-]+)"/) ||
-    html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["'][^"']*\/channel\/(UC[\w-]+)/i) ||
-    html.match(/\/channel\/(UC[\w-]+)/)
-  return m ? m[1] : null
+  return scanForChannelId(res)
 }
 
 async function resolveYouTubeFeed(rawUrl: string): Promise<PodcastSearchResult[]> {
@@ -337,7 +387,7 @@ async function resolveYouTubeFeed(rawUrl: string): Promise<PodcastSearchResult[]
   }
   const title = decodeEntities(unwrapCdata(innerTag(head, 'title'))).trim() || fallback
   const author = decodeEntities(unwrapCdata(innerTag(innerTag(head, 'author'), 'name'))).trim() || title
-  return [{ id: `yt-${channelId}`, title, author, category: 'YouTube', description: '', feedUrl, source: 'youtube' }]
+  return [{ id: `yt-${channelId}`, title, author, category: 'YouTube', description: '', feedUrl, source: 'youtube', access: 'open' }]
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────
@@ -350,6 +400,16 @@ function youtubeHandleQuery(u: URL): string {
   const first = decodeURIComponent(seg[0] || '')
   const name = first.startsWith('@') ? first.slice(1) : (first === 'c' || first === 'user') && seg[1] ? decodeURIComponent(seg[1]) : ''
   return name.replace(/[._-]+/g, ' ').trim()
+}
+
+/** Known-show cards ahead of the directory's, deduped by id — the directory can't
+ *  list a show that publishes no public feed, so without this a search for one
+ *  returns everything except the show that was asked for. */
+function withKnownShow(term: string, results: PodcastSearchResult[]): PodcastSearchResult[] {
+  const known = knownResultsForQuery(term)
+  if (!known.length) return results
+  const seen = new Set(known.map((k) => k.id))
+  return [...known, ...results.filter((r) => !seen.has(r.id))]
 }
 
 export async function searchPodcasts(rawQuery: string, limit = LIMIT): Promise<PodcastSearchResult[]> {
@@ -374,10 +434,15 @@ export async function searchPodcasts(rawQuery: string, limit = LIMIT): Promise<P
       if (yt.length) return yt
       // Channel page unreachable (bot wall) → most YouTube podcasts also live in
       // the directory, so search the handle text rather than returning nothing.
+      // The known-show pass matters most here: a show with no directory entry
+      // would otherwise come back as a list of other people's podcasts.
       const handle = youtubeHandleQuery(u)
-      return handle ? searchDirectory(handle, cap) : []
+      return handle ? withKnownShow(handle, await searchDirectory(handle, cap)) : []
     }
+    // Spotify serves no feed — the resolver hands back the real RSS behind the
+    // show, or a labelled paid card plus whatever free sources exist.
+    if (isSpotifyShowUrl(q)) return resolveSpotifyShow(q, { directory: searchDirectory, limit: cap })
     return resolveRssFeed(q)
   }
-  return searchDirectory(q, cap)
+  return withKnownShow(q, await searchDirectory(q, cap))
 }

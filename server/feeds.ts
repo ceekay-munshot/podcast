@@ -8,9 +8,10 @@ import { isPublicHttpUrl, safeFetch } from './safeUrl'
 // the Cloudflare Pages Function). Pulls each show's real podcast RSS, parses the
 // latest episodes, and maps them to the app's Episode shape. Keyless.
 //
-// Shows with no clean public feed (Stratechery is members-only; "Access" has no
-// resolvable feed) fall back to that show's seeded episodes, so the dashboard is
-// always populated. A feed that errors or times out also falls back per-source.
+// Shows with no clean public feed (Stratechery is subscriber-only; "Access" has
+// no resolvable feed) fall back to that show's seeded episodes, so the dashboard
+// is always populated. A feed that errors or times out also falls back per-source.
+// Discover offers those shows' free/member sources instead — src/lib/knownSources.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Source {
@@ -20,7 +21,7 @@ interface Source {
 
 // Feed URLs resolved + verified via the iTunes Search API.
 const SOURCES: Source[] = [
-  { id: 'stratechery', feedUrl: null }, // members-only, no public feed
+  { id: 'stratechery', feedUrl: null }, // subscriber-only, no public feed (see knownSources.ts)
   { id: 'iltb', feedUrl: 'https://feeds.megaphone.fm/CLS2859450455' },
   { id: 'allin', feedUrl: 'https://rss.libsyn.com/shows/254861/destinations/1928300.xml' },
   { id: 'oddlots', feedUrl: 'https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/8a94442e-5a74-4fa2-8b8d-ae27003a8d6b/982f5071-765c-403d-969d-ae27003a8d83/podcast.rss' },

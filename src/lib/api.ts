@@ -1,5 +1,6 @@
 import type { Episode, Podcast, PodcastSearchResult, Summary, TranscriptSegment, WeeklySchedule, WeeklySummary } from './types'
 import { EPISODES, PODCASTS, WEEKLY } from './mock-data'
+import { knownResultsForQuery } from './knownSources'
 import { stableHash } from './hash'
 import { apiFetch } from './apiFetch'
 import { episodeBriefEmailHtml, weeklyBriefEmailHtml, welcomeEmailHtml, bytesToBase64, type EmailResult, type EmailAttachment } from './email'
@@ -315,10 +316,22 @@ export async function emailEpisodeSummary(
 // Apple's Search API straight from the browser: it supports CORS, and Apple's
 // WAF blocks datacenter IPs (our server) but not residential ones (this
 // browser). /api/search-podcasts stays the fallback — and the only path for
-// other URLs, whose resolution (SSRF guard, feed parsing) lives server-side.
+// other URLs (Spotify shows, RSS, YouTube channels), whose resolution (SSRF
+// guard, feed parsing) lives server-side.
+//
+// The known-show merge happens on BOTH paths: this browser fast path returns
+// Apple's rows directly, and Apple can't list a show that has no public feed, so
+// a search for a paywalled show would otherwise come back without it. Same cards,
+// same ids as the server produces (src/lib/knownSources.ts is shared).
 export function searchPodcasts(query: string, signal?: AbortSignal, limit?: number): Promise<PodcastSearchResult[]> {
   const q = query.trim()
   if (!q) return Promise.resolve([])
+  const withKnown = (results: PodcastSearchResult[]) => {
+    const known = knownResultsForQuery(q)
+    if (!known.length) return results
+    const seen = new Set(known.map((k) => k.id))
+    return [...known, ...results.filter((r) => !seen.has(r.id))]
+  }
   const viaServer = () =>
     apiFetch(`/api/search-podcasts?q=${encodeURIComponent(q)}${limit ? `&limit=${limit}` : ''}`, { signal })
       .then((r) => (r.ok ? (r.json() as Promise<PodcastSearchResult[]>) : []))
@@ -332,7 +345,7 @@ export function searchPodcasts(query: string, signal?: AbortSignal, limit?: numb
     return itunesDirect(`https://itunes.apple.com/lookup?id=${encodeURIComponent(appleId)}&entity=podcast`, signal) //
       .then((direct) => (direct.length ? direct : viaServer()))
   }
-  return searchItunesDirect(q, signal, limit).then((direct) => (direct.length ? direct : viaServer()))
+  return searchItunesDirect(q, signal, limit).then((direct) => (direct.length ? withKnown(direct) : viaServer()))
 }
 
 // …podcasts.apple.com/us/podcast/<slug>/id12345 → "12345" (null for non-Apple).
@@ -386,6 +399,7 @@ function itunesDirect(url: string, signal?: AbortSignal): Promise<PodcastSearchR
           artworkUrl: row.artworkUrl600 || undefined,
           feedUrl,
           source: 'podcast',
+          access: 'open', // a directory listing means a public feed
         })
       }
       return out

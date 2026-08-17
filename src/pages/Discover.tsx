@@ -3,7 +3,8 @@ import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
 import { searchPodcasts } from '../lib/api'
-import type { Podcast, PodcastSearchResult } from '../lib/types'
+import type { FeedAccess, Podcast, PodcastSearchResult } from '../lib/types'
+import { UNFETCHABLE_ACCESS } from '../lib/types'
 import { stableHash } from '../lib/hash'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
@@ -19,8 +20,13 @@ function monogramOf(title: string): string {
   return (words[0][0] + words[1][0]).toUpperCase()
 }
 
+const accessOf = (r: Pick<PodcastSearchResult, 'access'>): FeedAccess => r.access ?? 'open'
+/** Is there actually a feed behind this result? Everything else is a locked card. */
+const isFetchable = (r: PodcastSearchResult) => !!r.feedUrl && !UNFETCHABLE_ACCESS.includes(accessOf(r))
+
 // Search hit → a full Podcast the store can track (and CoverTile can render).
 function toPodcast(r: PodcastSearchResult): Podcast {
+  const access = accessOf(r)
   return {
     id: r.id,
     title: r.title,
@@ -34,11 +40,110 @@ function toPodcast(r: PodcastSearchResult): Podcast {
     monogram: monogramOf(r.title),
     artworkUrl: r.artworkUrl,
     feedUrl: r.feedUrl,
+    access,
+    accessNote: r.accessNote,
+    webUrl: r.webUrl,
+    memberFeedPage: r.memberFeedPage,
+    // No feed to fetch (paywalled, or a platform that publishes none) → locked, so
+    // it can never imply episodes we're able to ingest.
+    locked: !r.feedUrl || UNFETCHABLE_ACCESS.includes(access),
     tracked: true,
   }
 }
 
 const trimFeed = (u?: string) => (u ? u.trim().toLowerCase().replace(/\/+$/, '') : '')
+
+// How each access state reads on a card. The `note` here is the generic fallback;
+// a result carrying its own `accessNote` (a specific paywall, a specific member
+// feed) always wins, because specific is more useful than accurate-but-vague.
+const ACCESS_UI: Record<FeedAccess, { label: string; icon: string; chip: string; note: string }> = {
+  open: {
+    label: 'Free',
+    icon: 'public',
+    chip: 'border-success/30 bg-success-container text-on-success-container',
+    note: 'Public feed — every episode is fetched and summarized.',
+  },
+  partial: {
+    label: 'Partly paid',
+    icon: 'contrast',
+    chip: 'border-accent-amber/30 bg-[#fdf6e7] text-accent-amber',
+    note: `Free items in full; the paid ones arrive as a teaser only.`,
+  },
+  private: {
+    label: 'Your member feed',
+    icon: 'key',
+    chip: 'border-primary/30 chip-signal',
+    note: `Unlocks your paid episodes. Keep the URL secret — it carries your subscription.`,
+  },
+  paid: {
+    label: 'Paid',
+    icon: 'lock',
+    chip: 'border-accent-amber/40 bg-[#fdf6e7] text-accent-amber',
+    note: `Subscriber-only — no public feed, so these episodes can't be fetched.`,
+  },
+  closed: {
+    label: 'No feed',
+    icon: 'link_off',
+    chip: 'border-outline-variant bg-surface-container text-secondary',
+    note: `No feed published for this show, so its episodes can't be fetched.`,
+  },
+}
+
+function AccessBadge({ access }: { access: FeedAccess }) {
+  const ui = ACCESS_UI[access]
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${ui.chip}`}
+    >
+      <Icon name={ui.icon} size={11} /> {ui.label}
+    </span>
+  )
+}
+
+// Shown above the results whenever one of them is paywalled — the "you won't get
+// these episodes" answer, plus the two things that actually work.
+function PaidNotice({ shows }: { shows: Podcast[] }) {
+  const memberPage = shows.find((s) => s.memberFeedPage)?.memberFeedPage
+  const names = shows.map((s) => s.title)
+  return (
+    <div className="mb-md rounded-xl border border-accent-amber/30 bg-[#fdf9f0] p-md">
+      <div className="flex items-start gap-2.5">
+        <Icon name="lock" size={18} className="mt-0.5 shrink-0 text-accent-amber" />
+        <div className="min-w-0">
+          <p className="text-[15px] font-semibold text-on-surface">
+            {names.length === 1 ? `${names[0]} is paid — we can't fetch those episodes` : `Some of these are paid — we can't fetch those episodes`}
+          </p>
+          <p className="mt-1 text-metadata text-on-surface-variant">
+            Subscriber-only episodes are in no public feed, so there's nothing for us to transcribe or summarize — they stay out of your
+            episodes list and the weekly digest. Two things do work:
+          </p>
+          <ul className="mt-1.5 space-y-1 text-metadata text-on-surface-variant">
+            <li className="flex gap-1.5">
+              <Icon name="check" size={15} className="mt-0.5 shrink-0 text-success" />
+              <span>
+                Track the show's free sources below — a YouTube channel or an article feed is processed end to end.
+              </span>
+            </li>
+            <li className="flex gap-1.5">
+              <Icon name="key" size={15} className="mt-0.5 shrink-0 text-primary" />
+              <span>
+                Paste your own member feed URL in the search box above — that unlocks every paid episode your subscription includes.{' '}
+                {memberPage ? (
+                  <a href={memberPage} target="_blank" rel="noreferrer" className="font-semibold text-primary underline underline-offset-2">
+                    Copy it from your account page
+                  </a>
+                ) : (
+                  <span className="font-medium">Look for “RSS”, “Podcast feed”, or “Delivery” in your account settings.</span>
+                )}
+                . It carries your subscription, so treat it like a password — it's stored with your tracked shows.
+              </span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export default function Discover() {
   const { podcasts, toggleTracked, addPodcast } = useAppData()
@@ -86,7 +191,13 @@ export default function Discover() {
   const isTracked = (r: PodcastSearchResult) =>
     podcasts.some((p) => p.tracked && (p.id === r.id || (!!p.feedUrl && trimFeed(p.feedUrl) === trimFeed(r.feedUrl))))
 
+  // Paywalled hits in the current results drive the explainer above them; a mixed
+  // set is also what makes a "Free" badge on the others worth showing.
+  const paidResults = useMemo(() => results.filter((r) => accessOf(r) === 'paid').map(toPodcast), [results])
+  const mixedAccess = useMemo(() => results.some((r) => accessOf(r) !== 'open'), [results])
+
   function onAdd(r: PodcastSearchResult) {
+    if (!isFetchable(r)) return // nothing to fetch — the card renders locked, this is the belt-and-braces
     addPodcast(toPodcast(r))
     setJustAdded(r.title)
   }
@@ -162,7 +273,8 @@ export default function Discover() {
     const dir: Suggestion[] = []
     for (const r of relatedRaw) {
       const feed = trimFeed(r.feedUrl)
-      if (seenIds.has(r.id) || (feed && seenFeeds.has(feed)) || isTracked(r)) continue
+      // Suggestions are an "add this" rail — a card you can't add doesn't belong.
+      if (!isFetchable(r) || seenIds.has(r.id) || (feed && seenFeeds.has(feed)) || isTracked(r)) continue
       seenIds.add(r.id)
       if (feed) seenFeeds.add(feed)
       dir.push({ key: r.id, podcast: { ...toPodcast(r), tracked: false }, add: () => onAdd(r) })
@@ -193,7 +305,7 @@ export default function Discover() {
           <div className="mx-auto max-w-3xl text-center">
             <h1 className="text-display-lg tracking-tight text-on-surface">Track the podcasts that matter to you</h1>
             <p className="mt-2 text-body-lg text-secondary">
-              Search Apple Podcasts, or paste an RSS feed, YouTube channel, or playlist URL to get started.
+              Search Apple Podcasts, or paste an RSS feed, Spotify show, YouTube channel, or playlist URL to get started.
             </p>
             <form onSubmit={(e: FormEvent) => e.preventDefault()} className="relative mx-auto mt-lg">
               <Icon name="search" size={22} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-outline" />
@@ -203,7 +315,7 @@ export default function Discover() {
                   setQuery(e.target.value)
                   setJustAdded(null)
                 }}
-                placeholder="Search podcasts or paste an RSS / YouTube channel / playlist URL"
+                placeholder="Search podcasts or paste an RSS / Spotify / YouTube URL"
                 className="w-full rounded-xl border border-outline-variant bg-surface-container-lowest py-3.5 pl-12 pr-11 text-body-md shadow-card outline-none focus:border-primary"
                 autoFocus
               />
@@ -234,23 +346,32 @@ export default function Discover() {
                   <p className="text-body-md text-on-surface">
                     No podcasts found for <span className="font-semibold">“{q}”</span>.
                   </p>
-                  <p className="mt-1 text-metadata text-secondary">Try a different name, or paste an RSS feed, YouTube channel, or playlist URL.</p>
+                  <p className="mt-1 text-metadata text-secondary">
+                    Try a different name, or paste an RSS feed, Spotify show, YouTube channel, or playlist URL.
+                  </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 gap-gutter md:grid-cols-2">
-                  {results.map((r) => {
-                    const trackedNow = isTracked(r)
-                    return (
-                      <PodcastCard
-                        key={r.id}
-                        podcast={{ ...toPodcast(r), tracked: trackedNow }}
-                        onToggle={() => {
-                          if (!trackedNow) onAdd(r)
-                        }}
-                      />
-                    )
-                  })}
-                </div>
+                <>
+                  {/* Paid shows in the results → say plainly what we can't get,
+                      before the user picks. */}
+                  {paidResults.length > 0 && <PaidNotice shows={paidResults} />}
+                  <div className="grid grid-cols-1 gap-gutter md:grid-cols-2">
+                    {results.map((r) => {
+                      const trackedNow = isTracked(r)
+                      return (
+                        <PodcastCard
+                          key={r.id}
+                          podcast={{ ...toPodcast(r), tracked: trackedNow }}
+                          // "Free" is worth stating only next to something that isn't.
+                          labelFree={mixedAccess}
+                          onToggle={() => {
+                            if (!trackedNow) onAdd(r)
+                          }}
+                        />
+                      )
+                    })}
+                  </div>
+                </>
               )}
             </div>
           )}
@@ -397,9 +518,26 @@ function CardSkeletons() {
   )
 }
 
-function PodcastCard({ podcast, onToggle }: { podcast: Podcast; onToggle: () => void }) {
-  // Locked = no public feed. Can't be tracked, ingested, or transcribed — render
-  // it plainly as locked rather than letting it imply analyzable content.
+/** The site behind a webUrl, as a button label ("Spotify", "YouTube", "stratechery.com"). */
+function linkLabel(url: string): string {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase()
+    if (host.endsWith('spotify.com')) return 'Spotify'
+    if (host.endsWith('youtube.com') || host === 'youtu.be') return 'YouTube'
+    return host
+  } catch {
+    return 'the source'
+  }
+}
+
+function PodcastCard({ podcast, onToggle, labelFree = false }: { podcast: Podcast; onToggle: () => void; labelFree?: boolean }) {
+  const access: FeedAccess = podcast.access ?? (podcast.locked ? 'paid' : 'open')
+  const note = podcast.accessNote || ACCESS_UI[access].note
+
+  // Locked = nothing to fetch: a paywalled show, or a platform that publishes no
+  // feed. Can't be tracked, ingested, or transcribed — render it plainly as locked
+  // rather than letting it imply analyzable content. The badge distinguishes the
+  // two: a paywall is the user's to unlock, a platform exclusive isn't.
   if (podcast.locked) {
     return (
       <div className="flex items-center gap-md rounded-xl border border-dashed border-outline-variant bg-surface-container-low p-md">
@@ -410,19 +548,28 @@ function PodcastCard({ podcast, onToggle }: { podcast: Podcast; onToggle: () => 
           </span>
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <h4 className="text-[16px] font-semibold text-on-surface-variant">{podcast.title}</h4>
-            <span className="inline-flex items-center gap-1 rounded-full border border-outline-variant px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-secondary">
-              <Icon name="lock" size={11} /> Locked
-            </span>
+            <AccessBadge access={access} />
           </div>
-          <p className="text-[12px] text-secondary">No public feed — episodes can't be ingested or transcribed.</p>
-          <p className="mt-0.5 line-clamp-1 text-metadata text-outline">{podcast.description}</p>
+          {/* Clamped: a card is a compact row, and the full reasoning lives in the
+              notice above the results, which has room for it. */}
+          <p className="mt-0.5 line-clamp-3 text-[12px] leading-snug text-secondary">{note}</p>
+          {podcast.webUrl && (
+            <a
+              href={podcast.webUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-flex items-center gap-1 text-[12px] font-semibold text-primary underline-offset-2 hover:underline"
+            >
+              Open on {linkLabel(podcast.webUrl)} <Icon name="open_in_new" size={13} />
+            </a>
+          )}
         </div>
         <span
           className="grid h-9 w-9 shrink-0 cursor-not-allowed place-items-center rounded-full border border-outline-variant text-outline"
-          title="No public feed — can't be tracked"
-          aria-label={`${podcast.title} is locked — no public feed`}
+          title={access === 'paid' ? "Subscriber-only — there's no feed for us to fetch" : "No feed published — can't be tracked"}
+          aria-label={`${podcast.title} can't be tracked — ${note}`}
         >
           <Icon name="lock" size={18} />
         </span>
@@ -430,6 +577,10 @@ function PodcastCard({ podcast, onToggle }: { podcast: Podcast; onToggle: () => 
     )
   }
   const tracked = podcast.tracked
+  // 'open' is the unremarkable case: badge it only alongside something that isn't,
+  // and never repeat the generic note — the extra line would say nothing.
+  const showBadge = access !== 'open' || labelFree
+  const showNote = access !== 'open' || !!podcast.accessNote
   return (
     <div
       className={`lift flex items-center gap-md rounded-xl border bg-surface-container-lowest p-md hover:shadow-card ${
@@ -438,9 +589,13 @@ function PodcastCard({ podcast, onToggle }: { podcast: Podcast; onToggle: () => 
     >
       <CoverTile podcast={podcast} className="h-16 w-16 shrink-0" rounded="rounded-xl" showSource />
       <div className="min-w-0 flex-1">
-        <h4 className="line-clamp-2 text-[16px] font-semibold text-on-surface">{podcast.title}</h4>
+        <div className="flex flex-wrap items-center gap-2">
+          <h4 className="line-clamp-2 text-[16px] font-semibold text-on-surface">{podcast.title}</h4>
+          {showBadge && <AccessBadge access={access} />}
+        </div>
         <p className="text-[12px] text-secondary">{podcast.category}</p>
         <p className="mt-0.5 line-clamp-1 text-metadata text-on-surface-variant">{podcast.description || podcast.author}</p>
+        {showNote && <p className="mt-0.5 line-clamp-2 text-[12px] leading-snug text-secondary">{note}</p>}
       </div>
       <button
         onClick={onToggle}

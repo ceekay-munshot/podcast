@@ -22,7 +22,7 @@ The product's 13 core features, each mapped to where it lives in the UI:
 
 | # | Feature | Where |
 |---|---------|-------|
-| 1 | Podcast / YouTube selection | **Discover** — search by name or paste an RSS/YouTube URL, add to your library |
+| 1 | Podcast / YouTube selection | **Discover** — search by name or paste an RSS / Spotify show / YouTube URL, add to your library ([paid sources](#paid-and-members-only-sources)) |
 | 2 | Automatic new-episode detection | **Home** processing queue + **Episodes** status column |
 | 3 | Transcript ingestion | Status pipeline + the **Transcript** tab |
 | 4 | One-page AI summary | **Episode → Summary** (Executive Synthesis) |
@@ -38,6 +38,56 @@ The product's 13 core features, each mapped to where it lives in the UI:
 
 See [`FEASIBILITY.md`](./FEASIBILITY.md) for the per-feature buildability assessment.
 
+## Paid and members-only sources
+
+Not every show can be ingested, and Discover says so on the card rather than failing
+quietly later. Every search result carries an **access** state (`FeedAccess` in
+[`src/lib/types.ts`](./src/lib/types.ts)):
+
+| State | Badge | What it means | Trackable |
+|-------|-------|---------------|-----------|
+| `open` | Free | Public feed; every episode is fetched and summarized | ✅ |
+| `partial` | Partly paid | Public feed, but paid items arrive as a teaser only | ✅ (free items) |
+| `private` | Your member feed | A personal member feed — the one route to paid episodes | ✅ (all of them) |
+| `paid` | Paid | Subscriber-only; no feed exists for us to fetch | ❌ locked |
+| `closed` | No feed | Free at the source, but it publishes no feed (a platform exclusive) | ❌ locked |
+
+`paid` and `closed` render as locked cards, so a paywalled show can never imply
+episodes we're able to transcribe. Where the state comes from:
+
+- **Spotify show URLs** ([`server/spotify.ts`](./server/spotify.ts)) — Spotify
+  publishes no feed for anyone, so a pasted show link resolves to the show's real
+  public RSS when one exists (matched on the exact title), and otherwise to a
+  labelled card. Free vs. subscriber-only comes from Spotify's own embed payload
+  (`isPlayable` / `playabilityReason`), keylessly — no Spotify app credentials.
+- **Member feeds** (`memberFeedInfo` in [`src/lib/knownSources.ts`](./src/lib/knownSources.ts))
+  — recognized by membership host (Passport, Supercast, Supporting Cast, Memberful,
+  Patreon, Glow, Steady) or by a credential-bearing query param. Best-effort by
+  design: recognizing one earns the private badge and a keep-it-secret warning, and
+  missing one costs nothing — the feed is still fetched and tracked as normal.
+- **Known paywalled shows** (`KNOWN_SHOWS`, same file) — a small hand-verified
+  registry for the shows in the customer's lineup. A directory search can't list a
+  show that has no public feed (searching "Stratechery" in Apple returns Sharp Tech,
+  Exponent and Acquired — everything except Stratechery), so the registry supplies
+  that show's own cards: what's paid, what's free, and where the member feed comes
+  from. It is shared by the browser fast path and the server so both produce the
+  same cards with the same ids.
+
+**Stratechery** is the worked example (all four verified against the live sources):
+
+| Source | Access | Ingestible |
+|--------|--------|-----------|
+| [Spotify show](https://open.spotify.com/show/1jRACH7L8EQCYKc5uW7aPk) | `paid` | ✗ subscriber-only, no public audio |
+| [YouTube channel](https://www.youtube.com/@Stratechery) | `open` | ✓ the weekly video, in full |
+| [stratechery.com/feed](https://stratechery.com/feed/) | `partial` | ✓ free weekly articles; paid Updates are teasers |
+| `stratechery.passport.online/feed/podcast/<token>` | `private` | ✓ all paid episodes, with audio |
+
+**Member feed tokens are credentials and are not stored in this repo.** The registry
+holds only the publisher's feed *host* and the account page a subscriber copies their
+own URL from. Pasting that URL into Discover tracks it like any other feed — which
+means it is persisted with the user's tracked shows (`localStorage` + the channel
+roster in KV), the same as every other `feedUrl`. The UI says so on the card.
+
 ## Architecture
 
 ```
@@ -46,6 +96,7 @@ src/
     types.ts        # the domain model — the UI ⇄ backend contract
     mock-data.ts    # realistic sample content (real podcast lineup)
     api.ts          # ← THE SEAM. async functions; swap mock for fetch()
+    knownSources.ts # paywalled shows + their free/member sources (shared with server/)
     format.ts       # duration / date / status helpers
   store/
     AppData.tsx     # loads everything through the api seam, provides via context

@@ -19,8 +19,16 @@ export const PODCASTS: Podcast[] = [
     source: 'podcast',
     color: '#0058bc',
     monogram: 'ST',
-    tracked: false, // members-only, no public feed — can't be ingested
+    tracked: false, // subscriber-only, no public feed — can't be ingested
     locked: true,
+    // The paid podcast ships via Spotify and a personal Passport feed; neither is
+    // fetchable without the subscriber's own credentials. The free YouTube channel
+    // and article feed ARE fetchable and are offered in Discover — see
+    // src/lib/knownSources.ts, which is where those sources are defined.
+    access: 'paid',
+    accessNote: `Subscriber-only — no public feed, so paid episodes can't be fetched.`,
+    webUrl: 'https://open.spotify.com/show/1jRACH7L8EQCYKc5uW7aPk',
+    memberFeedPage: 'https://stratechery.passport.online/member/account/delivery',
   },
   {
     id: 'iltb',
@@ -159,6 +167,7 @@ export const PODCASTS: Podcast[] = [
     monogram: 'AX',
     tracked: false, // no resolvable public feed — can't be ingested
     locked: true,
+    access: 'closed', // not a paywall: the show simply publishes no feed we can reach
   },
   {
     id: 'bg2',

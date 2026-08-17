@@ -16,6 +16,21 @@ export type ProcessingStatus =
 
 export type SourceKind = 'podcast' | 'youtube'
 
+/** How much of a source we can actually ingest — the honest answer to "will we
+ *  get these episodes?", surfaced on every Discover card.
+ *   'open'    — public feed; every episode can be fetched and summarized.
+ *   'partial' — public feed, but the paid items arrive truncated (teaser only).
+ *   'private' — a personal member feed (credential in the URL): fetchable, and
+ *               secret. The only way paid episodes become reachable.
+ *   'paid'    — subscriber-only: no feed we can fetch. Nothing to ingest.
+ *   'closed'  — free to listen at the source, but it publishes no feed at all
+ *               (a platform exclusive) — also nothing to ingest, but NOT a paywall. */
+export type FeedAccess = 'open' | 'partial' | 'private' | 'paid' | 'closed'
+
+/** Access states with no feed behind them: rendered as locked cards, never
+ *  trackable, so they can't imply analyzable content. */
+export const UNFETCHABLE_ACCESS: readonly FeedAccess[] = ['paid', 'closed']
+
 export interface Podcast {
   id: string
   title: string
@@ -36,8 +51,19 @@ export interface Podcast {
   feedUrl?: string
   tracked: boolean
   /** No public feed → episodes can't be ingested or transcribed. Rendered as a
-   *  locked show; its episodes are suppressed so users never see fabricated data. */
+   *  locked show; its episodes are suppressed so users never see fabricated data.
+   *  Always true for an UNFETCHABLE_ACCESS show (`paid` / `closed`). */
   locked?: boolean
+  /** How much of this source we can ingest. Absent = 'open'. */
+  access?: FeedAccess
+  /** One honest line about the access state, shown on the Discover card. */
+  accessNote?: string
+  /** The human page behind the source (Spotify show, YouTube channel, publisher
+   *  site) — the only link a paywalled show can offer, having no feed. */
+  webUrl?: string
+  /** Where a subscriber copies their own private member feed from. Set only on a
+   *  paywalled show, whose paid episodes that feed is the only route to. */
+  memberFeedPage?: string
 }
 
 /** A directory search hit (Apple Podcasts / resolved RSS / YouTube channel).
@@ -50,8 +76,17 @@ export interface PodcastSearchResult {
   category: string
   description: string
   artworkUrl?: string
+  /** '' when the source has no feed to fetch (a paywalled or exclusive platform). */
   feedUrl: string
   source: SourceKind
+  /** How much of this source we can ingest. Absent = 'open' (a plain public feed). */
+  access?: FeedAccess
+  /** One honest line about the access state, shown on the Discover card. */
+  accessNote?: string
+  /** The human page behind this result — the only link a paywalled result offers. */
+  webUrl?: string
+  /** Where a subscriber copies their own private member feed from (paywalled results). */
+  memberFeedPage?: string
 }
 
 /** A plain conclusion — title + supporting detail. Used by the weekly digest,

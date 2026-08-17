@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { formatDuration } from './format'
 import { isPublicHttpUrl } from '../../server/safeUrl'
 import { audioEnclosure, parseAtomEntries, parseEpisodes } from '../../server/feeds'
-import { advertisedFeedUrl, youtubePlaylistId } from '../../server/search'
+import { advertisedFeedUrl, channelIdIn, youtubePlaylistId } from '../../server/search'
 
 // The SSRF guard is the security boundary for every user-supplied URL we fetch
 // server-side (search input + /api/episodes?feed=). These are the cases the
@@ -297,6 +297,32 @@ describe('advertisedFeedUrl', () => {
     const html = `<link rel="alternate" type="application/rss+xml" href="/feed"/>
       <link rel="alternate" type="application/rss+xml" href="/comments/feed"/>`
     expect(advertisedFeedUrl(html, 'https://example.com/')).toBe('https://example.com/feed')
+  })
+})
+
+// A pasted /@handle URL only becomes a feed once we know the channel id, and the
+// served page states it in exactly these places — nowhere near the top of the
+// document. (`"channelId":"…"` is absent from today's markup; the canonical <link>
+// carries it, ~700 KB in, which is why the scan streams instead of reading a
+// fixed prefix.)
+describe('channelIdIn', () => {
+  const ID = 'UC9AHywQeW9BOcOl7dg-YMqA'
+
+  it('reads the id from the canonical link, the JSON fields, and a bare channel path', () => {
+    expect(channelIdIn(`<link rel="canonical" href="https://www.youtube.com/channel/${ID}">`)).toBe(ID)
+    expect(channelIdIn(`{"externalId":"${ID}"}`)).toBe(ID)
+    expect(channelIdIn(`{"channelId":"${ID}"}`)).toBe(ID)
+    expect(channelIdIn(`<a href="/channel/${ID}/videos">`)).toBe(ID)
+  })
+
+  it('prefers the canonical link over an unrelated channel link elsewhere on the page', () => {
+    const html = `<a href="/channel/UCsomeOtherChannel">x</a><link rel="canonical" href="https://www.youtube.com/channel/${ID}">`
+    expect(channelIdIn(html)).toBe(ID)
+  })
+
+  it('returns null when the page states no channel id', () => {
+    expect(channelIdIn('<html><head><title>Stratechery - YouTube</title></head></html>')).toBeNull()
+    expect(channelIdIn('')).toBeNull()
   })
 })
 
