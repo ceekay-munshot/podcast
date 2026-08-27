@@ -237,7 +237,7 @@ function liveApiPlugin(config: {
               resolveShow: (id) => channelTitles.get(id),
             },
             { limit: 10, budgetMs: 150_000 },
-          ).catch(() => ({ processed: 0, remaining: 0 }))
+          ).catch((e) => ({ processed: 0, remaining: 0, error: String(e).slice(0, 200) }))
           // The EMAILED edition stays seed-only — same reasoning as the Pages Function.
           const getEpisodes = (s?: typeof store) => getLiveEpisodes(s, config.memberFeeds)
           const result = await runWeeklyDigest({
