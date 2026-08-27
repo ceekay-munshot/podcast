@@ -225,6 +225,23 @@ deterministic fallback), renders + hosts the PDF, and mails every subscriber.
 Only episodes summarised **and** published in the last 7 days are included; with
 none, it skips (never an empty email).
 
+### Keeping the schedule alive
+
+GitHub disables scheduled workflows in a **public** repo after 60 days with no
+repository activity — which would stop `weekly-digest.yml`, and with it the
+auto-processing below, with no sign of it inside the app (the Weekly page would
+simply start showing a growing "still queued" count again).
+
+[`.github/workflows/keep-schedules-alive.yml`](./.github/workflows/keep-schedules-alive.yml)
+guards that. It runs weekly and does **nothing** while the repo is active; only once
+there has been no commit for `STALE_AFTER_DAYS` (50, leaving margin under GitHub's
+60) does it push a one-line heartbeat, which counts as repository activity and resets
+the clock. Normal development never produces a heartbeat commit.
+
+GitHub also emails the repo owner before disabling a schedule, and it can be
+re-enabled from the Actions tab in one click — this just means nobody has to notice
+that email.
+
 ### Auto-processing
 
 Every tick of that same workflow — not just the send — summarises a bounded batch

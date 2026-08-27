@@ -1,0 +1,57 @@
+name: Keep schedules alive
+
+# GitHub disables scheduled workflows in a PUBLIC repo after 60 days with no
+# repository activity. That would silently stop weekly-digest.yml — and with it the
+# auto-processing that turns episodes ready — with no sign of it inside the app: the
+# Weekly page would just start showing a growing "still queued" count again.
+#
+# This job runs weekly and does NOTHING unless the repo has genuinely gone quiet.
+# Only past STALE_AFTER_DAYS does it push a one-line heartbeat, which counts as
+# repository activity and resets GitHub's 60-day clock. In normal use — anybody
+# pushing anything at all — it never writes a commit.
+#
+# Deliberately no third-party action: it is ~10 lines of shell, and a keepalive with
+# write access to the default branch is the last place to take a supply-chain risk.
+
+on:
+  schedule:
+    - cron: '0 7 * * 1' # Mondays 07:00 UTC — frequent enough to catch the threshold
+  workflow_dispatch: {} # a manual run reports the age without waiting for Monday
+
+# Least privilege: the heartbeat commit is the only write this needs.
+permissions:
+  contents: write
+
+concurrency:
+  group: keep-schedules-alive
+  cancel-in-progress: false
+
+env:
+  # Margin under GitHub's 60, so a missed weekly run can't let the window close.
+  STALE_AFTER_DAYS: 50
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Push a heartbeat only if the repo has gone quiet
+        run: |
+          set -euo pipefail
+          last=$(git log -1 --format=%ct)
+          age=$(( ( $(date +%s) - last ) / 86400 ))
+          echo "Last commit: ${age} day(s) ago (threshold ${STALE_AFTER_DAYS}, GitHub disables at 60)."
+          if [ "$age" -lt "$STALE_AFTER_DAYS" ]; then
+            echo "Repo is active — no heartbeat needed."
+            exit 0
+          fi
+          echo "::warning::No commit in ${age} days — pushing a heartbeat so the schedules stay enabled."
+          date -u +%Y-%m-%dT%H:%M:%SZ > .github/heartbeat.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/heartbeat.txt
+          git commit -m 'chore: heartbeat to keep scheduled workflows enabled'
+          # Pushes made with GITHUB_TOKEN do not trigger workflows, so this cannot
+          # loop back into itself.
+          git push
