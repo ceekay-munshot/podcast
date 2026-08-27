@@ -159,21 +159,27 @@ export default function Weekly() {
     }
   }
 
-  // ── "Process this week" — summarise every not-yet-processed episode from the last
-  //    7 days (across the tracked podcasts) so the Monday brief includes everything.
+  // ── "Catch up now" — summarise every not-yet-processed episode from the last 7
+  //    days across the TRACKED channels. The cron auto-processes these on its own
+  //    (functions/api/cron/weekly-digest.ts), so this is a shortcut for "don't make
+  //    me wait for the next tick", not a step the brief depends on.
   //    Sequential + paced, so it never hammers the API; cancellable.
   const WEEK_MS = 7 * 24 * 60 * 60 * 1000
+  // Only channels the user actually tracks. An untracked show must never nag here,
+  // and "Process all" must never spend a call on content they deselected.
+  const trackedIds = useMemo(() => new Set(podcasts.filter((p) => p.tracked).map((p) => p.id)), [podcasts])
   const unprocessed = useMemo(() => {
     const cutoff = Date.now() - WEEK_MS
     return episodes.filter(
       (e) =>
+        trackedIds.has(e.podcastId) &&
         +new Date(e.publishedAt) >= cutoff &&
         e.status !== 'ready' &&
         e.status !== 'summarizing' &&
         !e.summary &&
         (!!e.transcriptUrl || !!e.audioUrl || !!(e.notes && e.notes.trim())),
     )
-  }, [episodes])
+  }, [episodes, trackedIds])
   // The bulk job itself lives in AppData (so it survives navigation); the page just
   // kicks it off with this week's targets. Newly-ready episodes then surface via the
   // "new episodes" banner → Refresh folds them in, ready to email.
@@ -260,9 +266,11 @@ export default function Weekly() {
             ) : (
               <>
                 <p className="text-[13.5px] font-semibold text-on-surface">
-                  {unprocessed.length} episode{unprocessed.length === 1 ? '' : 's'} from this week {unprocessed.length === 1 ? "isn't" : "aren't"} processed yet
+                  {unprocessed.length} episode{unprocessed.length === 1 ? '' : 's'} from the last 7 days {unprocessed.length === 1 ? 'is' : 'are'} still queued
                 </p>
-                <p className="text-[12px] text-secondary">{needsApiKey ? 'Connect an AI key to process them.' : 'Process them so the Monday brief includes everything.'}</p>
+                <p className="text-[12px] text-secondary">
+                  {needsApiKey ? 'Connect an AI key to process them.' : 'These process automatically — catch up now if you don\u2019t want to wait.'}
+                </p>
               </>
             )}
           </div>
@@ -279,7 +287,7 @@ export default function Weekly() {
               disabled={needsApiKey}
               className="press inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[#b8902f] px-3.5 py-2 text-metadata font-semibold text-white hover:bg-[#a87f28] disabled:opacity-50"
             >
-              <Icon name="auto_awesome" size={15} /> Process all
+              <Icon name="auto_awesome" size={15} /> Catch up now
             </button>
           )}
         </div>

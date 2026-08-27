@@ -39,3 +39,18 @@ export function fileChannelStore(file: string): ChannelStore {
     },
   }
 }
+
+/** Every roster file on disk, as stores — the dev mirror of listRosterKeys: the
+ *  anonymous roster (`channels.json`) plus each per-user `channels/u-<uid>.json`.
+ *  Lets the dev cron auto-process user-added channels exactly like production. */
+export async function listFileChannelStores(anonFile: string, usersDir: string): Promise<ChannelStore[]> {
+  const stores = [fileChannelStore(anonFile)]
+  try {
+    for (const name of await fs.readdir(usersDir)) {
+      if (name.startsWith('u-') && name.endsWith('.json')) stores.push(fileChannelStore(path.join(usersDir, name)))
+    }
+  } catch {
+    // No per-user directory yet (nobody signed in locally) — the anon roster stands.
+  }
+  return stores
+}

@@ -16,6 +16,12 @@ import type { SubscriberStore } from './subscriberStore'
 // from the deterministic engine (weeklyAssemble.ts) + the shared summary cache,
 // so it never depends on anyone having opened the app this week.
 //
+// AUTO-PROCESSING: `processPendingBatch` runs on EVERY cron tick, not just the send,
+// summarising a bounded batch of the week's pending episodes into the shared cache.
+// Its episode universe is supplied by the caller — the cron passes the seed sources
+// plus every user-added channel on the stored rosters (see getAllEpisodes), so a show
+// added from Discover auto-processes like a built-in one.
+//
 // PRE-SEND BACKFILL: before assembling, the job makes sure every subscribed channel
 // that published this week is represented. If nobody processed a channel's latest
 // episode (so the brief would go out empty or thin), it summarises one episode per
@@ -93,11 +99,18 @@ export function pickPendingThisWeek(episodes: Episode[], now: number): Episode[]
  *
  *  Transcription keys are intentionally NOT required here: the digest uses the free
  *  publisher transcript when the feed carries one, else the show-notes — keeping the
- *  Monday run fast and bounded instead of transcribing a dozen full episodes inline. */
-export function makeEpisodeProcessor(cfg: SummarizeConfig | undefined): ((ep: Episode) => Promise<Summary | null>) | undefined {
+ *  Monday run fast and bounded instead of transcribing a dozen full episodes inline.
+ *
+ *  `resolveShow` names shows PODCASTS doesn't know — the user-added channels the
+ *  auto-processor now covers. Without it their prompts would carry a raw podcastId
+ *  as the show name, which is exactly the context the summariser leans on. */
+export function makeEpisodeProcessor(
+  cfg: SummarizeConfig | undefined,
+  resolveShow?: (podcastId: string) => string | undefined,
+): ((ep: Episode) => Promise<Summary | null>) | undefined {
   if (!cfg || !hasLlmKey(cfg)) return undefined
   return async (ep) => {
-    const show = PODCASTS.find((p) => p.id === ep.podcastId)?.title ?? ep.podcastId
+    const show = PODCASTS.find((p) => p.id === ep.podcastId)?.title ?? resolveShow?.(ep.podcastId) ?? ep.podcastId
     const res = await summarizeEpisode(
       { id: ep.id, title: ep.title, show, notes: ep.notes, transcriptUrl: ep.transcriptUrl, audioUrl: ep.audioUrl },
       cfg,
@@ -131,6 +144,9 @@ export interface DigestDeps {
    *  the shared store). Powers the pre-send backfill. Injected so tests don't hit the
    *  wire; in production it is derived from `summarizeConfig` when omitted. */
   processEpisode?: (ep: Episode) => Promise<Summary | null>
+  /** Show title for a podcastId PODCASTS doesn't carry — i.e. a user-added channel.
+   *  Only used to name the show in the summariser prompt. */
+  resolveShow?: (podcastId: string) => string | undefined
   /** Overridable clock for tests. */
   now?: number
 }
@@ -154,13 +170,13 @@ export interface DigestReport {
  *  steadily before the Monday send — sustainable (no burst), and bounded (no timeout).
  *  No-op without an LLM key. Returns how many it processed + how many still pending. */
 export async function processPendingBatch(
-  deps: Pick<DigestDeps, 'getEpisodes' | 'summaryStore' | 'summarizeConfig' | 'processEpisode' | 'now'>,
+  deps: Pick<DigestDeps, 'getEpisodes' | 'summaryStore' | 'summarizeConfig' | 'processEpisode' | 'resolveShow' | 'now'>,
   opts: { limit?: number; budgetMs?: number } = {},
 ): Promise<{ processed: number; remaining: number }> {
   const now = deps.now ?? Date.now()
   const limit = opts.limit ?? 5
   const budgetMs = opts.budgetMs ?? 75_000
-  const processEpisode = deps.processEpisode ?? makeEpisodeProcessor(deps.summarizeConfig)
+  const processEpisode = deps.processEpisode ?? makeEpisodeProcessor(deps.summarizeConfig, deps.resolveShow)
   const pending = pickPendingThisWeek(await deps.getEpisodes(deps.summaryStore), now)
   if (!processEpisode || !pending.length) return { processed: 0, remaining: pending.length }
   const start = Date.now()
@@ -198,7 +214,7 @@ export async function runWeeklyDigest(deps: DigestDeps): Promise<{ status: numbe
   // its most recent pending episode now. Best-effort and per-channel isolated — one
   // channel's failure never blocks the others, nor the send.
   let backfilled = 0
-  const processEpisode = deps.processEpisode ?? makeEpisodeProcessor(deps.summarizeConfig)
+  const processEpisode = deps.processEpisode ?? makeEpisodeProcessor(deps.summarizeConfig, deps.resolveShow)
   if (processEpisode) {
     const targets = pickBackfillTargets(all, now)
     if (targets.length) {

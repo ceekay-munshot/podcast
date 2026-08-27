@@ -225,6 +225,31 @@ deterministic fallback), renders + hosts the PDF, and mails every subscriber.
 Only episodes summarised **and** published in the last 7 days are included; with
 none, it skips (never an empty email).
 
+### Auto-processing
+
+Every tick of that same workflow — not just the send — summarises a bounded batch
+of the week's pending episodes (`processPendingBatch`), writing each to the shared
+summary cache. That is what makes episodes turn **ready** on their own: nobody has
+to open the app, and the "Catch up now" button on Weekly Summary is only a *skip
+the wait* shortcut, never a required step.
+
+The batch works over the seed shows **plus every user-added channel** on the
+stored rosters. `collectTrackedChannels` (`server/channelStore.ts`) scans the KV
+roster keys — the anonymous `channels:v1` and each per-user `u:<uid>:channels:v1` —
+and `getAllEpisodes` (`server/feeds.ts`) pools those feeds in with the seed
+sources. Untracked shows and entries with no feed are skipped, so a channel
+somebody deselected never costs an LLM call. A roster longer than
+`CHANNELS_PER_TICK` is covered across consecutive ticks (the window rotates by a
+tick index) rather than starving its tail.
+
+Before this, the batch saw only the hardcoded `SOURCES` list, so anything added
+from Discover sat *detected* forever and could only be summarised by hand.
+
+The **emailed** edition stays seed-only on purpose: it is one edition shared by
+every subscriber, and `PODCASTS` (its show lookup) knows only the seed shows —
+folding one user's private additions in would put their channels in everyone
+else's inbox. Their episodes are still summarised, so the app shows them ready.
+
 **Setup — Pages env + repo secrets:**
 
 | Where | Name | Purpose |

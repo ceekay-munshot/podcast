@@ -1,4 +1,5 @@
-import { getLiveEpisodes, parseMemberFeeds } from '../../../server/feeds'
+import { SEED_IDS, getAllEpisodes, getLiveEpisodes, parseMemberFeeds } from '../../../server/feeds'
+import { collectTrackedChannels } from '../../../server/channelStore'
 import { kvSummaryStore, type KVNamespace } from '../../../server/summaryStore'
 import { kvSubscriberStore } from '../../../server/subscriberStore'
 import { kvReportStore, reportUrl } from '../../../server/reportStore'
@@ -73,22 +74,44 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
     }
 
     // Auto-process the week, sustainably: on EVERY tick, summarise a bounded batch of
-    // this week's pending episodes (writes to the shared store). Over the 30-min ticks
-    // the backlog clears, so the Monday send goes out with the whole week processed —
-    // no manual "Process all" needed. Bounded so a tick never exceeds the curl budget.
-    // One SHARED edition, so episodes come from the seed sources — plus any
-    // configured member feeds, the only route for paid episodes without a session.
+    // this week's pending episodes (writes to the shared store). Over the ticks the
+    // backlog clears on its own, so nobody has to press "Process all" — that button
+    // is only ever a "catch up right now" shortcut. Bounded so a tick never exceeds
+    // the curl budget.
+    //
+    // The universe is the seed sources PLUS every user-added channel across the
+    // stored rosters. Without the second half, anything added from Discover was
+    // invisible here and its episodes sat "detected" forever, however many ticks ran.
     const memberFeeds = parseMemberFeeds(env.MEMBER_FEEDS)
+    // Rotate the roster window per tick so a roster longer than CHANNELS_PER_TICK is
+    // still covered completely, just spread over consecutive ticks.
+    const tick = Math.floor(Date.now() / (30 * 60 * 1000))
+    const channels = env.SUMMARIES ? await collectTrackedChannels(env.SUMMARIES, SEED_IDS).catch(() => []) : []
+    const channelTitles = new Map(channels.map((c) => [c.id, c.title]))
+    const batch = await processPendingBatch(
+      {
+        getEpisodes: (store?: typeof summaryStore) => getAllEpisodes(store, memberFeeds, channels, { offset: tick }),
+        summaryStore,
+        summarizeConfig,
+        resolveShow: (id) => channelTitles.get(id),
+      },
+      { limit: 10, budgetMs: 150_000 },
+    ).catch(() => ({ processed: 0, remaining: 0 }))
+
+    // The EMAILED edition stays seed-only. It is one edition shared by every
+    // subscriber, and PODCASTS (the show lookup it renders from) knows only the seed
+    // shows — so folding one user's private additions in here would both break the
+    // lookup and put their channels in everyone else's inbox. Their episodes are
+    // still summarised above, so the app shows them ready.
     const getEpisodes = (store?: typeof summaryStore) => getLiveEpisodes(store, memberFeeds)
-    const batch = await processPendingBatch({ getEpisodes, summaryStore, summarizeConfig }, { limit: 5, budgetMs: 75_000 }).catch(() => ({ processed: 0, remaining: 0 }))
 
     let sentMarker: string | null = null
     if (!force) {
       // No store ⇒ can't gate or de-dupe ⇒ refuse to send (but the batch above still ran).
-      if (!scheduleStore) return json(200, { ok: true, skipped: 'no_schedule_store', batch })
+      if (!scheduleStore) return json(200, { ok: true, skipped: 'no_schedule_store', batch, channels: channels.length })
       const schedule = (await scheduleStore.getSchedule()) ?? DEFAULT_SCHEDULE
       const gate = dueToSend(schedule, new Date(), await scheduleStore.getLastSent())
-      if (!gate.due) return json(200, { ok: true, skipped: 'not_scheduled', schedule, batch })
+      if (!gate.due) return json(200, { ok: true, skipped: 'not_scheduled', schedule, batch, channels: channels.length })
       sentMarker = gate.dateStr
     }
 
@@ -123,7 +146,7 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
       const recipients = (result.body as { recipients?: number }).recipients
       if (typeof recipients === 'number' && recipients > 0) await scheduleStore.setLastSent(sentMarker)
     }
-    return json(result.status, { ...result.body, batch })
+    return json(result.status, { ...result.body, batch, channels: channels.length })
   } catch {
     return json(500, { error: 'digest_failed' })
   }

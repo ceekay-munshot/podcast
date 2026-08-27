@@ -3,12 +3,12 @@ import type { Connect, Plugin } from 'vite'
 import type { ServerResponse } from 'node:http'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
-import { episodesForFeeds, getLiveEpisodes, parseMemberFeeds, SEED_IDS, type MemberFeeds } from './server/feeds'
+import { episodesForFeeds, getAllEpisodes, getLiveEpisodes, parseMemberFeeds, SEED_IDS, type MemberFeeds } from './server/feeds'
 import { searchPodcasts } from './server/search'
 import { hasLlmKey, summarizeEpisode, synthesizeWeekly } from './server/summarize'
 import { fileSummaryStore } from './server/summaryStore.node'
-import { handleChannels } from './server/channelStore'
-import { fileChannelStore } from './server/channelStore.node'
+import { collectTrackedChannelsFrom, handleChannels } from './server/channelStore'
+import { fileChannelStore, listFileChannelStores } from './server/channelStore.node'
 import { handleProcessed } from './server/processedStore'
 import { fileProcessedStore } from './server/processedStore.node'
 import { handleSubscribers } from './server/subscriberStore'
@@ -76,9 +76,11 @@ function liveApiPlugin(config: {
   // anonymous roster keeps its legacy single file; each identified user gets
   // their own file (mirroring the per-user KV keys). The `u-` filename prefix
   // defuses dot-only ids; the canonical key charset already excludes `/`.
-  const channels = fileChannelStore(path.resolve(process.cwd(), '.cache/channels.json'))
+  const channelsFile = path.resolve(process.cwd(), '.cache/channels.json')
+  const channelsDir = path.resolve(process.cwd(), '.cache/channels')
+  const channels = fileChannelStore(channelsFile)
   const channelStoreFor = (uid: string | null) =>
-    uid ? fileChannelStore(path.resolve(process.cwd(), '.cache/channels', `u-${uid}.json`)) : channels
+    uid ? fileChannelStore(path.resolve(channelsDir, `u-${uid}.json`)) : channels
   // Per-user processed history for dev (no anonymous variant — mirrors prod,
   // where anonymous history lives only in the browser).
   const processedStoreFor = (uid: string | null) =>
@@ -221,11 +223,23 @@ function liveApiPlugin(config: {
           return json(res, 401, { error: 'unauthorized' })
         }
         try {
-          // Mirror prod: chip away at this week's pending episodes on every tick.
-          // The digest builds one SHARED edition, so it reads the seed sources — plus
-          // any configured member feeds, the only route for paid episodes here.
+          // Mirror prod: chip away at this week's pending episodes on every tick, over
+          // the seed sources PLUS the user-added channels on the stored rosters — so a
+          // show added from Discover auto-processes like a built-in one.
+          const tick = Math.floor(Date.now() / (30 * 60 * 1000))
+          const channels = await listFileChannelStores(channelsFile, channelsDir).then((st) => collectTrackedChannelsFrom(st, SEED_IDS)).catch(() => [])
+          const channelTitles = new Map(channels.map((c) => [c.id, c.title]))
+          const batch = await processPendingBatch(
+            {
+              getEpisodes: (s?: typeof store) => getAllEpisodes(s, config.memberFeeds, channels, { offset: tick }),
+              summaryStore: store,
+              summarizeConfig: { ...config, store },
+              resolveShow: (id) => channelTitles.get(id),
+            },
+            { limit: 10, budgetMs: 150_000 },
+          ).catch(() => ({ processed: 0, remaining: 0 }))
+          // The EMAILED edition stays seed-only — same reasoning as the Pages Function.
           const getEpisodes = (s?: typeof store) => getLiveEpisodes(s, config.memberFeeds)
-          const batch = await processPendingBatch({ getEpisodes, summaryStore: store, summarizeConfig: { ...config, store } }, { limit: 5, budgetMs: 75_000 }).catch(() => ({ processed: 0, remaining: 0 }))
           const result = await runWeeklyDigest({
             getEpisodes,
             summaryStore: store,
