@@ -1,4 +1,4 @@
-import type { Episode, PodcastFeed } from '../src/lib/types'
+import type { Episode, Podcast, PodcastFeed } from '../src/lib/types'
 import { EPISODES, PODCASTS } from '../src/lib/mock-data'
 import { KNOWN_SHOWS, MEMBER_FEED_LABEL } from '../src/lib/knownSources'
 import { feedsOf, mergeFeeds, poolEpisodes } from '../src/lib/pool'
@@ -388,6 +388,75 @@ export function parseMemberFeeds(raw: string | undefined): MemberFeeds {
 
 function memberFeedsFor(showId: string, configured?: MemberFeeds): PodcastFeed[] {
   return (configured?.[showId] ?? []).map((feedUrl) => ({ feedUrl, access: 'private' as const, label: MEMBER_FEED_LABEL }))
+}
+
+/** Most user-added channels one cron tick fetches feeds for. Bounds the work a
+ *  single tick can trigger; `episodesForChannels` rotates the window so a roster
+ *  larger than this is still covered completely, just across several ticks. */
+export const CHANNELS_PER_TICK = 40
+const CHANNEL_CONCURRENCY = 6 // parallel feed fetches — polite to publishers, still quick
+
+/** Recent episodes for user-added channels (a roster slice from
+ *  channelStore.collectTrackedChannels), pooled per show and summary-overlaid
+ *  exactly like the seed sources.
+ *
+ *  This is the auto-processor's second half: without it the cron only ever sees
+ *  the curated SOURCES above, so anything added from Discover never gets picked
+ *  up. Best-effort throughout — one dead feed contributes nothing and the rest
+ *  still land.
+ *
+ *  `offset` rotates which slice of a long roster this tick reads (the cron passes
+ *  a tick index), so every channel comes round rather than the first N starving
+ *  the tail forever. */
+export interface ChannelFetchOptions {
+  /** Channels to read this call (default CHANNELS_PER_TICK). */
+  limit?: number
+  /** Where in the roster this call's window starts — the cron passes a tick index. */
+  offset?: number
+  /** Fetches one channel's episodes. Injected so tests don't hit the wire; production
+   *  leaves it unset and gets the real pooled feed read. */
+  fetchEpisodes?: (channel: Podcast, store?: SummaryStore) => Promise<Episode[]>
+}
+
+export async function episodesForChannels(
+  channels: Podcast[],
+  store?: SummaryStore,
+  opts: ChannelFetchOptions = {},
+): Promise<Episode[]> {
+  const usable = channels.filter((c) => feedsOf(c).length > 0)
+  if (!usable.length) return []
+  const limit = Math.max(1, opts.limit ?? CHANNELS_PER_TICK)
+  const fetchEpisodes =
+    opts.fetchEpisodes ?? ((c: Podcast, s?: SummaryStore) => episodesForFeeds(feedsOf(c), c.id, s, { title: c.title, author: c.author }))
+  // Rotate: start at `offset` and wrap, so consecutive ticks read consecutive
+  // windows of the roster instead of re-reading the same head every time.
+  const start = (((opts.offset ?? 0) % usable.length) + usable.length) % usable.length
+  const window = Array.from({ length: Math.min(limit, usable.length) }, (_, i) => usable[(start + i) % usable.length])
+
+  const out: Episode[] = []
+  for (let i = 0; i < window.length; i += CHANNEL_CONCURRENCY) {
+    const settled = await Promise.allSettled(window.slice(i, i + CHANNEL_CONCURRENCY).map((c) => fetchEpisodes(c, store)))
+    for (const r of settled) if (r.status === 'fulfilled') out.push(...r.value)
+  }
+  return out.sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt))
+}
+
+/** Seed sources + the given user-added channels, as one de-duplicated episode
+ *  list (an episode present in both keeps the seed copy). The episode universe
+ *  the cron's auto-processor works over. */
+export async function getAllEpisodes(
+  store?: SummaryStore,
+  memberFeeds?: MemberFeeds,
+  channels: Podcast[] = [],
+  opts: ChannelFetchOptions = {},
+): Promise<Episode[]> {
+  const [seeds, extra] = await Promise.all([
+    getLiveEpisodes(store, memberFeeds),
+    episodesForChannels(channels, store, opts).catch(() => [] as Episode[]),
+  ])
+  const byId = new Map<string, Episode>()
+  for (const e of [...extra, ...seeds]) byId.set(e.id, e) // seeds last → seed copy wins
+  return [...byId.values()].sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt))
 }
 
 // All shows' recent episodes, newest first. Never throws — each source degrades

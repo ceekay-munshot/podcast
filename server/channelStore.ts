@@ -195,3 +195,100 @@ export async function handleChannels(
   if (added > 0) await store.put(next)
   return { status: 200, body: { ok: true, added } }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Roster enumeration — how the cron learns about USER-ADDED channels.
+//
+// The auto-processor (server/weeklyDigest.ts) used to see only the curated seed
+// shows hardcoded in server/feeds.ts, because that is all getLiveEpisodes walks.
+// Every channel a user added from Discover was therefore invisible to it: its
+// episodes stayed "detected" forever and only the in-app "Process all" button
+// could summarise them. These helpers give the cron the missing half — the union
+// of every roster's user-added shows — so auto-processing covers what people
+// actually selected, not just the built-in list.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Roster keys stored in KV: the legacy global one plus every per-user
+ *  `u:<uid>:channels:v1`. Returns [] when the binding can't enumerate (the dev
+ *  file mirror, or a `list` failure) — callers then simply see no extra rosters,
+ *  which is exactly the old seed-only behavior. */
+export async function listRosterKeys(kv: KVNamespace, maxRosters = 500): Promise<string[]> {
+  if (typeof kv.list !== 'function') return []
+  const keys: string[] = []
+  let cursor: string | undefined
+  try {
+    // Page through the `u:` namespace. Every per-user key lives under it, so one
+    // prefixed scan covers all of them without walking the summary cache.
+    do {
+      const page = await kv.list({ prefix: 'u:', cursor, limit: 1000 })
+      for (const k of page.keys) if (k.name.endsWith(':channels:v1')) keys.push(k.name)
+      cursor = page.list_complete ? undefined : page.cursor
+    } while (cursor && keys.length < maxRosters)
+  } catch {
+    // A partial scan is still useful — keep whatever we already collected.
+  }
+  return [CHANNELS_KEY, ...keys].slice(0, maxRosters)
+}
+
+/** Every user-added show across the given rosters, de-duplicated by id — the shows
+ *  the cron must fetch feeds for on top of the seed sources. A null roster is a
+ *  FAILED read and contributes nothing (never mistaken for "this user has none").
+ *
+ *  Seed shows are excluded: SOURCES already covers them, and a roster's seed entry
+ *  is only a tracked:true/false override with no feed of its own. Entries with no
+ *  feed URL are dropped (nothing to fetch), as are untracked ones — a show somebody
+ *  deselected should not cost an LLM call.
+ *
+ *  Pure, so both backends (KV and the dev files) share one definition of "the
+ *  channels to auto-process" and it can be tested without a store. */
+export function selectTrackedChannels(
+  rosters: (Podcast[] | null)[],
+  seedIds: ReadonlySet<string>,
+  maxChannels = 200,
+): Podcast[] {
+  const byId = new Map<string, Podcast>()
+  for (const roster of rosters) {
+    if (!roster) continue // a failed read contributes nothing
+    for (const ch of roster) {
+      if (!ch || typeof ch.id !== 'string') continue
+      if (seedIds.has(ch.id)) continue // already covered by the seed sources
+      if (ch.tracked === false) continue
+      if (!ch.feedUrl && !ch.feeds?.length) continue // nothing to fetch
+      if (!byId.has(ch.id)) byId.set(ch.id, ch)
+    }
+  }
+  // Stable order (by id) so the rotation window in server/feeds.ts advances over a
+  // fixed list rather than reshuffling between ticks.
+  return [...byId.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).slice(0, maxChannels)
+}
+
+/** `selectTrackedChannels` over every roster in a KV namespace (production). */
+export async function collectTrackedChannels(
+  kv: KVNamespace,
+  seedIds: ReadonlySet<string>,
+  maxChannels = 200,
+): Promise<Podcast[]> {
+  const keys = await listRosterKeys(kv)
+  if (!keys.length) return []
+  const settled = await Promise.allSettled(keys.map((key) => kvChannelStore(kv, key).get()))
+  return selectTrackedChannels(
+    settled.map((r) => (r.status === 'fulfilled' ? r.value : null)),
+    seedIds,
+    maxChannels,
+  )
+}
+
+/** `selectTrackedChannels` over an explicit set of stores — the dev middleware's
+ *  path, where each roster is a file rather than a KV key. */
+export async function collectTrackedChannelsFrom(
+  stores: ChannelStore[],
+  seedIds: ReadonlySet<string>,
+  maxChannels = 200,
+): Promise<Podcast[]> {
+  const settled = await Promise.allSettled(stores.map((s) => s.get()))
+  return selectTrackedChannels(
+    settled.map((r) => (r.status === 'fulfilled' ? r.value : null)),
+    seedIds,
+    maxChannels,
+  )
+}

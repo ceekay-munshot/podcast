@@ -50,6 +50,13 @@ export interface KVNamespace {
   get(key: string, type: 'json'): Promise<unknown>
   get(key: string, type: 'arrayBuffer'): Promise<ArrayBuffer | null>
   put(key: string, value: string | ArrayBuffer, options?: { expirationTtl?: number }): Promise<void>
+  /** Key enumeration. Optional because the dev/file mirrors don't implement it —
+   *  callers must degrade gracefully when it's absent (see listRosterKeys). */
+  list?(options?: { prefix?: string; cursor?: string; limit?: number }): Promise<{
+    keys: { name: string }[]
+    list_complete: boolean
+    cursor?: string
+  }>
 }
 
 // 90 days: long enough that popular episodes effectively never re-process, short
