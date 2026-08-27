@@ -96,7 +96,9 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
         resolveShow: (id) => channelTitles.get(id),
       },
       { limit: 10, budgetMs: 150_000 },
-    ).catch(() => ({ processed: 0, remaining: 0 }))
+      // A thrown batch used to be swallowed into {processed:0, remaining:0} — byte-for-byte
+      // what a healthy idle tick looks like. Report the reason so the workflow can alarm.
+    ).catch((e) => ({ processed: 0, remaining: 0, error: String(e).slice(0, 200) }))
 
     // The EMAILED edition stays seed-only. It is one edition shared by every
     // subscriber, and PODCASTS (the show lookup it renders from) knows only the seed

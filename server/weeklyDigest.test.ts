@@ -236,3 +236,63 @@ describe('processPendingBatch — bounded auto-processing', () => {
     expect(processEpisode).not.toHaveBeenCalled()
   })
 })
+
+// A broken auto-processor must never be indistinguishable from an idle one — that
+// silence is how it stayed dead. These pin the health signals the cron workflow alarms on.
+describe('processPendingBatch — health reporting', () => {
+  it('flags a missing LLM key rather than looking idle', async () => {
+    const res = await processPendingBatch({ getEpisodes: async () => [pending('a', 'allin', daysAgo(1))], now: NOW })
+    expect(res.skipped).toBe('no_llm_key')
+  })
+
+  it('flags a missing key even on a tick with nothing pending', async () => {
+    // The quiet-tick case: without this, a revoked key only surfaces once a backlog
+    // has already built up unprocessed.
+    const res = await processPendingBatch({ getEpisodes: async () => [ep('r', 'allin', daysAgo(1))], now: NOW })
+    expect(res).toEqual({ processed: 0, remaining: 0, skipped: 'no_llm_key' })
+  })
+
+  it('stays silent on a healthy tick — no skipped, no failed', async () => {
+    const res = await processPendingBatch(
+      { getEpisodes: async () => [pending('a', 'allin', daysAgo(1))], processEpisode: async () => sum(), now: NOW },
+      { limit: 5 },
+    )
+    expect(res).toEqual({ processed: 1, remaining: 0 })
+  })
+
+  it('stays silent when there was simply nothing to do', async () => {
+    const res = await processPendingBatch(
+      { getEpisodes: async () => [ep('r', 'allin', daysAgo(1))], processEpisode: async () => sum(), now: NOW },
+    )
+    expect(res).toEqual({ processed: 0, remaining: 0 })
+  })
+
+  it('counts a thrown episode as failed and keeps going', async () => {
+    const eps = [pending('a1', 'allin', daysAgo(1)), pending('a2', 'allin', daysAgo(2))]
+    const processEpisode = vi.fn(async (e: { id: string }) => {
+      if (e.id === 'a1') throw new Error('provider down')
+      return sum()
+    })
+    const res = await processPendingBatch({ getEpisodes: async () => eps, processEpisode, now: NOW })
+    expect(res.processed).toBe(1)
+    expect(res.failed).toBe(1)
+    expect(processEpisode).toHaveBeenCalledTimes(2) // the throw did not abort the batch
+  })
+
+  it('counts an empty summary as failed, not a silent skip', async () => {
+    const res = await processPendingBatch({
+      getEpisodes: async () => [pending('a', 'allin', daysAgo(1))],
+      processEpisode: async () => null,
+      now: NOW,
+    })
+    expect(res).toMatchObject({ processed: 0, failed: 1 })
+  })
+
+  it('marks a budget-exhausted batch distinctly from a broken one', async () => {
+    const res = await processPendingBatch(
+      { getEpisodes: async () => [pending('a', 'allin', daysAgo(1))], processEpisode: async () => sum(), now: NOW },
+      { budgetMs: -1 },
+    )
+    expect(res.skipped).toBe('budget_spent') // NOT no_llm_key — this one is self-healing
+  })
+})

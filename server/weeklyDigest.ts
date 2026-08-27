@@ -164,32 +164,64 @@ export interface DigestReport {
   skipped?: string
 }
 
+/** What one auto-processing tick did. `skipped`/`failed` exist so a BROKEN processor
+ *  can never look like an idle one: with only counts, a revoked LLM key reported
+ *  `{processed: 0}` forever — identical to "nothing was pending" — and auto-processing
+ *  could stay dead indefinitely with nothing anywhere saying so. The cron workflow
+ *  reads these and raises an annotation. */
+export interface BatchReport {
+  processed: number
+  remaining: number
+  /** Why no work happened when some was available. Absent on a healthy tick,
+   *  INCLUDING one that simply had nothing pending.
+   *   • 'no_llm_key'   — no summariser is configured. Nothing will EVER process; needs a human.
+   *   • 'budget_spent' — the wall-clock budget ran out mid-batch. Normal; the next tick continues. */
+  skipped?: 'no_llm_key' | 'budget_spent'
+  /** Episodes the summariser threw on or returned nothing for. Present only when
+   *  non-zero: `failed` high with `processed` 0 means the provider itself is down. */
+  failed?: number
+}
+
 /** Auto-processor: summarise up to `limit` of THIS WEEK's pending episodes (writing
  *  each to the shared store), bounded by `budgetMs` of wall-clock so a single cron
  *  tick never runs long. The cron calls this every tick, so the week's backlog clears
  *  steadily before the Monday send — sustainable (no burst), and bounded (no timeout).
- *  No-op without an LLM key. Returns how many it processed + how many still pending. */
+ *  No-op without an LLM key, and says so. */
 export async function processPendingBatch(
   deps: Pick<DigestDeps, 'getEpisodes' | 'summaryStore' | 'summarizeConfig' | 'processEpisode' | 'resolveShow' | 'now'>,
   opts: { limit?: number; budgetMs?: number } = {},
-): Promise<{ processed: number; remaining: number }> {
+): Promise<BatchReport> {
   const now = deps.now ?? Date.now()
   const limit = opts.limit ?? 5
   const budgetMs = opts.budgetMs ?? 75_000
   const processEpisode = deps.processEpisode ?? makeEpisodeProcessor(deps.summarizeConfig, deps.resolveShow)
   const pending = pickPendingThisWeek(await deps.getEpisodes(deps.summaryStore), now)
-  if (!processEpisode || !pending.length) return { processed: 0, remaining: pending.length }
+  // Reported even when nothing is pending: a missing key is worth surfacing on a quiet
+  // tick, not only once a backlog has already built up unprocessed.
+  if (!processEpisode) return { processed: 0, remaining: pending.length, skipped: 'no_llm_key' }
+  if (!pending.length) return { processed: 0, remaining: 0 }
   const start = Date.now()
   let processed = 0
+  let failed = 0
+  let budgetSpent = false
   for (const ep of pending.slice(0, limit)) {
-    if (Date.now() - start > budgetMs) break
+    if (Date.now() - start > budgetMs) {
+      budgetSpent = true
+      break
+    }
     try {
       if (await processEpisode(ep)) processed++
+      else failed++ // returned no summary — counts as a failure, not a silent skip
     } catch {
-      /* one episode's failure is isolated — keep going */
+      failed++ // one episode's failure is isolated — keep going
     }
   }
-  return { processed, remaining: Math.max(0, pending.length - processed) }
+  return {
+    processed,
+    remaining: Math.max(0, pending.length - processed),
+    ...(budgetSpent ? { skipped: 'budget_spent' as const } : {}),
+    ...(failed ? { failed } : {}),
+  }
 }
 
 /** Build this week's shared edition and mail it to every subscriber. Returns a

@@ -1,7 +1,7 @@
 name: Weekly digest
 
-# Sends the Munshot weekly brief on the schedule chosen in the app (day · time ·
-# timezone). Cloudflare Pages can't run cron itself, and a YAML cron is a fixed UTC
+# Ticks the auto-processor and sends the Munshot weekly brief on the schedule chosen
+# in the app (day · time · timezone). Cloudflare Pages can't run cron itself, and a YAML cron is a fixed UTC
 # string — so this workflow PINGS the deployed /api/cron/weekly-digest endpoint
 # every 30 minutes, and the endpoint decides whether it's the chosen send time
 # (de-duped to once per week). A manual run forces an immediate send.
@@ -17,7 +17,16 @@ name: Weekly digest
 on:
   schedule:
     - cron: '*/30 * * * *' # every 30 min; the endpoint gates on the chosen schedule
-  workflow_dispatch: {} # a manual run forces an immediate send (see ?force=1 below)
+  # A manual run defaults to SAFE: it ticks the auto-processor and leaves the send
+  # gated on the app's schedule, exactly like a scheduled tick. Sending the brief to
+  # every subscriber is opt-in per run — it used to be what ANY manual run did, which
+  # made "kick the processor now" and "email everyone now" the same button.
+  workflow_dispatch:
+    inputs:
+      force_send:
+        description: 'Also send the weekly brief NOW to every subscriber (leave off to only process episodes)'
+        type: boolean
+        default: false
 
 # Don't let two runs overlap (e.g. a manual run during the scheduled one).
 concurrency:
@@ -37,10 +46,14 @@ jobs:
             echo "::error::SITE_URL and CRON_SECRET repository secrets must be set."
             exit 1
           fi
-          # A manual run forces an immediate send; the scheduled ticks let the
-          # endpoint decide based on the app's chosen day/time/timezone.
+          # Only an explicit force_send=true forces the email. Scheduled ticks (where
+          # the input is empty) and default manual runs both let the endpoint decide
+          # from the app's chosen day/time/timezone — the auto-processor runs either way.
           url="${SITE_URL%/}/api/cron/weekly-digest"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then url="${url}?force=1"; fi
+          if [ "${{ inputs.force_send }}" = "true" ]; then
+            echo "force_send=true — this run WILL email every subscriber."
+            url="${url}?force=1"
+          fi
           # Generous timeout: a tick may summarise a bounded batch of pending episodes
           # before (maybe) sending, so allow well beyond a bare send.
           code=$(curl -sS -o /tmp/digest.json -w '%{http_code}' \
@@ -54,4 +67,25 @@ jobs:
           if [ "${code}" -lt 200 ] || [ "${code}" -ge 300 ]; then
             echo "::error::weekly-digest endpoint returned HTTP ${code}"
             exit 1
+          fi
+
+          # A 200 is not the same as healthy. Auto-processing can be dead while the
+          # endpoint answers perfectly — that is exactly how it stayed broken before —
+          # so read the batch report and make a dead processor LOUD. GitHub emails the
+          # repo owner on a failed run, which is the alarm.
+          skipped=$(jq -r '.batch.skipped // empty' /tmp/digest.json 2>/dev/null || true)
+          err=$(jq -r '.batch.error // empty' /tmp/digest.json 2>/dev/null || true)
+          failed=$(jq -r '.batch.failed // 0' /tmp/digest.json 2>/dev/null || echo 0)
+
+          if [ "$skipped" = "no_llm_key" ]; then
+            echo "::error::Auto-processing is DEAD: no LLM key is configured on the Pages project. No episode will ever be summarised until this is set."
+            exit 1
+          fi
+          if [ -n "$err" ]; then
+            echo "::error::Auto-processing threw: ${err}"
+            exit 1
+          fi
+          # Some failures are normal (one bad feed); ALL of them failing is not.
+          if [ "$failed" != "0" ] && [ "$(jq -r '.batch.processed // 0' /tmp/digest.json)" = "0" ]; then
+            echo "::warning::Every episode in this batch failed to summarise (${failed}). If this repeats, the LLM provider is likely failing."
           fi

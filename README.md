@@ -129,6 +129,17 @@ set. Set it on single-tenant deployments only: the seed episode list is shared, 
 member feed there exposes one subscriber's paid content to every visitor of that
 space.
 
+## Continuous integration
+
+[`.github/workflows/ci.yml`](./.github/workflows/ci.yml) runs on every pull request and
+every push to `main`: `npm ci`, both typecheck configs, the full test suite, and the
+production build — the same commands a contributor runs locally.
+
+Before it existed nothing ran the tests on a PR. Cloudflare Pages builds each PR (which
+covers the app typecheck via `npm run build`), but the **server** config and the entire
+test suite were unchecked, so a change that broke feed parsing, the roster scan or the
+digest assembly would merge green.
+
 ## Architecture
 
 ```
@@ -224,6 +235,35 @@ that POSTs `/api/cron/weekly-digest`. It assembles the edition server-side
 deterministic fallback), renders + hosts the PDF, and mails every subscriber.
 Only episodes summarised **and** published in the last 7 days are included; with
 none, it skips (never an empty email).
+
+### If auto-processing breaks, you find out
+
+A 200 from the cron endpoint is not the same as a healthy tick. Auto-processing can be
+completely dead while the endpoint answers perfectly — a revoked LLM key used to report
+`{processed: 0, remaining: 0}`, byte-for-byte what a quiet, healthy tick looks like, so
+it could stay dead indefinitely with nothing anywhere saying so.
+
+`processPendingBatch` now returns a `BatchReport` that separates the two:
+
+| Signal | Meaning | Workflow reaction |
+|---|---|---|
+| `skipped: 'no_llm_key'` | No summariser configured. Nothing will **ever** process. | Fails the run |
+| `error` | The batch threw. | Fails the run |
+| `failed` > 0 with `processed` 0 | Every episode failed — provider likely down. | Warning |
+| `skipped: 'budget_spent'` | Ran out of wall-clock mid-batch. Self-heals next tick. | Silent |
+| `failed` > 0 with `processed` > 0 | A bad feed or two. Normal. | Silent |
+
+A failed run emails the repo owner, so a dead processor surfaces on its own instead of
+being noticed weeks later through a growing "still queued" count.
+
+### Running the digest by hand
+
+A manual run (`workflow_dispatch`) **only ticks the auto-processor** by default; the
+send stays gated on the app's chosen schedule, exactly like a scheduled tick. Emailing
+every subscriber immediately is the opt-in `force_send` input.
+
+This used to be one button: any manual run forced a send, so there was no way to kick
+the processor without mailing the whole subscriber list.
 
 ### Keeping the schedule alive
 
