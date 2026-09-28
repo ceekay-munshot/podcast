@@ -105,6 +105,45 @@ export async function sendRawEmail(message: RawEmail, opts: { token?: string } =
   }
 }
 
+/** Send an ordered run of emails (a weekly brief split into parts), stopping at the
+ *  first failure so nobody gets Part 3 without Part 2. Never throws. */
+export async function sendRawEmailParts(messages: RawEmail[], opts: { token?: string } = {}): Promise<EmailResult> {
+  let res: EmailResult = { ok: false, message: 'Nothing to send.' }
+  for (let i = 0; i < messages.length; i++) {
+    res = await sendRawEmail(messages[i], opts)
+    if (!res.ok) return i ? { ok: false, message: `Sent ${i} of ${messages.length} parts — ${res.message}` } : res
+  }
+  return res
+}
+
+// ── proxy request → message(s) (shared by the prod proxy + dev middleware) ───
+// A request carries ONE message (`subject` + text|html) or, for a weekly brief split
+// to stay under Gmail's clip, an ordered `parts` list. The parts travel as one
+// request so the proxy's per-recipient cooldown still means "one brief", not "one part".
+export const MAX_EMAIL_PARTS = 8
+
+export type EmailContent = { subject: string } & ({ text: string; html?: never } | { html: string; text?: never })
+
+/** The message(s) in a proxy request body, or null when anything is malformed: a
+ *  missing/CRLF subject, not exactly one of text|html, or an empty/over-long parts list. */
+export function readEmailContent(body: { subject?: unknown; text?: unknown; html?: unknown; parts?: unknown }): EmailContent[] | null {
+  const one = (m: unknown): EmailContent | null => {
+    if (!m || typeof m !== 'object') return null
+    const { subject, text, html } = m as Record<string, unknown>
+    const t = typeof text === 'string' && text ? text : undefined
+    const h = typeof html === 'string' && html ? html : undefined
+    if (typeof subject !== 'string' || !subject || /[\r\n]/.test(subject) || !!t === !!h) return null
+    return h ? { subject, html: h } : { subject, text: t as string }
+  }
+  if (body.parts === undefined) {
+    const m = one(body)
+    return m ? [m] : null
+  }
+  if (!Array.isArray(body.parts) || !body.parts.length || body.parts.length > MAX_EMAIL_PARTS) return null
+  const parts = body.parts.map(one)
+  return parts.every((p): p is EmailContent => p !== null) ? parts : null
+}
+
 /** Only a non-empty string survives — guards the UI from a nested error object. */
 function str(v: unknown): string {
   return typeof v === 'string' && v.trim() ? v : ''
@@ -373,76 +412,168 @@ function showBlock(d: WeeklyShowDigest): string {
 
 type ById<T> = (id: string) => T | undefined
 
-/** Render a real Weekly edition as a designed HTML email (mirrors the Word/PDF). */
-export function weeklyBriefEmailHtml(
-  weekly: WeeklySummary,
-  episodeById: ById<Episode>,
-  podcastById: ById<Podcast>,
-  opts: { pdfUrl?: string } = {},
-): string {
-  // Lead with the call to action: open the live dashboard (the whole point — pull
-  // the reader back into chat.muns.io), with the PDF download as the secondary.
-  const ctaRow = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 6px;"><tr><td align="center">
-      ${ctaButton(MUNS_DASHBOARD, '&#128202;&nbsp; Open the live dashboard', { primary: true })}
-      ${opts.pdfUrl ? `<span style="display:inline-block;width:10px;">&nbsp;</span>${ctaButton(opts.pdfUrl, '&#11015;&nbsp; Download PDF')}` : ''}
-      <div style="font-family:${SANS};font-size:11px;color:#8794a8;margin-top:9px;">Explore the full intelligence — every show, idea, and source — on <a href="${MUNS_DASHBOARD}" style="color:${C.gold};font-weight:700;text-decoration:none;">Munshot</a></div>
-    </td></tr></table>`
+// ── Splitting a long edition across several emails ───────────────────────────
+// Gmail clips any message whose HTML passes ~102KB: everything after the cut hides
+// behind "[Message clipped] View entire message", so a full week (20+ episodes) lost
+// its later readout cards and its sources. A long edition therefore goes out as
+// Part 1, Part 2, … — each a complete email that keeps the header, the dashboard
+// CTA and the Download PDF button (the PDF is always the WHOLE edition). A section
+// that spills over is re-opened in the next part as "<label> (continued)".
 
-  const overview = weekly.overview.length
-    ? `${sectionLabel('Overview')}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.cream};border-left:3px solid ${C.gold};"><tr><td style="padding:14px 18px;">${weekly.overview
-        .map(
-          (p, i) =>
-            `<p style="font-family:${SANS};font-size:14px;line-height:1.62;color:${C.prose};margin:0 0 ${
-              i === weekly.overview.length - 1 ? '0' : '9px'
-            };">${richCited(p)}</p>`,
-        )
-        .join('')}</td></tr></table>`
-    : ''
+/** Per-part HTML ceiling, in UTF-8 bytes. Well under Gmail's ~102KB clip so the
+ *  margin survives whatever transfer encoding the send endpoint applies (base64
+ *  alone adds a third). */
+export const EMAIL_PART_MAX_BYTES = 70_000
+
+/** One email of a (possibly split) weekly edition. */
+export interface EmailPart {
+  subject: string
+  html: string
+}
+
+/** One atomic piece of the weekly body — never split across emails. Consecutive
+ *  blocks sharing a `wrap` render inside ONE wrapper (a table's rows), and the
+ *  wrapper is re-opened when a part break lands mid-table. */
+interface Block {
+  html: string
+  wrap?: (inner: string) => string
+}
+/** A labelled run of blocks, as placed in one part. `continued` marks a section that
+ *  began in an earlier part. */
+interface Section {
+  label: string
+  blocks: Block[]
+  continued?: boolean
+}
+
+function utf8Bytes(s: string): number {
+  let n = 0
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i)
+    if (c < 0x80) n += 1
+    else if (c < 0x800) n += 2
+    else if (c >= 0xd800 && c <= 0xdbff) {
+      n += 4 // surrogate pair → one 4-byte code point
+      i++
+    } else n += 3
+  }
+  return n
+}
+
+function sectionHead(label: string, continued?: boolean): string {
+  return sectionLabel(continued ? `${label} (continued)` : label)
+}
+
+function renderBlocks(blocks: Block[]): string {
+  let out = ''
+  for (let i = 0; i < blocks.length; ) {
+    const wrap = blocks[i].wrap
+    let inner = ''
+    do inner += blocks[i++].html
+    while (wrap && i < blocks.length && blocks[i].wrap === wrap)
+    out += wrap ? wrap(inner) : inner
+  }
+  return out
+}
+
+/** Greedily pack the sections, in order, into parts of at most `room` bytes of body. */
+function packSections(sections: Section[], room: number): Section[][] {
+  const parts: Section[][] = [[]]
+  let used = 0
+  for (const s of sections) {
+    let slice: Section | undefined
+    let started = false
+    for (const b of s.blocks) {
+      for (;;) {
+        const last = slice?.blocks[slice.blocks.length - 1]
+        const cost =
+          (slice ? 0 : utf8Bytes(sectionHead(s.label, started))) +
+          (b.wrap && last?.wrap !== b.wrap ? utf8Bytes(b.wrap('')) : 0) +
+          utf8Bytes(b.html)
+        // An empty part always takes the block, so one oversized block can't loop forever.
+        if (used + cost <= room || used === 0) {
+          if (!slice) {
+            slice = { label: s.label, blocks: [], continued: started }
+            parts[parts.length - 1].push(slice)
+          }
+          slice.blocks.push(b)
+          used += cost
+          started = true
+          break
+        }
+        parts.push([])
+        used = 0
+        slice = undefined
+      }
+    }
+  }
+  return parts
+}
+
+/** "Munshot AI Podcasts — <week> (Part 2 of 3)" — the subject of one part. */
+export function weeklyPartSubject(rangeLabel: string, part: number, total: number): string {
+  return `${weeklyReportTitle(rangeLabel)} (Part ${part} of ${total})`
+}
+
+/** The weekly body as ordered sections of atomic blocks (empty sections omitted). */
+function weeklySections(weekly: WeeklySummary, episodeById: ById<Episode>, podcastById: ById<Podcast>): Section[] {
+  const sections: Section[] = []
+  const add = (label: string, blocks: Block[]) => {
+    if (blocks.length) sections.push({ label, blocks })
+  }
+
+  if (weekly.overview.length)
+    add('Overview', [
+      {
+        html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.cream};border-left:3px solid ${C.gold};"><tr><td style="padding:14px 18px;">${weekly.overview
+          .map(
+            (p, i) =>
+              `<p style="font-family:${SANS};font-size:14px;line-height:1.62;color:${C.prose};margin:0 0 ${
+                i === weekly.overview.length - 1 ? '0' : '9px'
+              };">${richCited(p)}</p>`,
+          )
+          .join('')}</td></tr></table>`,
+      },
+    ])
 
   // Key Points — the synthesised, claim-first cross-episode body (primary). Falls
   // back to the by-show digest when no AI synthesis ran.
   const keyThemes = weekly.keyThemes ?? []
-  const keyPoints = keyThemes.length
-    ? sectionLabel('Key Points') +
-      keyThemes
-        .map(
-          (t) =>
-            `<div style="font-family:${SANS};font-weight:700;font-size:14px;color:${C.ink};margin:14px 0 6px;">${esc(t.heading)}</div>` +
-            `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${t.points
-              .map(
-                (p) =>
-                  `<tr><td style="padding:0 0 8px;font-family:${SANS};font-size:13.5px;line-height:1.55;color:${C.body};"><span style="color:${C.gold};font-weight:700;">&#9670;</span> ${richCited(p)}</td></tr>`,
-              )
-              .join('')}</table>`,
-        )
-        .join('')
-    : ''
+  add(
+    'Key Points',
+    keyThemes.map((t) => ({
+      html:
+        `<div style="font-family:${SANS};font-weight:700;font-size:14px;color:${C.ink};margin:14px 0 6px;">${esc(t.heading)}</div>` +
+        `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${t.points
+          .map(
+            (p) =>
+              `<tr><td style="padding:0 0 8px;font-family:${SANS};font-size:13.5px;line-height:1.55;color:${C.body};"><span style="color:${C.gold};font-weight:700;">&#9670;</span> ${richCited(p)}</td></tr>`,
+          )
+          .join('')}</table>`,
+    })),
+  )
 
-  const shows = !keyThemes.length && (weekly.shows ?? []).length ? sectionLabel('By Show') + (weekly.shows ?? []).map(showBlock).join('') : ''
+  if (!keyThemes.length) add('By Show', (weekly.shows ?? []).map((d) => ({ html: showBlock(d) })))
 
   // Grouped by episode so the numbers read per-source, not as one mixed list.
   const quantGroups = (weekly.quantTable ?? []).length ? groupQuantByEpisode(weekly.quantTable ?? [], weekly.citations ?? []) : []
-  const quant = quantGroups.length
-    ? sectionLabel('Quantitative Summary') +
-      quantGroups
-        .map((g) => {
-          const heading = g.label
-            ? `<div style="font-family:${SANS};font-weight:700;font-size:13px;color:${C.ink};margin:16px 0 6px;">${esc(g.label)}</div>`
-            : ''
-          const rows = g.rows
-            .map(
-              (q, i) =>
-                `<tr${i % 2 ? ` style="background:#fafbfd;"` : ''}>
+  add(
+    'Quantitative Summary',
+    quantGroups.map((g) => {
+      const heading = g.label ? `<div style="font-family:${SANS};font-weight:700;font-size:13px;color:${C.ink};margin:16px 0 6px;">${esc(g.label)}</div>` : ''
+      const rows = g.rows
+        .map(
+          (q, i) =>
+            `<tr${i % 2 ? ` style="background:#fafbfd;"` : ''}>
               <td style="font-family:${SANS};font-size:13px;color:${C.ink};padding:7px 12px;border-bottom:1px solid ${C.line};">${esc(q.metric)}</td>
               <td align="right" style="font-family:${SANS};font-size:13px;font-weight:700;color:${C.ink};white-space:nowrap;padding:7px 12px;border-bottom:1px solid ${C.line};">${esc(q.value)}</td>
               <td style="font-family:${SANS};font-size:12px;color:#7d8ba3;padding:7px 12px;border-bottom:1px solid ${C.line};">${esc(q.context)}</td>
             </tr>`,
-            )
-            .join('')
-          return `${heading}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${C.line};">${rows}</table>`
-        })
+        )
         .join('')
-    : ''
+      return { html: `${heading}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${C.line};">${rows}</table>` }
+    }),
+  )
 
   // Investment Readout — per-episode evidence/interpretation. Email can't scroll a
   // wide table, so: a compact scannable table (episode · theme · names · confidence)
@@ -456,19 +587,19 @@ export function weeklyBriefEmailHtml(
   const th = `font-family:${SANS};font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#7d8ba3;padding:7px 10px;border-bottom:1px solid ${C.line};`
   const cardLabel = (t: string) => `<div style="font-family:${SANS};font-weight:700;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:${C.gold};margin:11px 0 3px;">${t}</div>`
   const cardProse = (s: string) => `<div style="font-family:${SANS};font-size:13px;line-height:1.55;color:${C.prose};">${richInline(stripN(s))}</div>`
-  const readout = readouts.length
-    ? sectionLabel('Investment Readout') +
-      `<p style="font-family:${SANS};font-size:13px;line-height:1.55;color:${C.body};margin:0 0 12px;">One readout per episode — what the podcast <em>actually said</em>, kept separate from the investment interpretation, with what to verify next.</p>` +
-      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${C.line};margin-bottom:4px;"><tr style="background:${C.panel};"><th align="left" style="${th}">Episode</th><th align="left" style="${th}">Investable Theme</th><th align="left" style="${th}">Names / Sectors</th><th align="left" style="${th}">Confidence</th></tr>${readouts
-        .map(
-          (r, i) =>
-            `<tr${i % 2 ? ` style="background:#fafbfd;"` : ''}><td style="font-family:${SANS};font-size:12.5px;font-weight:600;color:${C.ink};padding:7px 10px;border-bottom:1px solid ${C.line};">${esc(r.episode)}</td><td style="font-family:${SANS};font-size:12.5px;color:${C.ink};padding:7px 10px;border-bottom:1px solid ${C.line};">${richInline(stripN(r.theme))}</td><td style="font-family:${SANS};font-size:11.5px;color:#7d8ba3;padding:7px 10px;border-bottom:1px solid ${C.line};">${esc(r.namesSectors)}</td><td style="padding:7px 10px;border-bottom:1px solid ${C.line};">${confPill(r.confidence)}</td></tr>`,
-        )
-        .join('')}</table>` +
-      readouts
-        .map(
-          (r) =>
-            `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${C.line};margin-top:10px;"><tr><td style="padding:13px 16px;">
+  const readoutTable = (rows: string) =>
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${C.line};margin-bottom:4px;"><tr style="background:${C.panel};"><th align="left" style="${th}">Episode</th><th align="left" style="${th}">Investable Theme</th><th align="left" style="${th}">Names / Sectors</th><th align="left" style="${th}">Confidence</th></tr>${rows}</table>`
+  if (readouts.length)
+    add('Investment Readout', [
+      {
+        html: `<p style="font-family:${SANS};font-size:13px;line-height:1.55;color:${C.body};margin:0 0 12px;">One readout per episode — what the podcast <em>actually said</em>, kept separate from the investment interpretation, with what to verify next.</p>`,
+      },
+      ...readouts.map((r, i) => ({
+        html: `<tr${i % 2 ? ` style="background:#fafbfd;"` : ''}><td style="font-family:${SANS};font-size:12.5px;font-weight:600;color:${C.ink};padding:7px 10px;border-bottom:1px solid ${C.line};">${esc(r.episode)}</td><td style="font-family:${SANS};font-size:12.5px;color:${C.ink};padding:7px 10px;border-bottom:1px solid ${C.line};">${richInline(stripN(r.theme))}</td><td style="font-family:${SANS};font-size:11.5px;color:#7d8ba3;padding:7px 10px;border-bottom:1px solid ${C.line};">${esc(r.namesSectors)}</td><td style="padding:7px 10px;border-bottom:1px solid ${C.line};">${confPill(r.confidence)}</td></tr>`,
+        wrap: readoutTable,
+      })),
+      ...readouts.map((r) => ({
+        html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${C.line};margin-top:10px;"><tr><td style="padding:13px 16px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="font-family:${SANS};font-weight:700;font-size:15px;color:${C.ink};">${esc(r.episode)}<div style="font-family:${SANS};font-weight:600;font-size:13px;color:${C.gold};margin-top:2px;">${richInline(stripN(r.theme))}</div></td><td align="right" valign="top" style="white-space:nowrap;">${confPill(r.confidence)}</td></tr></table>
         ${r.namesSectors && r.namesSectors !== '—' ? `<div style="font-family:${SANS};font-size:11.5px;color:#8794a8;margin-top:5px;">${esc(r.namesSectors)}</div>` : ''}
         ${cardLabel('Podcast evidence')}${cardProse(r.evidence)}
@@ -476,13 +607,13 @@ export function weeklyBriefEmailHtml(
         ${r.questionsToVerify.length ? cardLabel('Questions to verify') + `<ul style="margin:0;padding-left:18px;font-family:${SANS};font-size:13px;line-height:1.5;color:${C.prose};">${r.questionsToVerify.map((q) => `<li style="margin-bottom:2px;">${richInline(stripN(q))}</li>`).join('')}</ul>` : ''}
         ${r.action ? cardLabel('Action') + cardProse(r.action) : ''}
       </td></tr></table>`,
-        )
-        .join('')
-    : ''
+      })),
+    ])
 
-  const interesting = weekly.interesting.quote
-    ? sectionLabel('What Was Actually Interesting') +
-      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.navy};border:1px solid #6b5a2e;"><tr><td style="padding:16px 22px 18px;">
+  if (weekly.interesting.quote)
+    add('What Was Actually Interesting', [
+      {
+        html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.navy};border:1px solid #6b5a2e;"><tr><td style="padding:16px 22px 18px;">
         <div style="font-family:${SERIF};font-weight:700;font-size:34px;line-height:.5;color:${C.gold};">&#8220;</div>
         ${
           weekly.interesting.title
@@ -493,33 +624,107 @@ export function weeklyBriefEmailHtml(
         <div style="margin-top:12px;font-family:${SANS};font-weight:700;font-size:12px;color:${C.goldSoft};">${esc(weekly.interesting.speaker)} <span style="font-weight:400;color:#9fb1c8;">${esc(
           weekly.interesting.role,
         )}</span></div>
+      </td></tr></table>`,
+      },
+    ])
+
+  const sources = weekly.sourceEpisodeIds.map(episodeById).filter((e): e is Episode => Boolean(e))
+  const sourcesTable = (rows: string) => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>`
+  if (sources.length)
+    add('Sources', [
+      ...sources.map((ep, i) => {
+        const show = podcastById(ep.podcastId)?.title ?? ''
+        const zebra = i % 2 ? `background:#fafbfd;` : ''
+        // Every source links back to the dashboard — clicking a source is a way back in.
+        return {
+          html: `<tr><td style="font-family:${SANS};font-size:13px;padding:7px 10px;border-bottom:1px solid ${C.line};${zebra}"><a href="${MUNS_DASHBOARD}" style="color:${C.ink};text-decoration:none;font-weight:600;">${esc(ep.title)}</a></td><td align="right" style="font-family:${SANS};font-size:12px;color:#7d8ba3;padding:7px 10px;border-bottom:1px solid ${C.line};${zebra}">${esc(show)}</td></tr>`,
+          wrap: sourcesTable,
+        }
+      }),
+      {
+        html: `<tr><td colspan="2" style="padding:12px 10px 0;font-family:${SANS};font-size:12px;">&#8594; <a href="${MUNS_DASHBOARD}" style="color:${C.gold};font-weight:700;text-decoration:none;">Open all of these on your Munshot dashboard</a></td></tr>`,
+        wrap: sourcesTable,
+      },
+    ])
+
+  return sections
+}
+
+interface PartInfo {
+  index: number
+  total: number
+  /** Subject of the next part — absent on the last one. */
+  next?: string
+}
+
+/** One complete weekly email: header, CTA, (part notice), the given sections, footer. */
+function weeklyEmailDoc(weekly: WeeklySummary, title: string, sections: Section[], pdfUrl?: string, part?: PartInfo): string {
+  // Lead with the call to action: open the live dashboard (the whole point — pull
+  // the reader back into chat.muns.io), with the PDF download as the secondary.
+  const ctaRow = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 6px;"><tr><td align="center">
+      ${ctaButton(MUNS_DASHBOARD, '&#128202;&nbsp; Open the live dashboard', { primary: true })}
+      ${pdfUrl ? `<span style="display:inline-block;width:10px;">&nbsp;</span>${ctaButton(pdfUrl, '&#11015;&nbsp; Download PDF')}` : ''}
+      <div style="font-family:${SANS};font-size:11px;color:#8794a8;margin-top:9px;">Explore the full intelligence — every show, idea, and source — on <a href="${MUNS_DASHBOARD}" style="color:${C.gold};font-weight:700;text-decoration:none;">Munshot</a></div>
+    </td></tr></table>`
+
+  const notice = part
+    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0 0;background:${C.panel};border:1px solid ${C.line};border-left:3px solid ${C.gold};"><tr><td style="padding:11px 14px;font-family:${SANS};font-size:12.5px;line-height:1.55;color:${C.body};"><strong style="color:${C.ink};">Part ${part.index} of ${part.total}.</strong> This week's brief is long, so it arrives in ${part.total} emails${
+        pdfUrl ? ' — the Download PDF above is always the complete edition' : ''
+      }.</td></tr></table>`
+    : ''
+
+  const nextUp = part?.next
+    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:28px 0 0;background:${C.navy};border:1px solid #6b5a2e;"><tr><td align="center" style="padding:16px 20px;">
+        <div style="font-family:${SERIF};font-weight:700;font-size:16px;color:${C.goldSoft};">Continued in Part ${part.index + 1} of ${part.total} &#8594;</div>
+        <div style="font-family:${SANS};font-size:12px;color:#cdd7e6;margin-top:6px;">Look for &ldquo;${esc(part.next)}&rdquo; in your inbox.</div>
       </td></tr></table>`
     : ''
 
-  const sources = weekly.sourceEpisodeIds.map(episodeById).filter((e): e is Episode => Boolean(e))
-  const sourcesBody = sources.length
-    ? sectionLabel('Sources') +
-      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${sources
-        .map((ep, i) => {
-          const show = podcastById(ep.podcastId)?.title ?? ''
-          const zebra = i % 2 ? `background:#fafbfd;` : ''
-          // Every source links back to the dashboard — clicking a source is a way back in.
-          return `<tr><td style="font-family:${SANS};font-size:13px;padding:7px 10px;border-bottom:1px solid ${C.line};${zebra}"><a href="${MUNS_DASHBOARD}" style="color:${C.ink};text-decoration:none;font-weight:600;">${esc(ep.title)}</a></td><td align="right" style="font-family:${SANS};font-size:12px;color:#7d8ba3;padding:7px 10px;border-bottom:1px solid ${C.line};${zebra}">${esc(show)}</td></tr>`
-        })
-        .join('')}<tr><td colspan="2" style="padding:12px 10px 0;font-family:${SANS};font-size:12px;">&#8594; <a href="${MUNS_DASHBOARD}" style="color:${C.gold};font-weight:700;text-decoration:none;">Open all of these on your Munshot dashboard</a></td></tr></table>`
-    : ''
+  const body = sections.map((s) => sectionHead(s.label, s.continued) + renderBlocks(s.blocks)).join('')
+  const bodyRow = `<tr><td style="padding:8px 36px 30px;">${ctaRow}${notice}${body}${nextUp}</td></tr>`
 
-  const bodyRow = `<tr><td style="padding:8px 36px 30px;">${ctaRow}${overview}${keyPoints}${shows}${quant}${readout}${interesting}${sourcesBody}</td></tr>`
+  const chips = [`${weekly.episodeCount} episode${weekly.episodeCount === 1 ? '' : 's'}`, `${weekly.readMinutes} min read`]
+  if (part) chips.push(`Part ${part.index} of ${part.total}`)
+  return shell(title, header('AI Podcast Intelligence', 'Weekly Summary', weekly.rangeLabel, chips) + bodyRow + footer())
+}
 
-  return shell(
-    weeklyReportTitle(weekly.rangeLabel),
-    header('AI Podcast Intelligence', 'Weekly Summary', weekly.rangeLabel, [
-      `${weekly.episodeCount} episode${weekly.episodeCount === 1 ? '' : 's'}`,
-      `${weekly.readMinutes} min read`,
-    ]) +
-      bodyRow +
-      footer(),
-  )
+/** Render a real Weekly edition as ONE designed HTML email (mirrors the Word/PDF),
+ *  however long. Sends go through `weeklyBriefEmailParts`, which splits it. */
+export function weeklyBriefEmailHtml(
+  weekly: WeeklySummary,
+  episodeById: ById<Episode>,
+  podcastById: ById<Podcast>,
+  opts: { pdfUrl?: string } = {},
+): string {
+  return weeklyEmailDoc(weekly, weeklyReportTitle(weekly.rangeLabel), weeklySections(weekly, episodeById, podcastById), opts.pdfUrl)
+}
+
+/** The weekly edition as the emails to send, in order. One email (the plain title as
+ *  subject) when it fits under `maxBytes`; otherwise "(Part n of N)" emails, each
+ *  standalone and each linking the full PDF. */
+export function weeklyBriefEmailParts(
+  weekly: WeeklySummary,
+  episodeById: ById<Episode>,
+  podcastById: ById<Podcast>,
+  opts: { pdfUrl?: string; maxBytes?: number } = {},
+): EmailPart[] {
+  const title = weeklyReportTitle(weekly.rangeLabel)
+  const sections = weeklySections(weekly, episodeById, podcastById)
+  const whole = weeklyEmailDoc(weekly, title, sections, opts.pdfUrl)
+  const max = opts.maxBytes ?? EMAIL_PART_MAX_BYTES
+  if (utf8Bytes(whole) <= max) return [{ subject: title, html: whole }]
+
+  // The chrome every part repeats (header, CTA, notices, footer), measured at a
+  // worst-case part number so the packed body always fits beside it.
+  const worst = weeklyPartSubject(weekly.rangeLabel, 99, 99)
+  const chrome = utf8Bytes(weeklyEmailDoc(weekly, worst, [], opts.pdfUrl, { index: 98, total: 99, next: worst }))
+  const packed = packSections(sections, max - chrome)
+  const total = packed.length
+  return packed.map((secs, i) => {
+    const subject = weeklyPartSubject(weekly.rangeLabel, i + 1, total)
+    const next = i + 1 < total ? weeklyPartSubject(weekly.rangeLabel, i + 2, total) : undefined
+    return { subject, html: weeklyEmailDoc(weekly, subject, secs, opts.pdfUrl, { index: i + 1, total, next }) }
+  })
 }
 
 // ── Single episode → HTML email (real content) ───────────────────────────────

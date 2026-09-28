@@ -175,6 +175,52 @@ describe('runWeeklyDigest', () => {
     expect(calls[0][0].html).toBe(calls[1][0].html)
     expect(calls[0][0].subject).toContain('Munshot AI Podcasts')
     expect(calls[0][0].html).toContain('Weekly Summary')
+    expect(calls[0][0].subject).not.toContain('Part') // a normal week is still ONE email
+    expect(res.body).toMatchObject({ parts: 1 })
+  })
+
+  // A heavy week (30 long summaries) renders well past Gmail's ~102KB clip.
+  const heavyWeek = () =>
+    Array.from({ length: 30 }, (_, i) => ({
+      ...ep(`h${i}`, i % 2 ? 'allin' : 'oddlots', daysAgo(1)),
+      summary: sum({
+        synthesis: ['A concrete synthesis of the week. '.repeat(20)],
+        highlights: Array.from({ length: 6 }, (_, k) => ({ id: `h${k}`, title: `Key point ${k}`, timestamp: '—', detail: 'why it matters '.repeat(20), key: true })),
+      }),
+    }))
+
+  it('splits a long edition into ordered parts for every subscriber', async () => {
+    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent' }))
+    const res = await runWeeklyDigest({
+      getEpisodes: async () => heavyWeek(),
+      subscriberStore: memSubscriberStore(subs('a@muns.io', 'b@muns.io')),
+      sendEmail,
+      now: NOW,
+    })
+    const parts = (res.body as { parts?: number }).parts ?? 0
+    expect(parts).toBeGreaterThan(1)
+    expect(res.body).toMatchObject({ ok: true, sent: 2, failed: 0, recipients: 2 })
+    expect(sendEmail).toHaveBeenCalledTimes(2 * parts)
+    const calls = sendEmail.mock.calls.map(([m]) => m)
+    // All of a's parts, in order, then all of b's.
+    expect(calls.map((m) => m.email)).toEqual([...Array(parts).fill('a@muns.io'), ...Array(parts).fill('b@muns.io')])
+    calls.slice(0, parts).forEach((m, i) => expect(m.subject).toMatch(new RegExp(`\\(Part ${i + 1} of ${parts}\\)$`)))
+  })
+
+  it('stops a subscriber at a failed part and counts them as failed', async () => {
+    const sendEmail = vi.fn(async (msg: { email: string; subject: string; html: string }) =>
+      msg.email === 'a@muns.io' && msg.subject.includes('(Part 1 of') ? { ok: false, message: 'rejected' } : { ok: true, message: 'sent' },
+    )
+    const res = await runWeeklyDigest({
+      getEpisodes: async () => heavyWeek(),
+      subscriberStore: memSubscriberStore(subs('a@muns.io', 'b@muns.io')),
+      sendEmail,
+      now: NOW,
+    })
+    const parts = (res.body as { parts?: number }).parts ?? 0
+    expect(res.body).toMatchObject({ ok: false, sent: 1, failed: 1 })
+    expect(sendEmail.mock.calls.filter(([m]) => m.email === 'a@muns.io')).toHaveLength(1) // no Part 2 after a failed Part 1
+    expect(sendEmail.mock.calls.filter(([m]) => m.email === 'b@muns.io')).toHaveLength(parts)
   })
 
   it('counts failed sends without throwing, and reports ok:false', async () => {

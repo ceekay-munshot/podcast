@@ -1,8 +1,8 @@
 import type { Episode, Podcast, Summary, WeeklySummary } from '../src/lib/types'
 import { PODCASTS } from '../src/lib/mock-data'
 import { assembleWeekly, buildCitations, buildWeeklySources, hashKey, mergeWeeklyAi } from '../src/lib/weeklyAssemble'
-import { weeklyBriefEmailHtml, bytesToBase64, type EmailAttachment } from '../src/lib/email'
-import { weeklyReportFilename, weeklyReportTitle } from '../src/lib/reportName'
+import { weeklyBriefEmailParts, bytesToBase64, type EmailAttachment } from '../src/lib/email'
+import { weeklyReportFilename } from '../src/lib/reportName'
 import { hasLlmKey, summarizeEpisode, synthesizeWeekly, type SummarizeConfig } from './summarize'
 import type { SummaryStore } from './summaryStore'
 import type { SubscriberStore } from './subscriberStore'
@@ -160,6 +160,8 @@ export interface DigestReport {
   episodeCount?: number
   /** Episodes processed inline by the pre-send backfill (0 when none was needed). */
   backfilled?: number
+  /** Emails per recipient — >1 when a long edition was split to stay under Gmail's clip. */
+  parts?: number
   /** Set when nothing was sent: 'no_ready_episodes' | 'no_subscribers'. */
   skipped?: string
 }
@@ -297,8 +299,9 @@ export async function runWeeklyDigest(deps: DigestDeps): Promise<{ status: numbe
     }
   }
 
-  const html = weeklyBriefEmailHtml(weekly, episodeById, podcastById, { pdfUrl })
-  const subject = weeklyReportTitle(weekly.rangeLabel)
+  // A long edition becomes Part 1, Part 2, … (Gmail clips past ~102KB); every part
+  // links — and, when enabled, attaches — the FULL PDF.
+  const parts = weeklyBriefEmailParts(weekly, episodeById, podcastById, { pdfUrl })
   // Attach the same bytes when enabled; encoded once and shared across all recipients.
   const attachments: EmailAttachment[] | undefined =
     deps.attachPdf && pdfBytes ? [{ filename: fileName, content: bytesToBase64(pdfBytes), contentType: 'application/pdf' }] : undefined
@@ -306,13 +309,31 @@ export async function runWeeklyDigest(deps: DigestDeps): Promise<{ status: numbe
   let sent = 0
   let failed = 0
   for (const sub of subscribers) {
-    const res = await deps.sendEmail({ email: sub.email, subject, html, ...(attachments ? { attachments } : {}) })
-    if (res.ok) sent++
+    // In order, and stop at a failed part — nobody gets Part 3 without Part 2. A
+    // recipient only counts as sent once every part went out.
+    let ok = true
+    for (const part of parts) {
+      const res = await deps.sendEmail({ email: sub.email, subject: part.subject, html: part.html, ...(attachments ? { attachments } : {}) })
+      if (!res.ok) {
+        ok = false
+        break
+      }
+    }
+    if (ok) sent++
     else failed++
   }
 
   return {
     status: 200,
-    body: { ok: failed === 0, sent, failed, recipients: subscribers.length, backfilled, rangeLabel: weekly.rangeLabel, episodeCount: ready.length },
+    body: {
+      ok: failed === 0,
+      sent,
+      failed,
+      recipients: subscribers.length,
+      backfilled,
+      rangeLabel: weekly.rangeLabel,
+      episodeCount: ready.length,
+      parts: parts.length,
+    },
   }
 }

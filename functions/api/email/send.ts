@@ -1,4 +1,4 @@
-import { sendRawEmail, cleanAttachments, type RawEmail } from '../../../src/lib/email'
+import { sendRawEmailParts, cleanAttachments, readEmailContent, type RawEmail } from '../../../src/lib/email'
 import type { KVNamespace } from '../../../server/summaryStore'
 
 // Cloudflare Pages Function → POST /api/email/send (production).
@@ -31,7 +31,7 @@ interface Env {
 }
 
 const EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/
-const MAX_CONTENT = 200_000 // generous: a designed weekly brief is ~30-60KB
+const MAX_CONTENT = 200_000 // per message — generous: a weekly brief is split into parts of ≤70KB
 const GLOBAL_HOURLY_CAP = 300 // on-demand sends only (cron bypasses this proxy)
 const PER_RECIPIENT_COOLDOWN_S = 30
 
@@ -64,26 +64,26 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
     if (!allowed.has(origin)) return json(403, { ok: false, message: 'Forbidden origin.' })
   }
 
-  let body: { to?: unknown; subject?: unknown; text?: unknown; html?: unknown; attachments?: unknown }
+  let body: { to?: unknown; subject?: unknown; text?: unknown; html?: unknown; parts?: unknown; attachments?: unknown }
   try {
     body = (await request.json()) as typeof body
   } catch {
     return json(400, { ok: false, message: 'Invalid request.' })
   }
   const to = typeof body.to === 'string' ? body.to.trim() : ''
-  const subject = typeof body.subject === 'string' ? body.subject : ''
-  const text = typeof body.text === 'string' ? body.text : undefined
-  const html = typeof body.html === 'string' ? body.html : undefined
+  // One message, or the ordered parts of a weekly brief split to stay under Gmail's clip.
+  const content = readEmailContent(body)
   // Attachments only ride along when the feature is enabled; otherwise the client's
   // bytes are simply ignored and the brief goes out with its hosted link as before.
   const attachments = env.EMAIL_ATTACHMENTS === '1' ? cleanAttachments(body.attachments) : []
   // Exactly one valid recipient, no header-injection newlines.
   if (!EMAIL_RE.test(to) || /[\r\n]/.test(to)) return json(400, { ok: false, message: 'A valid recipient email is required.' })
-  if (!subject || /[\r\n]/.test(subject) || (!!text === !!html)) return json(400, { ok: false, message: 'A subject and exactly one of text or html are required.' })
-  if ((html ?? text ?? '').length > MAX_CONTENT) return json(413, { ok: false, message: 'Email content is too large.' })
+  if (!content) return json(400, { ok: false, message: 'A subject and exactly one of text or html are required.' })
+  if (content.some((m) => (m.html ?? m.text ?? '').length > MAX_CONTENT)) return json(413, { ok: false, message: 'Email content is too large.' })
 
   // Best-effort rate limiting (fails open). Per-recipient cooldown stops bombing one
-  // inbox; the hourly global cap stops runaway abuse of the service token.
+  // inbox (a split brief is one request, so one cooldown); the hourly global cap
+  // counts every email sent, parts included, and stops runaway abuse of the token.
   const kv = env.SUMMARIES
   if (kv) {
     try {
@@ -91,16 +91,18 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
       if (await kv.get(rk)) return json(429, { ok: false, message: 'Please wait a moment before emailing this address again.' })
       const gk = `erl:g:${Math.floor(Date.now() / 3_600_000)}`
       const n = Number((await kv.get(gk)) ?? '0') || 0
-      if (n >= GLOBAL_HOURLY_CAP) return json(429, { ok: false, message: 'Email is temporarily rate-limited. Please try again shortly.' })
+      if (n + content.length > GLOBAL_HOURLY_CAP) return json(429, { ok: false, message: 'Email is temporarily rate-limited. Please try again shortly.' })
       // Record before sending so concurrent requests see the cooldown.
-      await Promise.all([kv.put(rk, '1', { expirationTtl: PER_RECIPIENT_COOLDOWN_S }), kv.put(gk, String(n + 1), { expirationTtl: 3700 })])
+      await Promise.all([kv.put(rk, '1', { expirationTtl: PER_RECIPIENT_COOLDOWN_S }), kv.put(gk, String(n + content.length), { expirationTtl: 3700 })])
     } catch {
       /* KV unavailable — degrade open; never block a legitimate send on a cache hiccup */
     }
   }
 
-  const base = { email: to, subject, ...(attachments.length ? { attachments } : {}) }
-  const msg: RawEmail = html ? { ...base, html } : { ...base, text: text as string }
-  const res = await sendRawEmail(msg, { token: env.MUNSHOT_EMAIL_TOKEN })
+  const base = { email: to, ...(attachments.length ? { attachments } : {}) }
+  const res = await sendRawEmailParts(
+    content.map((m): RawEmail => ({ ...base, ...m })),
+    { token: env.MUNSHOT_EMAIL_TOKEN },
+  )
   return json(res.ok ? 200 : 502, res)
 }

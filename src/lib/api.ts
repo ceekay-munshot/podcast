@@ -3,9 +3,9 @@ import { EPISODES, PODCASTS, WEEKLY } from './mock-data'
 import { knownResultsForQuery } from './knownSources'
 import { stableHash } from './hash'
 import { apiFetch } from './apiFetch'
-import { episodeBriefEmailHtml, weeklyBriefEmailHtml, welcomeEmailHtml, bytesToBase64, type EmailResult, type EmailAttachment } from './email'
+import { episodeBriefEmailHtml, weeklyBriefEmailParts, welcomeEmailHtml, bytesToBase64, type EmailResult, type EmailAttachment, type EmailPart } from './email'
 import { weeklyPdfBytes } from './pdfRender'
-import { weeklyReportFilename, weeklyReportTitle, withReportDownloadName } from './reportName'
+import { weeklyReportFilename, withReportDownloadName } from './reportName'
 import { normalizeRecipients } from './recipientsStore'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -159,7 +159,10 @@ export async function subscribeWeekly(email: string, opts: { name?: string } = {
 // Send through the same-origin proxy (/api/email/send), which holds the service
 // token server-side and relays to the raw-email endpoint. This is what fixes the
 // partitioned-iframe failure: a same-origin call needs no cross-origin cookie.
-async function postEmail(msg: { to: string; subject: string; html: string; attachments?: EmailAttachment[] }): Promise<EmailResult> {
+// `parts` carries a weekly brief split to stay under Gmail's clip: one request, sent in order.
+async function postEmail(
+  msg: { to: string; attachments?: EmailAttachment[] } & ({ subject: string; html: string } | { parts: EmailPart[] }),
+): Promise<EmailResult> {
   try {
     const r = await apiFetch('/api/email/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(msg) })
     const data = (await r.json().catch(() => null)) as EmailResult | null
@@ -267,16 +270,20 @@ export async function emailWeeklyEdition(
   } catch {
     /* no PDF this send — the brief still goes out, just without link/attachment */
   }
-  const subject = weeklyReportTitle(weekly.rangeLabel)
-  const html = weeklyBriefEmailHtml(weekly, episodeById, podcastById, { pdfUrl })
+  // A long week splits into Part 1, Part 2, … (Gmail clips past ~102KB). Each part
+  // links (and attaches) the FULL PDF; all parts go to an address in one request.
+  const parts = weeklyBriefEmailParts(weekly, episodeById, podcastById, { pdfUrl })
 
-  const results = await Promise.all(to.map((addr) => postEmail({ to: addr, subject, html, attachments })))
+  const results = await Promise.all(
+    to.map((addr) => postEmail(parts.length === 1 ? { to: addr, ...parts[0], attachments } : { to: addr, parts, attachments })),
+  )
   const sent = results.filter((r) => r.ok).length
   const failed = to.length - sent
 
   if (sent === 0) return { ok: false, message: results[0]?.message || "Couldn't send the email." }
   if (failed > 0) return { ok: false, message: `Sent to ${sent} of ${to.length} — ${failed} couldn't be reached.` }
-  return { ok: true, message: to.length === 1 ? `Sent to ${to[0]}` : `Sent to ${to.length} recipients` }
+  const inParts = parts.length > 1 ? ` in ${parts.length} parts` : ''
+  return { ok: true, message: to.length === 1 ? `Sent to ${to[0]}${inParts}` : `Sent to ${to.length} recipients${inParts}` }
 }
 
 // Send one episode's summary on demand (the Episode page's "Email this edition")
