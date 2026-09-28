@@ -16,7 +16,7 @@ import { fileSubscriberStore } from './server/subscriberStore.node'
 import { handleSchedule } from './server/scheduleStore'
 import { fileScheduleStore } from './server/scheduleStore.node'
 import { checkCronAuth, processPendingBatch, runWeeklyDigest } from './server/weeklyDigest'
-import { sendRawEmail, type RawEmail } from './src/lib/email'
+import { readEmailContent, sendRawEmail, sendRawEmailParts, type RawEmail } from './src/lib/email'
 import { reportId, reportUrl } from './server/reportStore'
 import { contentDispositionInline, REPORT_DL_PARAM } from './src/lib/reportName'
 import { cleanAttachments } from './src/lib/email'
@@ -161,17 +161,18 @@ function liveApiPlugin(config: {
       server.middlewares.use('/api/email/send', async (req, res) => {
         if (req.method !== 'POST') return json(res, 405, { ok: false, message: 'method_not_allowed' })
         try {
-          const b = JSON.parse((await readBody(req)) || '{}') as { to?: string; subject?: string; text?: string; html?: string; attachments?: unknown }
+          const b = JSON.parse((await readBody(req)) || '{}') as { to?: string; subject?: unknown; text?: unknown; html?: unknown; parts?: unknown; attachments?: unknown }
           const to = (b.to ?? '').trim()
-          const text = typeof b.text === 'string' ? b.text : undefined
-          const html = typeof b.html === 'string' ? b.html : undefined
+          const content = readEmailContent(b)
           // Same recipient hardening as prod: one valid address, no header-injection newlines.
           if (!/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(to) || /[\r\n]/.test(to)) return json(res, 400, { ok: false, message: 'A valid recipient email is required.' })
-          if (!b.subject || /[\r\n]/.test(b.subject) || !!text === !!html) return json(res, 400, { ok: false, message: 'A subject and exactly one of text or html are required.' })
+          if (!content) return json(res, 400, { ok: false, message: 'A subject and exactly one of text or html are required.' })
           const attachments = config.emailAttachments ? cleanAttachments(b.attachments) : []
-          const base = { email: to, subject: b.subject, ...(attachments.length ? { attachments } : {}) }
-          const msg: RawEmail = html ? { ...base, html } : { ...base, text: text as string }
-          const result = await sendRawEmail(msg, { token: config.emailToken })
+          const base = { email: to, ...(attachments.length ? { attachments } : {}) }
+          const result = await sendRawEmailParts(
+            content.map((m): RawEmail => ({ ...base, ...m })),
+            { token: config.emailToken },
+          )
           json(res, result.ok ? 200 : 502, result)
         } catch {
           json(res, 500, { ok: false, message: "Couldn't reach the email service." })

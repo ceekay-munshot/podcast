@@ -1,10 +1,10 @@
 import type { Episode, Podcast, Summary, WeeklySummary } from '../src/lib/types'
 import { PODCASTS } from '../src/lib/mock-data'
 import { assembleWeekly, buildCitations, buildWeeklySources, hashKey, mergeWeeklyAi } from '../src/lib/weeklyAssemble'
-import { weeklyBriefEmailHtml, bytesToBase64, type EmailAttachment } from '../src/lib/email'
-import { weeklyReportFilename, weeklyReportTitle } from '../src/lib/reportName'
+import { weeklyBriefEmailParts, bytesToBase64, sendInOrder, type EmailAttachment, type EmailPart } from '../src/lib/email'
+import { weeklyReportFilename } from '../src/lib/reportName'
 import { hasLlmKey, summarizeEpisode, synthesizeWeekly, type SummarizeConfig } from './summarize'
-import type { SummaryStore } from './summaryStore'
+import type { KVNamespace, SummaryStore } from './summaryStore'
 import type { SubscriberStore } from './subscriberStore'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -147,6 +147,11 @@ export interface DigestDeps {
   /** Show title for a podcastId PODCASTS doesn't carry — i.e. a user-added channel.
    *  Only used to name the show in the summariser prompt. */
   resolveShow?: (podcastId: string) => string | undefined
+  /** Pause before re-sending a refused later part of a split brief (default 1s). */
+  retryDelayMs?: number
+  /** Where a send that stopped part-way records what each reader is still owed, for
+   *  `resumeOwedParts` on the next tick. Absent → a partial delivery is only reported. */
+  pendingStore?: PendingDeliveryStore
   /** Overridable clock for tests. */
   now?: number
 }
@@ -160,6 +165,10 @@ export interface DigestReport {
   episodeCount?: number
   /** Episodes processed inline by the pre-send backfill (0 when none was needed). */
   backfilled?: number
+  /** Emails per recipient — >1 when a long edition was split to stay under Gmail's clip. */
+  parts?: number
+  /** Recipients who got some parts but not all — saved for the next tick to finish. */
+  owed?: number
   /** Set when nothing was sent: 'no_ready_episodes' | 'no_subscribers'. */
   skipped?: string
 }
@@ -222,6 +231,90 @@ export async function processPendingBatch(
     ...(budgetSpent ? { skipped: 'budget_spent' as const } : {}),
     ...(failed ? { failed } : {}),
   }
+}
+
+// ── Finishing a split brief that stopped part-way ───────────────────────────
+// A split edition is several emails, so a send can stop after Part 1 with the rest
+// undelivered. The schedule marker still claims the week (re-running the whole send
+// would re-mail everyone who already has it), so what each such reader is still owed
+// is saved instead, together with the exact parts sent — the edition can change
+// between ticks, and Part 2 of a re-render needn't follow on from Part 1 — and every
+// following tick sends them the rest. It resumes from the first part not confirmed
+// delivered, so a part whose response was lost can arrive twice: a rare duplicate
+// beats a reader stuck with half the brief.
+
+/** A reader and the index of the first part they still need. */
+export interface OwedParts {
+  email: string
+  next: number
+}
+export interface PendingDelivery {
+  parts: EmailPart[]
+  attachments?: EmailAttachment[]
+  owed: OwedParts[]
+  /** Ticks already spent resuming; given up after MAX_RESUME_TICKS. */
+  tries: number
+}
+export interface PendingDeliveryStore {
+  get(): Promise<PendingDelivery | null>
+  /** `null` clears it. */
+  put(p: PendingDelivery | null): Promise<void>
+}
+
+/** Resume attempts before a still-failing remainder is given up (~3h of 30-min ticks). */
+export const MAX_RESUME_TICKS = 6
+export const PENDING_DELIVERY_KEY = 'weekly:pending-delivery:v1'
+
+/** Workers KV backend. A day's TTL so a stale remainder can never reach next week. */
+export function kvPendingDeliveryStore(kv: KVNamespace): PendingDeliveryStore {
+  return {
+    async get() {
+      try {
+        const p = (await kv.get(PENDING_DELIVERY_KEY, 'json')) as PendingDelivery | null
+        return p && Array.isArray(p.owed) && Array.isArray(p.parts) ? p : null
+      } catch {
+        return null
+      }
+    },
+    async put(p) {
+      // KV here has no delete; an expiring `null` reads back as "nothing pending".
+      await kv.put(PENDING_DELIVERY_KEY, JSON.stringify(p), { expirationTtl: p ? 86_400 : 60 })
+    },
+  }
+}
+
+function partMessages(parts: EmailPart[], email: string, attachments?: EmailAttachment[]) {
+  return parts.map((p) => ({ email, subject: p.subject, html: p.html, ...(attachments ? { attachments } : {}) }))
+}
+
+/** Recipients mailed at once. Each one's parts still go strictly in order; independent
+ *  recipients overlap so a split edition (up to 8 emails each) fits the cron's deadline. */
+const SEND_CONCURRENCY = 4
+
+/** Run `fn` over `items` with at most `limit` in flight. */
+async function forEachPooled<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) await fn(items[next++])
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+}
+
+/** Send every reader a previous tick left part-way the rest of that SAME edition. The
+ *  cron calls this on every tick; null when nothing is pending. Never throws. */
+export async function resumeOwedParts(
+  deps: Pick<DigestDeps, 'sendEmail' | 'retryDelayMs'> & { pendingStore: PendingDeliveryStore },
+): Promise<{ delivered: number; owed: number } | null> {
+  const p = await deps.pendingStore.get().catch(() => null)
+  if (!p?.owed.length) return null
+  const still: OwedParts[] = []
+  await forEachPooled(p.owed, SEND_CONCURRENCY, async (o) => {
+    const res = await sendInOrder(partMessages(p.parts.slice(o.next), o.email, p.attachments), deps.sendEmail, { retryDelayMs: deps.retryDelayMs })
+    if (!res.ok) still.push({ email: o.email, next: o.next + res.sent })
+  })
+  const tries = p.tries + 1
+  await deps.pendingStore.put(still.length && tries < MAX_RESUME_TICKS ? { ...p, owed: still, tries } : null).catch(() => {})
+  return { delivered: p.owed.length - still.length, owed: still.length }
 }
 
 /** Build this week's shared edition and mail it to every subscriber. Returns a
@@ -297,22 +390,43 @@ export async function runWeeklyDigest(deps: DigestDeps): Promise<{ status: numbe
     }
   }
 
-  const html = weeklyBriefEmailHtml(weekly, episodeById, podcastById, { pdfUrl })
-  const subject = weeklyReportTitle(weekly.rangeLabel)
+  // A long edition becomes Part 1, Part 2, … (Gmail clips past ~102KB); every part
+  // links — and, when enabled, attaches — the FULL PDF.
+  const parts = weeklyBriefEmailParts(weekly, episodeById, podcastById, { pdfUrl })
   // Attach the same bytes when enabled; encoded once and shared across all recipients.
   const attachments: EmailAttachment[] | undefined =
     deps.attachPdf && pdfBytes ? [{ filename: fileName, content: bytesToBase64(pdfBytes), contentType: 'application/pdf' }] : undefined
 
   let sent = 0
   let failed = 0
-  for (const sub of subscribers) {
-    const res = await deps.sendEmail({ email: sub.email, subject, html, ...(attachments ? { attachments } : {}) })
+  const owed: OwedParts[] = []
+  await forEachPooled(subscribers, SEND_CONCURRENCY, async (sub) => {
+    // In order, stopping at a part that fails — nobody gets Part 3 without Part 2. A
+    // recipient only counts as sent once every part went out; one who got some parts
+    // is owed the rest, which the next tick delivers (resumeOwedParts).
+    const res = await sendInOrder(partMessages(parts, sub.email, attachments), deps.sendEmail, { retryDelayMs: deps.retryDelayMs })
     if (res.ok) sent++
-    else failed++
-  }
+    else {
+      failed++
+      if (res.sent > 0) owed.push({ email: sub.email, next: res.sent })
+    }
+  })
+  // This edition supersedes any older remainder (e.g. a forced resend after a failed
+  // one): everyone just got the new brief, so a stale Part 3 must never follow it.
+  if (deps.pendingStore) await deps.pendingStore.put(owed.length ? { parts, attachments, owed, tries: 0 } : null).catch(() => {})
 
   return {
     status: 200,
-    body: { ok: failed === 0, sent, failed, recipients: subscribers.length, backfilled, rangeLabel: weekly.rangeLabel, episodeCount: ready.length },
+    body: {
+      ok: failed === 0,
+      sent,
+      failed,
+      recipients: subscribers.length,
+      backfilled,
+      rangeLabel: weekly.rangeLabel,
+      episodeCount: ready.length,
+      parts: parts.length,
+      ...(owed.length ? { owed: owed.length } : {}),
+    },
   }
 }

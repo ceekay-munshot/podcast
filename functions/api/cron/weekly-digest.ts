@@ -3,7 +3,7 @@ import { collectTrackedChannels } from '../../../server/channelStore'
 import { kvSummaryStore, type KVNamespace } from '../../../server/summaryStore'
 import { kvSubscriberStore } from '../../../server/subscriberStore'
 import { kvReportStore, reportUrl } from '../../../server/reportStore'
-import { checkCronAuth, processPendingBatch, runWeeklyDigest } from '../../../server/weeklyDigest'
+import { checkCronAuth, kvPendingDeliveryStore, processPendingBatch, resumeOwedParts, runWeeklyDigest } from '../../../server/weeklyDigest'
 import { DEFAULT_SCHEDULE, dueToSend, kvScheduleStore } from '../../../server/scheduleStore'
 import { sendRawEmail } from '../../../src/lib/email'
 import { weeklyPdfBytes } from '../../../src/lib/pdfRender'
@@ -61,6 +61,13 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
     // `?force=1` (a manual workflow_dispatch) bypasses the gate to send immediately.
     const force = new URL(request.url).searchParams.get('force') === '1'
     const scheduleStore = env.SUMMARIES ? kvScheduleStore(env.SUMMARIES) : null
+    // No browser session server-side, so authenticate every send with the service token.
+    const sendEmail = (msg: Parameters<typeof sendRawEmail>[0]) => sendRawEmail(msg, { token: env.MUNSHOT_EMAIL_TOKEN })
+
+    // First, finish any split brief an earlier tick left part-way (Part 1 went out,
+    // a later part didn't) — every tick, whatever the schedule says.
+    const pendingStore = env.SUMMARIES ? kvPendingDeliveryStore(env.SUMMARIES) : undefined
+    const resumed = pendingStore ? await resumeOwedParts({ pendingStore, sendEmail }).catch(() => null) : null
     const summaryStore = env.SUMMARIES ? kvSummaryStore(env.SUMMARIES) : undefined
     const summarizeConfig = {
       openaiKey: env.OPENAI_API_KEY,
@@ -110,10 +117,10 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
     let sentMarker: string | null = null
     if (!force) {
       // No store ⇒ can't gate or de-dupe ⇒ refuse to send (but the batch above still ran).
-      if (!scheduleStore) return json(200, { ok: true, skipped: 'no_schedule_store', batch, channels: channels.length })
+      if (!scheduleStore) return json(200, { ok: true, skipped: 'no_schedule_store', batch, channels: channels.length, resumed })
       const schedule = (await scheduleStore.getSchedule()) ?? DEFAULT_SCHEDULE
       const gate = dueToSend(schedule, new Date(), await scheduleStore.getLastSent())
-      if (!gate.due) return json(200, { ok: true, skipped: 'not_scheduled', schedule, batch, channels: channels.length })
+      if (!gate.due) return json(200, { ok: true, skipped: 'not_scheduled', schedule, batch, channels: channels.length, resumed })
       sentMarker = gate.dateStr
     }
 
@@ -126,8 +133,8 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
       getEpisodes,
       summaryStore,
       subscriberStore,
-      // No browser session server-side, so authenticate the send with the service token.
-      sendEmail: (msg) => sendRawEmail(msg, { token: env.MUNSHOT_EMAIL_TOKEN }),
+      sendEmail,
+      pendingStore,
       summarizeConfig,
       // Render the PDF when it will be used: hosted as a link (needs KV + origin) and/or
       // attached to the email (needs only the bytes).
@@ -144,11 +151,13 @@ export const onRequest = async (context: { request: Request; env: CronEnv }): Pr
     // Claim this week's slot only once an edition was actually built + mailed, so a
     // later tick the same day won't re-send; a skip (no subscribers / no ready
     // episodes) stays unmarked so a transient gap can still retry on the next tick.
+    // A reader left part-way is finished by resumeOwedParts on later ticks, not by
+    // re-sending the whole edition to everyone.
     if (sentMarker && scheduleStore) {
       const recipients = (result.body as { recipients?: number }).recipients
       if (typeof recipients === 'number' && recipients > 0) await scheduleStore.setLastSent(sentMarker)
     }
-    return json(result.status, { ...result.body, batch, channels: channels.length })
+    return json(result.status, { ...result.body, batch, channels: channels.length, resumed })
   } catch {
     return json(500, { error: 'digest_failed' })
   }

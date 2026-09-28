@@ -221,6 +221,25 @@ content hash (`server/reportStore.ts`, served at `GET /api/report/:id`, 30-day
 TTL), and sends a polished HTML brief with a prominent **Download full PDF
 report** button.
 
+**A long week arrives in parts.** Gmail clips any email whose HTML passes ~102KB
+(everything after the cut hides behind *"[Message clipped] View entire message"*),
+and a 20+ episode week is well past that. So `weeklyBriefEmailParts`
+(`src/lib/email.ts`) splits the edition into emails of at most 70KB, titled
+*"… (Part 1 of 3)"*, *"(Part 2 of 3)"*, and so on. Every part is a complete email
+with the header, the dashboard button and the **Download PDF** button, and the PDF
+is always the whole edition. A section that spills over carries on in the next part
+as *"(continued)"*, and each part but the last points to the next one. A normal week
+still goes out as one email, unchanged. Parts are sent in order and a failed part
+stops the send, so nobody gets Part 3 without Part 2. A later part the endpoint
+refuses as busy (429/503) is retried on the spot; anything else might already have
+been delivered, so it is left for the cron: a reader left part-way is saved in KV
+with the exact parts, and every following tick sends them the rest (for up to ~3h).
+The on-demand proxy takes all of a recipient's parts in one
+request (`parts: [...]`), so its per-recipient cooldown still counts one brief; if that
+stops part-way, "try again" in the app sends only the remaining parts. A
+week too long for 8 emails (`MAX_EMAIL_PARTS`), or a single block too big for any
+one email, points to the PDF and dashboard instead of being clipped.
+
 **All sends route through our own origin.** The app is a partitioned iframe, so a
 cross-origin browser send to the raw-email endpoint can't carry the muns.io
 session cookie (this was the *"Couldn't reach the email service"* bug). Instead,

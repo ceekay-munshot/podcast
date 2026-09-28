@@ -1,6 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { episodeBriefEmailHtml, sendRawEmail, welcomeEmailHtml, weeklyBriefEmailHtml, bytesToBase64, cleanAttachments } from './email'
+import {
+  EMAIL_PART_MAX_BYTES,
+  MAX_EMAIL_PARTS,
+  episodeBriefEmailHtml,
+  readEmailContent,
+  sendRawEmail,
+  sendRawEmailParts,
+  welcomeEmailHtml,
+  weeklyBriefEmailHtml,
+  weeklyBriefEmailParts,
+  bytesToBase64,
+  cleanAttachments,
+} from './email'
 import { EPISODES, PODCASTS, WEEKLY } from './mock-data'
+import { weeklyReportTitle } from './reportName'
 
 const buf = (s: string) => new Uint8Array([...s].map((c) => c.charCodeAt(0))).buffer
 
@@ -81,6 +94,76 @@ describe('sendRawEmail — contract + transport', () => {
     const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)
     expect('attachments' in body).toBe(false)
     expect(body).toEqual({ email: 'a@b.com', subject: 'S', text: 'T' })
+  })
+})
+
+describe('sendRawEmailParts — a split brief, in order', () => {
+  const fetchMock = vi.fn()
+  beforeEach(() => {
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  const reply = (success: boolean, message: string, status = success ? 200 : 500) => ({ ok: success, status, json: async () => ({ success, message }) })
+  const parts = [1, 2, 3].map((n) => ({ email: 'a@b.com', subject: `S (Part ${n} of 3)`, html: `<p>${n}</p>` }))
+
+  it('sends every part in order', async () => {
+    fetchMock.mockResolvedValue(reply(true, 'Email sent successfully!'))
+    expect(await sendRawEmailParts(parts)).toMatchObject({ ok: true })
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).subject)).toEqual(['S (Part 1 of 3)', 'S (Part 2 of 3)', 'S (Part 3 of 3)'])
+  })
+
+  it('re-sends a later part the endpoint refused as busy (429/503), so a hiccup never strands half the brief', async () => {
+    fetchMock.mockResolvedValueOnce(reply(true, 'ok')).mockResolvedValueOnce(reply(false, 'busy', 503)).mockResolvedValue(reply(true, 'ok'))
+    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toMatchObject({ ok: true, sent: 3 })
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).subject)).toEqual(['S (Part 1 of 3)', 'S (Part 2 of 3)', 'S (Part 2 of 3)', 'S (Part 3 of 3)'])
+  })
+
+  it('never re-sends a part that may already have been delivered (a 5xx or lost response)', async () => {
+    fetchMock.mockResolvedValueOnce(reply(true, 'ok')).mockResolvedValueOnce(reply(false, 'gateway timeout', 504))
+    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toEqual({ ok: false, message: 'Sent 1 of 3 parts — gateway timeout', sent: 1 })
+    expect(fetchMock).toHaveBeenCalledTimes(2) // no retry of Part 2, and Part 3 never goes out without Part 2
+    fetchMock.mockReset().mockResolvedValueOnce(reply(true, 'ok')).mockRejectedValueOnce(new Error('connection reset'))
+    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toMatchObject({ ok: false, sent: 1 })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('gives up on a later part still refused after two retries, and says how far it got', async () => {
+    fetchMock.mockResolvedValueOnce(reply(true, 'ok')).mockResolvedValue(reply(false, 'rate limited', 429))
+    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toMatchObject({ ok: false, message: 'Sent 1 of 3 parts — rate limited', sent: 1 })
+    expect(fetchMock).toHaveBeenCalledTimes(4) // Part 1, then Part 2 + 2 retries
+  })
+
+  it('does not retry Part 1 — failing there leaves nothing half-sent', async () => {
+    fetchMock.mockResolvedValue(reply(false, 'busy', 503))
+    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toMatchObject({ ok: false, message: 'busy', sent: 0 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('readEmailContent — proxy request body', () => {
+  it('reads the single-message form', () => {
+    expect(readEmailContent({ subject: 'S', html: '<p>h</p>' })).toEqual([{ subject: 'S', html: '<p>h</p>' }])
+    expect(readEmailContent({ subject: 'S', text: 'T' })).toEqual([{ subject: 'S', text: 'T' }])
+  })
+
+  it('reads an ordered parts list', () => {
+    const parts = [
+      { subject: 'S (Part 1 of 2)', html: '<p>1</p>' },
+      { subject: 'S (Part 2 of 2)', html: '<p>2</p>' },
+    ]
+    expect(readEmailContent({ parts })).toEqual(parts)
+  })
+
+  it('rejects a malformed message or parts list', () => {
+    expect(readEmailContent({ subject: 'S' })).toBeNull() // neither text nor html
+    expect(readEmailContent({ subject: 'S', text: 'T', html: '<p>h</p>' })).toBeNull() // both
+    expect(readEmailContent({ subject: 'a\r\nBcc: x@y.z', html: '<p>h</p>' })).toBeNull() // header injection
+    expect(readEmailContent({ parts: [] })).toBeNull()
+    expect(readEmailContent({ parts: 'nope' })).toBeNull()
+    expect(readEmailContent({ parts: [{ subject: 'ok', html: '<p>1</p>' }, { subject: 'bad\n', html: '<p>2</p>' }] })).toBeNull()
+    expect(readEmailContent({ parts: Array.from({ length: MAX_EMAIL_PARTS + 1 }, () => ({ subject: 'S', html: '<p>h</p>' })) })).toBeNull()
   })
 })
 
@@ -189,6 +272,93 @@ describe('weeklyBriefEmailHtml — real edition rendering', () => {
     const out = weeklyBriefEmailHtml(hostile, episodeById, podcastById)
     expect(out).toContain('&lt;script&gt;')
     expect(out).not.toContain('<script>alert(1)</script>')
+  })
+})
+
+describe("weeklyBriefEmailParts — splitting a long edition under Gmail's clip", () => {
+  const pdfUrl = 'https://example.test/api/report/abc.pdf'
+  const title = weeklyReportTitle(WEEKLY.rangeLabel)
+  const bytes = (s: string) => new TextEncoder().encode(s).length
+  // A 25-episode week: the readouts and sources are what push a real edition past
+  // Gmail's ~102KB clip. Names are unique so each piece can be tracked across parts.
+  const readouts = Array.from({ length: 5 }, (_, k) => WEEKLY.episodeReadouts!.map((r, i) => ({ ...r, episode: `Readout ${k}-${i}` }))).flat()
+  const BIG = { ...WEEKLY, episodeReadouts: readouts }
+
+  it('sends a short edition as ONE email, byte-identical to the single-document render', () => {
+    const parts = weeklyBriefEmailParts(WEEKLY, episodeById, podcastById, { pdfUrl })
+    expect(parts).toEqual([{ subject: title, html: weeklyBriefEmailHtml(WEEKLY, episodeById, podcastById, { pdfUrl }) }])
+    expect(parts[0].html).not.toContain('Part 1 of')
+  })
+
+  it('splits a long edition into standalone emails, each under the byte budget', () => {
+    expect(bytes(weeklyBriefEmailHtml(BIG, episodeById, podcastById, { pdfUrl }))).toBeGreaterThan(EMAIL_PART_MAX_BYTES)
+    const parts = weeklyBriefEmailParts(BIG, episodeById, podcastById, { pdfUrl })
+    expect(parts.length).toBeGreaterThan(1)
+    for (const p of parts) {
+      expect(bytes(p.html)).toBeLessThanOrEqual(EMAIL_PART_MAX_BYTES)
+      expect(p.html.startsWith('<!doctype html>')).toBe(true)
+      expect(p.html.trimEnd().endsWith('</html>')).toBe(true)
+      // A table split across parts is closed in one and re-opened in the next.
+      expect(p.html.split('<table').length).toBe(p.html.split('</table>').length)
+    }
+  })
+
+  it('titles each part and keeps the dashboard CTA + the full-PDF download in every one', () => {
+    const parts = weeklyBriefEmailParts(BIG, episodeById, podcastById, { pdfUrl })
+    const n = parts.length
+    parts.forEach((p, i) => {
+      expect(p.subject).toBe(`${title} (Part ${i + 1} of ${n})`)
+      expect(p.html).toContain(`Part ${i + 1} of ${n}`) // header chip + notice
+      expect(p.html).toContain('Open the live dashboard')
+      expect(p.html).toContain('Download PDF')
+      expect(p.html).toContain(pdfUrl) // the SAME, complete PDF in every part
+      if (i < n - 1) expect(p.html).toContain(`Continued in Part ${i + 2} of ${n}`)
+      else expect(p.html).not.toContain('Continued in Part')
+    })
+  })
+
+  it('keeps every piece exactly once, in order, re-opening a split section as "(continued)"', () => {
+    const parts = weeklyBriefEmailParts(BIG, episodeById, podcastById, { pdfUrl })
+    const all = parts.map((p) => p.html).join('')
+    let from = 0
+    for (const r of readouts) {
+      expect(all.split(`>${r.episode}<`).length - 1).toBe(2) // its table row + its card, never dropped or repeated
+      const at = all.indexOf(`>${r.episode}<`, from)
+      expect(at).toBeGreaterThanOrEqual(from)
+      from = at
+    }
+    expect(all).toContain('(continued)')
+    expect(parts[0].html).toContain('>Overview<')
+    expect(parts.slice(1).some((p) => p.html.includes('>Overview<'))).toBe(false)
+    expect(parts[parts.length - 1].html).toContain('Open all of these on your Munshot dashboard')
+  })
+
+  it('stands a pointer to the full edition in for a block too big for any one email', () => {
+    const huge = { ...WEEKLY, episodeReadouts: [{ ...WEEKLY.episodeReadouts![0], evidence: 'A runaway paragraph. '.repeat(6_000) }, ...WEEKLY.episodeReadouts!.slice(1)] }
+    const parts = weeklyBriefEmailParts(huge, episodeById, podcastById, { pdfUrl })
+    for (const p of parts) expect(bytes(p.html)).toBeLessThanOrEqual(EMAIL_PART_MAX_BYTES)
+    const all = parts.map((p) => p.html).join('')
+    expect(all).not.toContain('A runaway paragraph.')
+    expect(all).toContain('too long to show in an email')
+    expect(all).toContain(`>${WEEKLY.episodeReadouts![1].episode}<`) // the rest of the section still goes out
+  })
+
+  it('never returns more parts than the proxy accepts, ending on a pointer to the full edition', () => {
+    const parts = weeklyBriefEmailParts(BIG, episodeById, podcastById, { pdfUrl, maxBytes: 12_000 })
+    expect(parts).toHaveLength(MAX_EMAIL_PARTS)
+    expect(readEmailContent({ parts })).not.toBeNull() // sendable through /api/email/send
+    const last = parts[parts.length - 1]
+    expect(last.subject).toBe(`${title} (Part ${MAX_EMAIL_PARTS} of ${MAX_EMAIL_PARTS})`)
+    expect(last.html).not.toContain('Continued in Part')
+    expect(last.html).toContain("That's all that fits in email")
+    expect(last.html).toContain(pdfUrl)
+    for (const p of parts) expect(bytes(p.html)).toBeLessThanOrEqual(12_000)
+  })
+
+  it('respects a tighter budget by using more parts', () => {
+    const parts = weeklyBriefEmailParts(BIG, episodeById, podcastById, { pdfUrl, maxBytes: 25_000 })
+    expect(parts.length).toBeGreaterThan(weeklyBriefEmailParts(BIG, episodeById, podcastById, { pdfUrl }).length)
+    for (const p of parts) expect(bytes(p.html)).toBeLessThanOrEqual(25_000)
   })
 })
 
