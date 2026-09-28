@@ -223,6 +223,27 @@ describe('runWeeklyDigest', () => {
     expect(sendEmail.mock.calls.filter(([m]) => m.email === 'b@muns.io')).toHaveLength(parts)
   })
 
+  it('retries a later part in place, so a transient failure still completes the brief', async () => {
+    let failedOnce = false
+    const sendEmail = vi.fn(async (msg: { email: string; subject: string; html: string }) => {
+      if (!failedOnce && msg.subject.includes('(Part 2 of')) {
+        failedOnce = true
+        return { ok: false, message: 'busy' }
+      }
+      return { ok: true, message: 'sent' }
+    })
+    const res = await runWeeklyDigest({
+      getEpisodes: async () => heavyWeek(),
+      subscriberStore: memSubscriberStore(subs('a@muns.io')),
+      sendEmail,
+      retryDelayMs: 0,
+      now: NOW,
+    })
+    const parts = (res.body as { parts?: number }).parts ?? 0
+    expect(res.body).toMatchObject({ ok: true, sent: 1, failed: 0 })
+    expect(sendEmail).toHaveBeenCalledTimes(parts + 1) // every part, plus the one retry
+  })
+
   it('counts failed sends without throwing, and reports ok:false', async () => {
     const sendEmail = vi
       .fn()

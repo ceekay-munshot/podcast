@@ -1,7 +1,7 @@
 import type { Episode, Podcast, Summary, WeeklySummary } from '../src/lib/types'
 import { PODCASTS } from '../src/lib/mock-data'
 import { assembleWeekly, buildCitations, buildWeeklySources, hashKey, mergeWeeklyAi } from '../src/lib/weeklyAssemble'
-import { weeklyBriefEmailParts, bytesToBase64, type EmailAttachment } from '../src/lib/email'
+import { weeklyBriefEmailParts, bytesToBase64, sendInOrder, type EmailAttachment } from '../src/lib/email'
 import { weeklyReportFilename } from '../src/lib/reportName'
 import { hasLlmKey, summarizeEpisode, synthesizeWeekly, type SummarizeConfig } from './summarize'
 import type { SummaryStore } from './summaryStore'
@@ -147,6 +147,8 @@ export interface DigestDeps {
   /** Show title for a podcastId PODCASTS doesn't carry — i.e. a user-added channel.
    *  Only used to name the show in the summariser prompt. */
   resolveShow?: (podcastId: string) => string | undefined
+  /** Pause before re-sending a failed later part of a split brief (default 1s). */
+  retryDelayMs?: number
   /** Overridable clock for tests. */
   now?: number
 }
@@ -309,17 +311,15 @@ export async function runWeeklyDigest(deps: DigestDeps): Promise<{ status: numbe
   let sent = 0
   let failed = 0
   for (const sub of subscribers) {
-    // In order, and stop at a failed part — nobody gets Part 3 without Part 2. A
-    // recipient only counts as sent once every part went out.
-    let ok = true
-    for (const part of parts) {
-      const res = await deps.sendEmail({ email: sub.email, subject: part.subject, html: part.html, ...(attachments ? { attachments } : {}) })
-      if (!res.ok) {
-        ok = false
-        break
-      }
-    }
-    if (ok) sent++
+    // In order, retrying a later part in place and stopping at one that still fails —
+    // nobody gets Part 3 without Part 2. A recipient only counts as sent once every
+    // part went out.
+    const res = await sendInOrder(
+      parts.map((p) => ({ email: sub.email, subject: p.subject, html: p.html, ...(attachments ? { attachments } : {}) })),
+      deps.sendEmail,
+      { retryDelayMs: deps.retryDelayMs },
+    )
+    if (res.ok) sent++
     else failed++
   }
 

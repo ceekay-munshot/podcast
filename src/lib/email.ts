@@ -105,21 +105,42 @@ export async function sendRawEmail(message: RawEmail, opts: { token?: string } =
   }
 }
 
-/** Send an ordered run of emails (a weekly brief split into parts), stopping at the
- *  first failure so nobody gets Part 3 without Part 2. Never throws. */
-export async function sendRawEmailParts(messages: RawEmail[], opts: { token?: string } = {}): Promise<EmailResult> {
+/** Send an ordered run of emails (a weekly brief split into parts) through `send`,
+ *  stopping at the first failure so nobody gets Part 3 without Part 2. A LATER part is
+ *  retried before giving up: the endpoint just accepted an earlier part, so its failure
+ *  is most likely a hiccup, and giving up would strand the reader with half the brief.
+ *  Part 1 isn't retried — failing there leaves nothing half-sent. Never throws. */
+export async function sendInOrder<M>(
+  messages: M[],
+  send: (m: M) => Promise<EmailResult>,
+  opts: { retries?: number; retryDelayMs?: number } = {},
+): Promise<EmailResult> {
+  const retries = opts.retries ?? 2
+  const delayMs = opts.retryDelayMs ?? 1000
+  const attempt = (m: M) => send(m).catch((): EmailResult => ({ ok: false, message: "Couldn't reach the email service." }))
   let res: EmailResult = { ok: false, message: 'Nothing to send.' }
   for (let i = 0; i < messages.length; i++) {
-    res = await sendRawEmail(messages[i], opts)
+    res = await attempt(messages[i])
+    for (let n = 1; !res.ok && i > 0 && n <= retries; n++) {
+      await new Promise((r) => setTimeout(r, delayMs * n))
+      res = await attempt(messages[i])
+    }
     if (!res.ok) return i ? { ok: false, message: `Sent ${i} of ${messages.length} parts — ${res.message}` } : res
   }
   return res
+}
+
+/** `sendInOrder` through the Munshot raw-email endpoint. */
+export function sendRawEmailParts(messages: RawEmail[], opts: { token?: string; retryDelayMs?: number } = {}): Promise<EmailResult> {
+  return sendInOrder(messages, (m) => sendRawEmail(m, { token: opts.token }), { retryDelayMs: opts.retryDelayMs })
 }
 
 // ── proxy request → message(s) (shared by the prod proxy + dev middleware) ───
 // A request carries ONE message (`subject` + text|html) or, for a weekly brief split
 // to stay under Gmail's clip, an ordered `parts` list. The parts travel as one
 // request so the proxy's per-recipient cooldown still means "one brief", not "one part".
+/** Most emails one brief may become — enforced by BOTH the proxy and the splitter
+ *  (`weeklyBriefEmailParts` never returns more), so every rendered brief is sendable. */
 export const MAX_EMAIL_PARTS = 8
 
 export type EmailContent = { subject: string } & ({ text: string; html?: never } | { html: string; text?: never })
@@ -476,21 +497,27 @@ function renderBlocks(blocks: Block[]): string {
   return out
 }
 
-/** Greedily pack the sections, in order, into parts of at most `room` bytes of body. */
-function packSections(sections: Section[], room: number): Section[][] {
+/** Greedily pack the sections, in order, into parts of at most `room` bytes of body.
+ *  A block too big for even a fresh part is replaced by `tooLong` (a pointer to the full
+ *  edition), since no split of the email could carry it without Gmail clipping it. */
+function packSections(sections: Section[], room: number, tooLong: Block): Section[][] {
   const parts: Section[][] = [[]]
   let used = 0
   for (const s of sections) {
     let slice: Section | undefined
     let started = false
-    for (const b of s.blocks) {
+    for (const block of s.blocks) {
+      let b = block
       for (;;) {
         const last = slice?.blocks[slice.blocks.length - 1]
-        const cost =
-          (slice ? 0 : utf8Bytes(sectionHead(s.label, started))) +
-          (b.wrap && last?.wrap !== b.wrap ? utf8Bytes(b.wrap('')) : 0) +
-          utf8Bytes(b.html)
-        // An empty part always takes the block, so one oversized block can't loop forever.
+        const head = utf8Bytes(sectionHead(s.label, started))
+        const wrapped = b.wrap ? utf8Bytes(b.wrap('')) : 0
+        if (b !== tooLong && head + wrapped + utf8Bytes(b.html) > room) {
+          b = tooLong
+          continue
+        }
+        const cost = (slice ? 0 : head) + (b.wrap && last?.wrap !== b.wrap ? wrapped : 0) + utf8Bytes(b.html)
+        // An empty part always takes the block, so a tiny budget can't loop forever.
         if (used + cost <= room || used === 0) {
           if (!slice) {
             slice = { label: s.label, blocks: [], continued: started }
@@ -655,6 +682,15 @@ interface PartInfo {
   total: number
   /** Subject of the next part — absent on the last one. */
   next?: string
+  /** The edition ran past MAX_EMAIL_PARTS and stops here (last part only). */
+  cut?: boolean
+}
+
+/** Where to read what the email couldn't carry: the full PDF when there is one, and
+ *  always the dashboard. */
+function elsewhere(pdfUrl?: string): string {
+  const dash = `your <a href="${MUNS_DASHBOARD}" style="color:${C.gold};font-weight:700;text-decoration:none;">Munshot dashboard</a>`
+  return pdfUrl ? `the Download PDF above and on ${dash}` : dash
 }
 
 /** One complete weekly email: header, CTA, (part notice), the given sections, footer. */
@@ -673,12 +709,16 @@ function weeklyEmailDoc(weekly: WeeklySummary, title: string, sections: Section[
       }.</td></tr></table>`
     : ''
 
-  const nextUp = part?.next
-    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:28px 0 0;background:${C.navy};border:1px solid #6b5a2e;"><tr><td align="center" style="padding:16px 20px;">
-        <div style="font-family:${SERIF};font-weight:700;font-size:16px;color:${C.goldSoft};">Continued in Part ${part.index + 1} of ${part.total} &#8594;</div>
-        <div style="font-family:${SANS};font-size:12px;color:#cdd7e6;margin-top:6px;">Look for &ldquo;${esc(part.next)}&rdquo; in your inbox.</div>
+  const closing = (headline: string, detail: string) =>
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:28px 0 0;background:${C.navy};border:1px solid #6b5a2e;"><tr><td align="center" style="padding:16px 20px;">
+        <div style="font-family:${SERIF};font-weight:700;font-size:16px;color:${C.goldSoft};">${headline}</div>
+        <div style="font-family:${SANS};font-size:12px;color:#cdd7e6;margin-top:6px;">${detail}</div>
       </td></tr></table>`
-    : ''
+  const nextUp = part?.next
+    ? closing(`Continued in Part ${part.index + 1} of ${part.total} &#8594;`, `Look for &ldquo;${esc(part.next)}&rdquo; in your inbox.`)
+    : part?.cut
+      ? closing(`That's all that fits in email`, `The rest of this week's brief is in ${elsewhere(pdfUrl)}.`)
+      : ''
 
   const body = sections.map((s) => sectionHead(s.label, s.continued) + renderBlocks(s.blocks)).join('')
   const bodyRow = `<tr><td style="padding:8px 36px 30px;">${ctaRow}${notice}${body}${nextUp}</td></tr>`
@@ -701,7 +741,8 @@ export function weeklyBriefEmailHtml(
 
 /** The weekly edition as the emails to send, in order. One email (the plain title as
  *  subject) when it fits under `maxBytes`; otherwise "(Part n of N)" emails, each
- *  standalone and each linking the full PDF. */
+ *  standalone and each linking the full PDF — never more than MAX_EMAIL_PARTS (a
+ *  longer week ends there with a pointer to the full edition). */
 export function weeklyBriefEmailParts(
   weekly: WeeklySummary,
   episodeById: ById<Episode>,
@@ -715,15 +756,24 @@ export function weeklyBriefEmailParts(
   if (utf8Bytes(whole) <= max) return [{ subject: title, html: whole }]
 
   // The chrome every part repeats (header, CTA, notices, footer), measured at a
-  // worst-case part number so the packed body always fits beside it.
+  // worst-case part number and closing note so the packed body always fits beside it.
   const worst = weeklyPartSubject(weekly.rangeLabel, 99, 99)
-  const chrome = utf8Bytes(weeklyEmailDoc(weekly, worst, [], opts.pdfUrl, { index: 98, total: 99, next: worst }))
-  const packed = packSections(sections, max - chrome)
-  const total = packed.length
-  return packed.map((secs, i) => {
+  const chrome = Math.max(
+    utf8Bytes(weeklyEmailDoc(weekly, worst, [], opts.pdfUrl, { index: 98, total: 99, next: worst })),
+    utf8Bytes(weeklyEmailDoc(weekly, worst, [], opts.pdfUrl, { index: 99, total: 99, cut: true })),
+  )
+  const tooLong: Block = {
+    html: `<p style="font-family:${SANS};font-size:13px;line-height:1.55;color:${C.body};margin:0 0 12px;">This part is too long to show in an email — read it in full in ${elsewhere(opts.pdfUrl)}.</p>`,
+  }
+  const packed = packSections(sections, max - chrome, tooLong)
+  const cut = packed.length > MAX_EMAIL_PARTS
+  const kept = cut ? packed.slice(0, MAX_EMAIL_PARTS) : packed
+  const total = kept.length
+  return kept.map((secs, i) => {
     const subject = weeklyPartSubject(weekly.rangeLabel, i + 1, total)
-    const next = i + 1 < total ? weeklyPartSubject(weekly.rangeLabel, i + 2, total) : undefined
-    return { subject, html: weeklyEmailDoc(weekly, subject, secs, opts.pdfUrl, { index: i + 1, total, next }) }
+    const last = i + 1 === total
+    const next = last ? undefined : weeklyPartSubject(weekly.rangeLabel, i + 2, total)
+    return { subject, html: weeklyEmailDoc(weekly, subject, secs, opts.pdfUrl, { index: i + 1, total, next, cut: last && cut }) }
   })
 }
 

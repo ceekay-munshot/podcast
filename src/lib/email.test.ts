@@ -114,10 +114,22 @@ describe('sendRawEmailParts — a split brief, in order', () => {
     expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).subject)).toEqual(['S (Part 1 of 3)', 'S (Part 2 of 3)', 'S (Part 3 of 3)'])
   })
 
-  it('stops at the first failed part and says how far it got', async () => {
-    fetchMock.mockResolvedValueOnce(reply(true, 'ok')).mockResolvedValueOnce(reply(false, 'rejected'))
-    expect(await sendRawEmailParts(parts)).toEqual({ ok: false, message: 'Sent 1 of 3 parts — rejected' })
-    expect(fetchMock).toHaveBeenCalledTimes(2) // Part 3 never goes out without Part 2
+  it('retries a failed later part in place, so a hiccup never strands half the brief', async () => {
+    fetchMock.mockResolvedValueOnce(reply(true, 'ok')).mockResolvedValueOnce(reply(false, 'busy')).mockResolvedValue(reply(true, 'ok'))
+    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toMatchObject({ ok: true })
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).subject)).toEqual(['S (Part 1 of 3)', 'S (Part 2 of 3)', 'S (Part 2 of 3)', 'S (Part 3 of 3)'])
+  })
+
+  it('stops at a later part that keeps failing and says how far it got', async () => {
+    fetchMock.mockResolvedValueOnce(reply(true, 'ok')).mockResolvedValue(reply(false, 'rejected'))
+    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toEqual({ ok: false, message: 'Sent 1 of 3 parts — rejected' })
+    expect(fetchMock).toHaveBeenCalledTimes(4) // Part 1, then Part 2 + 2 retries — Part 3 never goes out without Part 2
+  })
+
+  it('does not retry Part 1 — failing there leaves nothing half-sent', async () => {
+    fetchMock.mockResolvedValue(reply(false, 'rejected'))
+    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toEqual({ ok: false, message: 'rejected' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -310,6 +322,28 @@ describe("weeklyBriefEmailParts — splitting a long edition under Gmail's clip"
     expect(parts[0].html).toContain('>Overview<')
     expect(parts.slice(1).some((p) => p.html.includes('>Overview<'))).toBe(false)
     expect(parts[parts.length - 1].html).toContain('Open all of these on your Munshot dashboard')
+  })
+
+  it('stands a pointer to the full edition in for a block too big for any one email', () => {
+    const huge = { ...WEEKLY, episodeReadouts: [{ ...WEEKLY.episodeReadouts![0], evidence: 'A runaway paragraph. '.repeat(6_000) }, ...WEEKLY.episodeReadouts!.slice(1)] }
+    const parts = weeklyBriefEmailParts(huge, episodeById, podcastById, { pdfUrl })
+    for (const p of parts) expect(bytes(p.html)).toBeLessThanOrEqual(EMAIL_PART_MAX_BYTES)
+    const all = parts.map((p) => p.html).join('')
+    expect(all).not.toContain('A runaway paragraph.')
+    expect(all).toContain('too long to show in an email')
+    expect(all).toContain(`>${WEEKLY.episodeReadouts![1].episode}<`) // the rest of the section still goes out
+  })
+
+  it('never returns more parts than the proxy accepts, ending on a pointer to the full edition', () => {
+    const parts = weeklyBriefEmailParts(BIG, episodeById, podcastById, { pdfUrl, maxBytes: 12_000 })
+    expect(parts).toHaveLength(MAX_EMAIL_PARTS)
+    expect(readEmailContent({ parts })).not.toBeNull() // sendable through /api/email/send
+    const last = parts[parts.length - 1]
+    expect(last.subject).toBe(`${title} (Part ${MAX_EMAIL_PARTS} of ${MAX_EMAIL_PARTS})`)
+    expect(last.html).not.toContain('Continued in Part')
+    expect(last.html).toContain("That's all that fits in email")
+    expect(last.html).toContain(pdfUrl)
+    for (const p of parts) expect(bytes(p.html)).toBeLessThanOrEqual(12_000)
   })
 
   it('respects a tighter budget by using more parts', () => {
