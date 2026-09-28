@@ -224,9 +224,45 @@ describe('runWeeklyDigest', () => {
     expect(res.body).toMatchObject({ ok: true, sent: 2, failed: 0, recipients: 2 })
     expect(sendEmail).toHaveBeenCalledTimes(2 * parts)
     const calls = sendEmail.mock.calls.map(([m]) => m)
-    // All of a's parts, in order, then all of b's.
-    expect(calls.map((m) => m.email)).toEqual([...Array(parts).fill('a@muns.io'), ...Array(parts).fill('b@muns.io')])
-    calls.slice(0, parts).forEach((m, i) => expect(m.subject).toMatch(new RegExp(`\\(Part ${i + 1} of ${parts}\\)$`)))
+    // Recipients may overlap, but each one's parts arrive strictly in order.
+    for (const email of ['a@muns.io', 'b@muns.io']) {
+      const mine = calls.filter((m) => m.email === email)
+      expect(mine).toHaveLength(parts)
+      mine.forEach((m, i) => expect(m.subject).toMatch(new RegExp(`\\(Part ${i + 1} of ${parts}\\)$`)))
+    }
+  })
+
+  it('a complete send supersedes an older remainder, so no stale part follows the new brief', async () => {
+    const pending = memPendingStore({ parts: [{ subject: 'Old (Part 3 of 3)', html: '<p>old</p>' }], owed: [{ email: 'a@muns.io', next: 0 }], tries: 1 })
+    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent' }))
+    await runWeeklyDigest({
+      getEpisodes: async () => heavyWeek(),
+      subscriberStore: memSubscriberStore(subs('a@muns.io')),
+      sendEmail,
+      pendingStore: pending.store,
+      now: NOW,
+    })
+    expect(pending.value()).toBeNull()
+  })
+
+  it('sends to several recipients at once', async () => {
+    let inFlight = 0
+    let peak = 0
+    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => {
+      peak = Math.max(peak, ++inFlight)
+      await new Promise((r) => setTimeout(r, 1))
+      inFlight--
+      return { ok: true, message: 'sent' }
+    })
+    const res = await runWeeklyDigest({
+      getEpisodes: async () => [ep('e1', 'allin', daysAgo(1))],
+      subscriberStore: memSubscriberStore(subs('a@muns.io', 'b@muns.io', 'c@muns.io', 'd@muns.io', 'e@muns.io', 'f@muns.io')),
+      sendEmail,
+      now: NOW,
+    })
+    expect(res.body).toMatchObject({ ok: true, sent: 6 })
+    expect(peak).toBeGreaterThan(1)
+    expect(peak).toBeLessThanOrEqual(4) // bounded, so the endpoint isn't flooded
   })
 
   it('stops a subscriber at a failed part and counts them as failed', async () => {

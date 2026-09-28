@@ -235,7 +235,8 @@ refuses as busy (429/503) is retried on the spot; anything else might already ha
 been delivered, so it is left for the cron: a reader left part-way is saved in KV
 with the exact parts, and every following tick sends them the rest (for up to ~3h).
 The on-demand proxy takes all of a recipient's parts in one
-request (`parts: [...]`), so its per-recipient cooldown still counts one brief. A
+request (`parts: [...]`), so its per-recipient cooldown still counts one brief; if that
+stops part-way, "try again" in the app sends only the remaining parts. A
 week too long for 8 emails (`MAX_EMAIL_PARTS`), or a single block too big for any
 one email, points to the PDF and dashboard instead of being clipped.
 

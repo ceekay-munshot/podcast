@@ -159,13 +159,14 @@ export async function subscribeWeekly(email: string, opts: { name?: string } = {
 // Send through the same-origin proxy (/api/email/send), which holds the service
 // token server-side and relays to the raw-email endpoint. This is what fixes the
 // partitioned-iframe failure: a same-origin call needs no cross-origin cookie.
-// `parts` carries a weekly brief split to stay under Gmail's clip: one request, sent in order.
+// `parts` carries a weekly brief split to stay under Gmail's clip: one request, sent in
+// order. The reply's `sent` says how many parts went out before one failed.
 async function postEmail(
   msg: { to: string; attachments?: EmailAttachment[] } & ({ subject: string; html: string } | { parts: EmailPart[] }),
-): Promise<EmailResult> {
+): Promise<EmailResult & { sent?: number }> {
   try {
     const r = await apiFetch('/api/email/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(msg) })
-    const data = (await r.json().catch(() => null)) as EmailResult | null
+    const data = (await r.json().catch(() => null)) as (EmailResult & { sent?: number }) | null
     if (data && typeof data.ok === 'boolean') return data
     return { ok: r.ok, message: r.ok ? 'Email sent.' : `Send failed (${r.status}).` }
   } catch {
@@ -242,6 +243,16 @@ function persistSubscription(method: 'POST' | 'DELETE', email: string): Promise<
     .catch(() => undefined)
 }
 
+// A split brief that stopped part-way, per edition + address: the exact parts rendered
+// and how many went out. Retrying that send delivers only the rest — never Part 1 again.
+interface PartialSend {
+  parts: EmailPart[]
+  attachments?: EmailAttachment[]
+  sent: number
+}
+const partialSends = new Map<string, PartialSend>()
+const partialKey = (weekly: WeeklySummary, addr: string) => `${weekly.id}|${weekly.rangeLabel}|${addr.toLowerCase()}`
+
 // Send the real weekly edition on demand (the Weekly page's "Email this edition")
 // to one OR MORE recipients. Renders + hosts the PDF ONCE, then posts the same
 // designed brief to each address (the relay proxy validates a single recipient
@@ -259,29 +270,46 @@ export async function emailWeeklyEdition(
   // The PDF is the deliverable: render it ONCE, then reuse those bytes for BOTH the
   // hosted download link AND the email attachment. A failed render degrades to a brief
   // with neither, never a hard fail. (The proxy drops the attachment unless the
-  // EMAIL_ATTACHMENTS switch is on, so sending it here is always safe.)
-  const fileName = weeklyReportFilename(weekly.rangeLabel)
-  let pdfUrl: string | undefined
-  let attachments: EmailAttachment[] | undefined
-  try {
-    const bytes = await weeklyPdfBytes(weekly, episodeById, podcastById)
-    pdfUrl = (await hostPdfBytes(bytes, fileName)) ?? undefined
-    attachments = [{ filename: fileName, content: bytesToBase64(bytes), contentType: 'application/pdf' }]
-  } catch {
-    /* no PDF this send — the brief still goes out, just without link/attachment */
+  // EMAIL_ATTACHMENTS switch is on, so sending it here is always safe.) Skipped when
+  // every address is only finishing an earlier split send.
+  let fresh: PartialSend = { parts: [], sent: 0 }
+  if (to.some((addr) => !partialSends.has(partialKey(weekly, addr)))) {
+    const fileName = weeklyReportFilename(weekly.rangeLabel)
+    let pdfUrl: string | undefined
+    let attachments: EmailAttachment[] | undefined
+    try {
+      const bytes = await weeklyPdfBytes(weekly, episodeById, podcastById)
+      pdfUrl = (await hostPdfBytes(bytes, fileName)) ?? undefined
+      attachments = [{ filename: fileName, content: bytesToBase64(bytes), contentType: 'application/pdf' }]
+    } catch {
+      /* no PDF this send — the brief still goes out, just without link/attachment */
+    }
+    // A long week splits into Part 1, Part 2, … (Gmail clips past ~102KB). Each part
+    // links (and attaches) the FULL PDF; all parts go to an address in one request.
+    fresh = { parts: weeklyBriefEmailParts(weekly, episodeById, podcastById, { pdfUrl }), attachments, sent: 0 }
   }
-  // A long week splits into Part 1, Part 2, … (Gmail clips past ~102KB). Each part
-  // links (and attaches) the FULL PDF; all parts go to an address in one request.
-  const parts = weeklyBriefEmailParts(weekly, episodeById, podcastById, { pdfUrl })
+  const parts = fresh.parts
 
   const results = await Promise.all(
-    to.map((addr) => postEmail(parts.length === 1 ? { to: addr, ...parts[0], attachments } : { to: addr, parts, attachments })),
+    to.map(async (addr) => {
+      const key = partialKey(weekly, addr)
+      const job = partialSends.get(key) ?? fresh
+      const rest = job.parts.slice(job.sent)
+      const res = await postEmail(job.parts.length === 1 ? { to: addr, ...rest[0], attachments: job.attachments } : { to: addr, parts: rest, attachments: job.attachments })
+      const delivered = job.sent + (res.ok ? rest.length : res.sent ?? 0)
+      if (!res.ok && delivered > 0) partialSends.set(key, { ...job, sent: delivered })
+      else partialSends.delete(key)
+      return res
+    }),
   )
   const sent = results.filter((r) => r.ok).length
   const failed = to.length - sent
 
-  if (sent === 0) return { ok: false, message: results[0]?.message || "Couldn't send the email." }
-  if (failed > 0) return { ok: false, message: `Sent to ${sent} of ${to.length} — ${failed} couldn't be reached.` }
+  // A part-way failure is saved above, so "try again" is honest: it sends only the rest.
+  const resumable = to.some((addr) => partialSends.has(partialKey(weekly, addr)))
+  const hint = (m: string) => (resumable ? `${m.replace(/\.?$/, '.')} Try again to send the remaining parts.` : m)
+  if (sent === 0) return { ok: false, message: hint(results[0]?.message || "Couldn't send the email.") }
+  if (failed > 0) return { ok: false, message: hint(`Sent to ${sent} of ${to.length} — ${failed} couldn't be reached.`) }
   const inParts = parts.length > 1 ? ` in ${parts.length} parts` : ''
   return { ok: true, message: to.length === 1 ? `Sent to ${to[0]}${inParts}` : `Sent to ${to.length} recipients${inParts}` }
 }

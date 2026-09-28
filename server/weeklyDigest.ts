@@ -287,6 +287,19 @@ function partMessages(parts: EmailPart[], email: string, attachments?: EmailAtta
   return parts.map((p) => ({ email, subject: p.subject, html: p.html, ...(attachments ? { attachments } : {}) }))
 }
 
+/** Recipients mailed at once. Each one's parts still go strictly in order; independent
+ *  recipients overlap so a split edition (up to 8 emails each) fits the cron's deadline. */
+const SEND_CONCURRENCY = 4
+
+/** Run `fn` over `items` with at most `limit` in flight. */
+async function forEachPooled<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) await fn(items[next++])
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+}
+
 /** Send every reader a previous tick left part-way the rest of that SAME edition. The
  *  cron calls this on every tick; null when nothing is pending. Never throws. */
 export async function resumeOwedParts(
@@ -295,10 +308,10 @@ export async function resumeOwedParts(
   const p = await deps.pendingStore.get().catch(() => null)
   if (!p?.owed.length) return null
   const still: OwedParts[] = []
-  for (const o of p.owed) {
+  await forEachPooled(p.owed, SEND_CONCURRENCY, async (o) => {
     const res = await sendInOrder(partMessages(p.parts.slice(o.next), o.email, p.attachments), deps.sendEmail, { retryDelayMs: deps.retryDelayMs })
     if (!res.ok) still.push({ email: o.email, next: o.next + res.sent })
-  }
+  })
   const tries = p.tries + 1
   await deps.pendingStore.put(still.length && tries < MAX_RESUME_TICKS ? { ...p, owed: still, tries } : null).catch(() => {})
   return { delivered: p.owed.length - still.length, owed: still.length }
@@ -387,7 +400,7 @@ export async function runWeeklyDigest(deps: DigestDeps): Promise<{ status: numbe
   let sent = 0
   let failed = 0
   const owed: OwedParts[] = []
-  for (const sub of subscribers) {
+  await forEachPooled(subscribers, SEND_CONCURRENCY, async (sub) => {
     // In order, stopping at a part that fails — nobody gets Part 3 without Part 2. A
     // recipient only counts as sent once every part went out; one who got some parts
     // is owed the rest, which the next tick delivers (resumeOwedParts).
@@ -397,8 +410,10 @@ export async function runWeeklyDigest(deps: DigestDeps): Promise<{ status: numbe
       failed++
       if (res.sent > 0) owed.push({ email: sub.email, next: res.sent })
     }
-  }
-  if (owed.length && deps.pendingStore) await deps.pendingStore.put({ parts, attachments, owed, tries: 0 }).catch(() => {})
+  })
+  // This edition supersedes any older remainder (e.g. a forced resend after a failed
+  // one): everyone just got the new brief, so a stale Part 3 must never follow it.
+  if (deps.pendingStore) await deps.pendingStore.put(owed.length ? { parts, attachments, owed, tries: 0 } : null).catch(() => {})
 
   return {
     status: 200,
