@@ -30,6 +30,9 @@ export interface EmailResult {
   ok: boolean
   /** The server's human message ("Email sent successfully!"), or a local error reason. */
   message: string
+  /** The endpoint answered that it did NOT take the message and to try later (HTTP 429
+   *  or 503) — the one failure that can be re-sent without risking a duplicate. */
+  retryable?: boolean
 }
 
 /** A file attached to an email. `content` is base64 (no `data:` prefix). Delivery
@@ -98,7 +101,8 @@ export async function sendRawEmail(message: RawEmail, opts: { token?: string } =
     }
     // The endpoint sometimes nests a non-string error (e.g. { message: { statusCode } }),
     // so coerce to a clean string — never let an object reach the UI as "[object Object]".
-    return { ok: false, message: str(payload?.message) || str(payload?.data?.message) || `Send failed (${res.status}).` }
+    const message = str(payload?.message) || str(payload?.data?.message) || `Send failed (${res.status}).`
+    return res.status === 429 || res.status === 503 ? { ok: false, message, retryable: true } : { ok: false, message }
   } catch {
     // Network down, blocked by CORS, or offline — degrade quietly.
     return { ok: false, message: "Couldn't reach the email service." }
@@ -106,28 +110,30 @@ export async function sendRawEmail(message: RawEmail, opts: { token?: string } =
 }
 
 /** Send an ordered run of emails (a weekly brief split into parts) through `send`,
- *  stopping at the first failure so nobody gets Part 3 without Part 2. A LATER part is
- *  retried before giving up: the endpoint just accepted an earlier part, so its failure
- *  is most likely a hiccup, and giving up would strand the reader with half the brief.
- *  Part 1 isn't retried — failing there leaves nothing half-sent. Never throws. */
+ *  stopping at the first failure so nobody gets Part 3 without Part 2. `sent` says how
+ *  many went out, so a caller can resume from there. A LATER part the endpoint refused
+ *  as `retryable` is re-sent in place (it just took an earlier part, so the refusal is
+ *  a hiccup). Any other failure — a lost response, a timeout — may still have been
+ *  delivered, so it is never re-sent here, where it could duplicate the part. Part 1
+ *  isn't retried either: failing there leaves nothing half-sent. Never throws. */
 export async function sendInOrder<M>(
   messages: M[],
   send: (m: M) => Promise<EmailResult>,
   opts: { retries?: number; retryDelayMs?: number } = {},
-): Promise<EmailResult> {
+): Promise<EmailResult & { sent: number }> {
   const retries = opts.retries ?? 2
   const delayMs = opts.retryDelayMs ?? 1000
   const attempt = (m: M) => send(m).catch((): EmailResult => ({ ok: false, message: "Couldn't reach the email service." }))
   let res: EmailResult = { ok: false, message: 'Nothing to send.' }
   for (let i = 0; i < messages.length; i++) {
     res = await attempt(messages[i])
-    for (let n = 1; !res.ok && i > 0 && n <= retries; n++) {
+    for (let n = 1; !res.ok && res.retryable && i > 0 && n <= retries; n++) {
       await new Promise((r) => setTimeout(r, delayMs * n))
       res = await attempt(messages[i])
     }
-    if (!res.ok) return i ? { ok: false, message: `Sent ${i} of ${messages.length} parts — ${res.message}` } : res
+    if (!res.ok) return { ...(i ? { ok: false, message: `Sent ${i} of ${messages.length} parts — ${res.message}` } : res), sent: i }
   }
-  return res
+  return { ...res, sent: messages.length }
 }
 
 /** `sendInOrder` through the Munshot raw-email endpoint. */

@@ -105,7 +105,7 @@ describe('sendRawEmailParts — a split brief, in order', () => {
   })
   afterEach(() => vi.unstubAllGlobals())
 
-  const reply = (success: boolean, message: string) => ({ ok: success, status: success ? 200 : 500, json: async () => ({ success, message }) })
+  const reply = (success: boolean, message: string, status = success ? 200 : 500) => ({ ok: success, status, json: async () => ({ success, message }) })
   const parts = [1, 2, 3].map((n) => ({ email: 'a@b.com', subject: `S (Part ${n} of 3)`, html: `<p>${n}</p>` }))
 
   it('sends every part in order', async () => {
@@ -114,21 +114,30 @@ describe('sendRawEmailParts — a split brief, in order', () => {
     expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).subject)).toEqual(['S (Part 1 of 3)', 'S (Part 2 of 3)', 'S (Part 3 of 3)'])
   })
 
-  it('retries a failed later part in place, so a hiccup never strands half the brief', async () => {
-    fetchMock.mockResolvedValueOnce(reply(true, 'ok')).mockResolvedValueOnce(reply(false, 'busy')).mockResolvedValue(reply(true, 'ok'))
-    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toMatchObject({ ok: true })
+  it('re-sends a later part the endpoint refused as busy (429/503), so a hiccup never strands half the brief', async () => {
+    fetchMock.mockResolvedValueOnce(reply(true, 'ok')).mockResolvedValueOnce(reply(false, 'busy', 503)).mockResolvedValue(reply(true, 'ok'))
+    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toMatchObject({ ok: true, sent: 3 })
     expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).subject)).toEqual(['S (Part 1 of 3)', 'S (Part 2 of 3)', 'S (Part 2 of 3)', 'S (Part 3 of 3)'])
   })
 
-  it('stops at a later part that keeps failing and says how far it got', async () => {
-    fetchMock.mockResolvedValueOnce(reply(true, 'ok')).mockResolvedValue(reply(false, 'rejected'))
-    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toEqual({ ok: false, message: 'Sent 1 of 3 parts — rejected' })
-    expect(fetchMock).toHaveBeenCalledTimes(4) // Part 1, then Part 2 + 2 retries — Part 3 never goes out without Part 2
+  it('never re-sends a part that may already have been delivered (a 5xx or lost response)', async () => {
+    fetchMock.mockResolvedValueOnce(reply(true, 'ok')).mockResolvedValueOnce(reply(false, 'gateway timeout', 504))
+    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toEqual({ ok: false, message: 'Sent 1 of 3 parts — gateway timeout', sent: 1 })
+    expect(fetchMock).toHaveBeenCalledTimes(2) // no retry of Part 2, and Part 3 never goes out without Part 2
+    fetchMock.mockReset().mockResolvedValueOnce(reply(true, 'ok')).mockRejectedValueOnce(new Error('connection reset'))
+    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toMatchObject({ ok: false, sent: 1 })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('gives up on a later part still refused after two retries, and says how far it got', async () => {
+    fetchMock.mockResolvedValueOnce(reply(true, 'ok')).mockResolvedValue(reply(false, 'rate limited', 429))
+    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toMatchObject({ ok: false, message: 'Sent 1 of 3 parts — rate limited', sent: 1 })
+    expect(fetchMock).toHaveBeenCalledTimes(4) // Part 1, then Part 2 + 2 retries
   })
 
   it('does not retry Part 1 — failing there leaves nothing half-sent', async () => {
-    fetchMock.mockResolvedValue(reply(false, 'rejected'))
-    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toEqual({ ok: false, message: 'rejected' })
+    fetchMock.mockResolvedValue(reply(false, 'busy', 503))
+    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toMatchObject({ ok: false, message: 'busy', sent: 0 })
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

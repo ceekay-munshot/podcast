@@ -1,6 +1,17 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { Episode, Summary } from '../src/lib/types'
-import { checkCronAuth, pickBackfillTargets, pickPendingThisWeek, processPendingBatch, readyThisWeek, runWeeklyDigest } from './weeklyDigest'
+import {
+  MAX_RESUME_TICKS,
+  checkCronAuth,
+  pickBackfillTargets,
+  pickPendingThisWeek,
+  processPendingBatch,
+  readyThisWeek,
+  resumeOwedParts,
+  runWeeklyDigest,
+  type PendingDelivery,
+  type PendingDeliveryStore,
+} from './weeklyDigest'
 import type { Subscriber, SubscriberStore } from './subscriberStore'
 
 // The Monday digest job. The send transport and the data sources are injected, so
@@ -46,6 +57,17 @@ const memSubscriberStore = (list: Subscriber[] | null): SubscriberStore => ({
 })
 
 const subs = (...emails: string[]): Subscriber[] => emails.map((email) => ({ email, addedAt: 'x' }))
+
+const memPendingStore = (initial: PendingDelivery | null = null) => {
+  let value = initial
+  const store: PendingDeliveryStore = {
+    get: async () => value,
+    put: async (p) => {
+      value = p
+    },
+  }
+  return { store, value: () => value }
+}
 
 describe('checkCronAuth', () => {
   it('fails closed without a secret, and matches a correct bearer token', () => {
@@ -223,12 +245,12 @@ describe('runWeeklyDigest', () => {
     expect(sendEmail.mock.calls.filter(([m]) => m.email === 'b@muns.io')).toHaveLength(parts)
   })
 
-  it('retries a later part in place, so a transient failure still completes the brief', async () => {
+  it('retries a later part the endpoint refused as busy, so a transient failure still completes the brief', async () => {
     let failedOnce = false
     const sendEmail = vi.fn(async (msg: { email: string; subject: string; html: string }) => {
       if (!failedOnce && msg.subject.includes('(Part 2 of')) {
         failedOnce = true
-        return { ok: false, message: 'busy' }
+        return { ok: false, message: 'busy', retryable: true }
       }
       return { ok: true, message: 'sent' }
     })
@@ -244,6 +266,50 @@ describe('runWeeklyDigest', () => {
     expect(sendEmail).toHaveBeenCalledTimes(parts + 1) // every part, plus the one retry
   })
 
+  it('saves what a reader is still owed when a send stops part-way, and the next tick finishes it', async () => {
+    const pending = memPendingStore()
+    let down = true
+    const sendEmail = vi.fn(async (msg: { email: string; subject: string; html: string }) =>
+      down && msg.email === 'a@muns.io' && msg.subject.includes('(Part 2 of') ? { ok: false, message: 'timeout' } : { ok: true, message: 'sent' },
+    )
+    const res = await runWeeklyDigest({
+      getEpisodes: async () => heavyWeek(),
+      subscriberStore: memSubscriberStore(subs('a@muns.io', 'b@muns.io')),
+      sendEmail,
+      pendingStore: pending.store,
+      now: NOW,
+    })
+    const parts = (res.body as { parts?: number }).parts ?? 0
+    expect(res.body).toMatchObject({ ok: false, sent: 1, failed: 1, owed: 1 })
+    expect(pending.value()).toMatchObject({ owed: [{ email: 'a@muns.io', next: 1 }], tries: 0 })
+    expect(pending.value()!.parts).toHaveLength(parts)
+
+    // Next tick: the SAME stored parts, from Part 2 on, to that reader only.
+    down = false
+    sendEmail.mockClear()
+    expect(await resumeOwedParts({ pendingStore: pending.store, sendEmail, retryDelayMs: 0 })).toEqual({ delivered: 1, owed: 0 })
+    expect(sendEmail.mock.calls.map(([m]) => m.email)).toEqual(Array(parts - 1).fill('a@muns.io'))
+    expect(sendEmail.mock.calls[0][0].subject).toMatch(/\(Part 2 of \d+\)$/)
+    expect(pending.value()).toBeNull() // cleared once delivered
+  })
+
+  it('does not save anything for a reader who got no part at all (nothing half-sent)', async () => {
+    const pending = memPendingStore()
+    const sendEmail = vi.fn(async (msg: { email: string; subject: string; html: string }) =>
+      msg.email === 'a@muns.io' ? { ok: false, message: 'rejected' } : { ok: true, message: 'sent' },
+    )
+    const res = await runWeeklyDigest({
+      getEpisodes: async () => heavyWeek(),
+      subscriberStore: memSubscriberStore(subs('a@muns.io', 'b@muns.io')),
+      sendEmail,
+      pendingStore: pending.store,
+      now: NOW,
+    })
+    expect(res.body).toMatchObject({ sent: 1, failed: 1 })
+    expect(res.body).not.toHaveProperty('owed')
+    expect(pending.value()).toBeNull()
+  })
+
   it('counts failed sends without throwing, and reports ok:false', async () => {
     const sendEmail = vi
       .fn()
@@ -256,6 +322,29 @@ describe('runWeeklyDigest', () => {
       now: NOW,
     })
     expect(res.body).toMatchObject({ ok: false, sent: 1, failed: 1, recipients: 2 })
+  })
+})
+
+describe('resumeOwedParts — finishing a split brief on later ticks', () => {
+  const parts = [1, 2, 3].map((n) => ({ subject: `S (Part ${n} of 3)`, html: `<p>${n}</p>` }))
+
+  it('is a no-op when nothing is pending', async () => {
+    const sendEmail = vi.fn()
+    expect(await resumeOwedParts({ pendingStore: memPendingStore().store, sendEmail })).toBeNull()
+    expect(sendEmail).not.toHaveBeenCalled()
+  })
+
+  it('keeps what still fails, advancing past what went out, and gives up after MAX_RESUME_TICKS', async () => {
+    const pending = memPendingStore({ parts, owed: [{ email: 'a@muns.io', next: 1 }], tries: 0 })
+    // Part 2 goes out, Part 3 keeps failing.
+    const sendEmail = vi.fn(async (msg: { email: string; subject: string; html: string }) => (msg.subject.includes('Part 3') ? { ok: false, message: 'down' } : { ok: true, message: 'sent' }))
+    expect(await resumeOwedParts({ pendingStore: pending.store, sendEmail, retryDelayMs: 0 })).toEqual({ delivered: 0, owed: 1 })
+    expect(pending.value()).toMatchObject({ owed: [{ email: 'a@muns.io', next: 2 }], tries: 1 })
+    for (let t = 2; t < MAX_RESUME_TICKS; t++) await resumeOwedParts({ pendingStore: pending.store, sendEmail, retryDelayMs: 0 })
+    expect(pending.value()).toMatchObject({ tries: MAX_RESUME_TICKS - 1 })
+    await resumeOwedParts({ pendingStore: pending.store, sendEmail, retryDelayMs: 0 })
+    expect(pending.value()).toBeNull() // given up — never retried forever
+    expect(sendEmail.mock.calls.filter(([m]) => m.subject.includes('Part 2'))).toHaveLength(1) // Part 2 sent once, not re-sent
   })
 })
 
