@@ -3,7 +3,7 @@ import { EPISODES, PODCASTS, WEEKLY } from './mock-data'
 import { knownResultsForQuery } from './knownSources'
 import { stableHash } from './hash'
 import { apiFetch } from './apiFetch'
-import { episodeBriefEmailHtml, weeklyBriefEmailParts, welcomeEmailHtml, bytesToBase64, type EmailResult, type EmailAttachment, type EmailPart } from './email'
+import { episodeBriefEmailHtml, weeklyBriefEmailParts, welcomeEmailHtml, bytesToBase64, validMessageId, type EmailResult, type EmailAttachment, type EmailPart } from './email'
 import { weeklyPdfBytes } from './pdfRender'
 import { weeklyReportFilename, withReportDownloadName } from './reportName'
 import { normalizeRecipients } from './recipientsStore'
@@ -162,7 +162,7 @@ export async function subscribeWeekly(email: string, opts: { name?: string } = {
 // `parts` carries a weekly brief split to stay under Gmail's clip: one request, sent in
 // order. The reply's `sent` says how many parts went out before one failed.
 async function postEmail(
-  msg: { to: string; attachments?: EmailAttachment[] } & ({ subject: string; html: string } | { parts: EmailPart[] }),
+  msg: { to: string; attachments?: EmailAttachment[]; threadMessageId?: string } & ({ subject: string; html: string } | { parts: EmailPart[] }),
 ): Promise<EmailResult & { sent?: number }> {
   try {
     const r = await apiFetch('/api/email/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(msg) })
@@ -249,6 +249,7 @@ interface PartialSend {
   parts: EmailPart[]
   attachments?: EmailAttachment[]
   sent: number
+  threadMessageId?: string
 }
 const partialSends = new Map<string, PartialSend>()
 const partialKey = (weekly: WeeklySummary, addr: string) => `${weekly.id}|${weekly.rangeLabel}|${addr.toLowerCase()}`
@@ -295,9 +296,10 @@ export async function emailWeeklyEdition(
       const key = partialKey(weekly, addr)
       const job = partialSends.get(key) ?? fresh
       const rest = job.parts.slice(job.sent)
-      const res = await postEmail(job.parts.length === 1 ? { to: addr, ...rest[0], attachments: job.attachments } : { to: addr, parts: rest, attachments: job.attachments })
+      const res = await postEmail(job.parts.length === 1 ? { to: addr, ...rest[0], attachments: job.attachments } : { to: addr, parts: rest, attachments: job.attachments, threadMessageId: job.threadMessageId })
       const delivered = job.sent + (res.ok ? rest.length : res.sent ?? 0)
-      if (!res.ok && delivered > 0) partialSends.set(key, { ...job, sent: delivered })
+      const root = validMessageId(res.threadMessageId) ?? job.threadMessageId
+      if (!res.ok && delivered > 0 && root) partialSends.set(key, { ...job, sent: delivered, threadMessageId: root })
       else partialSends.delete(key)
       return res
     }),

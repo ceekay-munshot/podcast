@@ -58,6 +58,19 @@ describe('sendRawEmail — contract + transport', () => {
     expect(headers.authorization).toBe('Bearer tok_123')
   })
 
+  it('uses the confirmed root Message-ID for both reply headers', async () => {
+    fetchMock.mockResolvedValue({ ...ok(), json: async () => ({ success: true, data: { messageId: '<reply@muns.io>' } }) })
+    expect(await sendRawEmail({ email: 'a@b.com', subject: 'S', html: '<p>2</p>', inReplyTo: '<root@muns.io>' })).toMatchObject({ messageId: '<reply@muns.io>' })
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ email: 'a@b.com', subject: 'S', html: '<p>2</p>', inReplyTo: '<root@muns.io>', references: ['<root@muns.io>'] })
+  })
+
+  it('rejects unsafe reply IDs before making a request', async () => {
+    for (const id of ['root@muns.io', '<root@muns.io>\r\nBcc: someone@else.io', '<a b@muns.io>', `<${'x'.repeat(1000)}@muns.io>`]) {
+      expect(await sendRawEmail({ email: 'a@b.com', subject: 'S', text: 'T', inReplyTo: id })).toMatchObject({ ok: false })
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('enforces exactly one of text|html — rejects both, neither, and missing fields WITHOUT calling fetch', async () => {
     expect(await sendRawEmail({ email: 'a@b.com', subject: 'S', text: 'T', html: '<p>H</p>' } as never)).toMatchObject({ ok: false })
     expect(await sendRawEmail({ email: 'a@b.com', subject: 'S' } as never)).toMatchObject({ ok: false })
@@ -105,24 +118,64 @@ describe('sendRawEmailParts — a split brief, in order', () => {
   })
   afterEach(() => vi.unstubAllGlobals())
 
-  const reply = (success: boolean, message: string, status = success ? 200 : 500) => ({ ok: success, status, json: async () => ({ success, message }) })
+  const reply = (success: boolean, message: string, status = success ? 200 : 500) => ({ ok: success, status, json: async () => ({ success, message, data: { messageId: '<root@muns.io>' } }) })
   const parts = [1, 2, 3].map((n) => ({ email: 'a@b.com', subject: `S (Part ${n} of 3)`, html: `<p>${n}</p>` }))
 
   it('sends every part in order', async () => {
     fetchMock.mockResolvedValue(reply(true, 'Email sent successfully!'))
     expect(await sendRawEmailParts(parts)).toMatchObject({ ok: true })
-    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).subject)).toEqual(['S (Part 1 of 3)', 'S (Part 2 of 3)', 'S (Part 3 of 3)'])
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).subject)).toEqual(['S', 'S', 'S'])
+    const bodies = fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body))
+    expect(bodies[0]).not.toHaveProperty('inReplyTo')
+    expect(bodies.slice(1).map(b => [b.inReplyTo, b.references])).toEqual(Array(2).fill(['<root@muns.io>', ['<root@muns.io>']]))
+  })
+
+  it('keeps replying to the first part even when each reply returns a different ID', async () => {
+    for (const id of ['root', 'reply-2', 'reply-3']) fetchMock.mockResolvedValueOnce({ ...reply(true, 'sent'), json: async () => ({ success: true, data: { messageId: `<${id}@muns.io>` } }) })
+    expect(await sendRawEmailParts(parts)).toMatchObject({ ok: true, sent: 3, threadMessageId: '<root@muns.io>' })
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).inReplyTo)).toEqual([undefined, '<root@muns.io>', '<root@muns.io>'])
+  })
+
+  it('stops after Part 1 when its response has no valid Message-ID', async () => {
+    for (const id of [undefined, 'not-an-id', '<bad\n@muns.io>']) {
+      fetchMock.mockReset().mockResolvedValue({ ...reply(true, 'sent'), json: async () => ({ success: true, data: { messageId: id } }) })
+      expect(await sendRawEmailParts(parts)).toMatchObject({ ok: false, sent: 1 })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  it('resumes even a single remaining part using the stored root, and retries definite refusals', async () => {
+    fetchMock.mockResolvedValueOnce(reply(false, 'busy', 503)).mockResolvedValueOnce(reply(true, 'sent'))
+    expect(await sendRawEmailParts(parts.slice(2), { threadMessageId: '<original@muns.io>', retryDelayMs: 0 })).toMatchObject({ ok: true, sent: 1, threadMessageId: '<original@muns.io>' })
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).inReplyTo)).toEqual(['<original@muns.io>', '<original@muns.io>'])
+  })
+
+  it('rejects unrelated recipients or editions and legacy continuations without a root', async () => {
+    expect(await sendRawEmailParts([parts[0], { ...parts[1], email: 'other@b.com' }])).toMatchObject({ ok: false, sent: 0 })
+    expect(await sendRawEmailParts([parts[0], { ...parts[1], subject: 'Another edition' }])).toMatchObject({ ok: false, sent: 0 })
+    expect(await sendRawEmailParts(parts.slice(1))).toMatchObject({ ok: false, sent: 0 })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('preserves a single episode subject containing a part label', async () => {
+    fetchMock.mockResolvedValue(reply(true, 'sent'))
+    const chapter = { email: 'a@b.com', subject: 'Podcast episode (Part 2 of 3)', text: 'Summary' }
+    expect(await sendRawEmailParts([chapter])).toMatchObject({ ok: true, sent: 1 })
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).subject).toBe(chapter.subject)
+    fetchMock.mockClear()
+    expect(await sendRawEmailParts([parts[2]], { threaded: true })).toMatchObject({ ok: false, sent: 0 })
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('re-sends a later part the endpoint refused as busy (429/503), so a hiccup never strands half the brief', async () => {
     fetchMock.mockResolvedValueOnce(reply(true, 'ok')).mockResolvedValueOnce(reply(false, 'busy', 503)).mockResolvedValue(reply(true, 'ok'))
     expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toMatchObject({ ok: true, sent: 3 })
-    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).subject)).toEqual(['S (Part 1 of 3)', 'S (Part 2 of 3)', 'S (Part 2 of 3)', 'S (Part 3 of 3)'])
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).subject)).toEqual(['S', 'S', 'S', 'S'])
   })
 
   it('never re-sends a part that may already have been delivered (a 5xx or lost response)', async () => {
     fetchMock.mockResolvedValueOnce(reply(true, 'ok')).mockResolvedValueOnce(reply(false, 'gateway timeout', 504))
-    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toEqual({ ok: false, message: 'Sent 1 of 3 parts — gateway timeout', sent: 1 })
+    expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toEqual({ ok: false, message: 'Sent 1 of 3 parts — gateway timeout', sent: 1, threadMessageId: '<root@muns.io>' })
     expect(fetchMock).toHaveBeenCalledTimes(2) // no retry of Part 2, and Part 3 never goes out without Part 2
     fetchMock.mockReset().mockResolvedValueOnce(reply(true, 'ok')).mockRejectedValueOnce(new Error('connection reset'))
     expect(await sendRawEmailParts(parts, { retryDelayMs: 0 })).toMatchObject({ ok: false, sent: 1 })
@@ -307,7 +360,7 @@ describe("weeklyBriefEmailParts — splitting a long edition under Gmail's clip"
     const parts = weeklyBriefEmailParts(BIG, episodeById, podcastById, { pdfUrl })
     const n = parts.length
     parts.forEach((p, i) => {
-      expect(p.subject).toBe(`${title} (Part ${i + 1} of ${n})`)
+      expect(p.subject).toBe(title)
       expect(p.html).toContain(`Part ${i + 1} of ${n}`) // header chip + notice
       expect(p.html).toContain('Open the live dashboard')
       expect(p.html).toContain('Download PDF')
@@ -348,7 +401,7 @@ describe("weeklyBriefEmailParts — splitting a long edition under Gmail's clip"
     expect(parts).toHaveLength(MAX_EMAIL_PARTS)
     expect(readEmailContent({ parts })).not.toBeNull() // sendable through /api/email/send
     const last = parts[parts.length - 1]
-    expect(last.subject).toBe(`${title} (Part ${MAX_EMAIL_PARTS} of ${MAX_EMAIL_PARTS})`)
+    expect(last.subject).toBe(title)
     expect(last.html).not.toContain('Continued in Part')
     expect(last.html).toContain("That's all that fits in email")
     expect(last.html).toContain(pdfUrl)

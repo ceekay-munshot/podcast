@@ -1,4 +1,4 @@
-import { sendRawEmailParts, cleanAttachments, readEmailContent, type RawEmail } from '../../../src/lib/email'
+import { sendRawEmailParts, cleanAttachments, readEmailContent, validMessageId, type RawEmail } from '../../../src/lib/email'
 import type { KVNamespace } from '../../../server/summaryStore'
 
 // Cloudflare Pages Function → POST /api/email/send (production).
@@ -64,7 +64,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
     if (!allowed.has(origin)) return json(403, { ok: false, message: 'Forbidden origin.' })
   }
 
-  let body: { to?: unknown; subject?: unknown; text?: unknown; html?: unknown; parts?: unknown; attachments?: unknown }
+  let body: { to?: unknown; subject?: unknown; text?: unknown; html?: unknown; parts?: unknown; attachments?: unknown; threadMessageId?: unknown }
   try {
     body = (await request.json()) as typeof body
   } catch {
@@ -79,6 +79,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
   // Exactly one valid recipient, no header-injection newlines.
   if (!EMAIL_RE.test(to) || /[\r\n]/.test(to)) return json(400, { ok: false, message: 'A valid recipient email is required.' })
   if (!content) return json(400, { ok: false, message: 'A subject and exactly one of text or html are required.' })
+  if (body.threadMessageId !== undefined && !validMessageId(body.threadMessageId)) return json(400, { ok: false, message: 'A valid thread Message-ID is required.' })
   if (content.some((m) => (m.html ?? m.text ?? '').length > MAX_CONTENT)) return json(413, { ok: false, message: 'Email content is too large.' })
 
   // Best-effort rate limiting (fails open). Per-recipient cooldown stops bombing one
@@ -102,7 +103,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
   const base = { email: to, ...(attachments.length ? { attachments } : {}) }
   const res = await sendRawEmailParts(
     content.map((m): RawEmail => ({ ...base, ...m })),
-    { token: env.MUNSHOT_EMAIL_TOKEN },
+    { token: env.MUNSHOT_EMAIL_TOKEN, threadMessageId: validMessageId(body.threadMessageId), threaded: body.parts !== undefined },
   )
   return json(res.ok ? 200 : 502, res)
 }

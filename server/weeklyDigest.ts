@@ -1,7 +1,7 @@
 import type { Episode, Podcast, Summary, WeeklySummary } from '../src/lib/types'
 import { PODCASTS } from '../src/lib/mock-data'
 import { assembleWeekly, buildCitations, buildWeeklySources, hashKey, mergeWeeklyAi } from '../src/lib/weeklyAssemble'
-import { weeklyBriefEmailParts, bytesToBase64, sendInOrder, type EmailAttachment, type EmailPart } from '../src/lib/email'
+import { weeklyBriefEmailParts, bytesToBase64, sendInOrder, validMessageId, type EmailAttachment, type EmailPart, type EmailResult } from '../src/lib/email'
 import { weeklyReportFilename } from '../src/lib/reportName'
 import { hasLlmKey, summarizeEpisode, synthesizeWeekly, type SummarizeConfig } from './summarize'
 import type { KVNamespace, SummaryStore } from './summaryStore'
@@ -125,7 +125,7 @@ export interface DigestDeps {
   summaryStore?: SummaryStore
   subscriberStore: SubscriberStore | null
   /** Sends one email; returns whether it went out. Injected so tests don't hit the wire. */
-  sendEmail: (msg: { email: string; subject: string; html: string; attachments?: EmailAttachment[] }) => Promise<{ ok: boolean; message: string }>
+  sendEmail: (msg: { email: string; subject: string; html: string; attachments?: EmailAttachment[]; inReplyTo?: string }) => Promise<EmailResult>
   /** LLM config for the cross-episode synthesis. When present (a key is set), the
    *  emailed edition gets the SAME Guidepoint AI layer as the on-screen one; absent,
    *  it falls back to the deterministic base. */
@@ -247,6 +247,7 @@ export async function processPendingBatch(
 export interface OwedParts {
   email: string
   next: number
+  threadMessageId?: string
 }
 export interface PendingDelivery {
   parts: EmailPart[]
@@ -309,8 +310,11 @@ export async function resumeOwedParts(
   if (!p?.owed.length) return null
   const still: OwedParts[] = []
   await forEachPooled(p.owed, SEND_CONCURRENCY, async (o) => {
-    const res = await sendInOrder(partMessages(p.parts.slice(o.next), o.email, p.attachments), deps.sendEmail, { retryDelayMs: deps.retryDelayMs })
-    if (!res.ok) still.push({ email: o.email, next: o.next + res.sent })
+    // An old remainder without its original Message-ID cannot be safely threaded.
+    // Keep the bounded expiry, but never start a new conversation for later parts.
+    if (o.next > 0 && !validMessageId(o.threadMessageId)) { still.push(o); return }
+    const res = await sendInOrder(partMessages(p.parts.slice(o.next), o.email, p.attachments), deps.sendEmail, { retryDelayMs: deps.retryDelayMs, threadMessageId: o.threadMessageId })
+    if (!res.ok) still.push({ email: o.email, next: o.next + res.sent, threadMessageId: res.threadMessageId ?? o.threadMessageId })
   })
   const tries = p.tries + 1
   await deps.pendingStore.put(still.length && tries < MAX_RESUME_TICKS ? { ...p, owed: still, tries } : null).catch(() => {})
@@ -408,7 +412,7 @@ export async function runWeeklyDigest(deps: DigestDeps): Promise<{ status: numbe
     if (res.ok) sent++
     else {
       failed++
-      if (res.sent > 0) owed.push({ email: sub.email, next: res.sent })
+      if (res.sent > 0 && validMessageId(res.threadMessageId)) owed.push({ email: sub.email, next: res.sent, threadMessageId: res.threadMessageId })
     }
   })
   // This edition supersedes any older remainder (e.g. a forced resend after a failed
