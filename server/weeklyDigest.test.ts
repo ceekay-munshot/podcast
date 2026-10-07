@@ -107,7 +107,7 @@ describe('pickBackfillTargets', () => {
 
 describe('runWeeklyDigest', () => {
   it('backfills uncovered channels before sending so the brief is never empty', async () => {
-    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent' }))
+    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent', messageId: '<root@muns.io>' }))
     const processEpisode = vi.fn(async (e: Episode) => sum({ synthesis: [`processed ${e.id}`] }))
     const res = await runWeeklyDigest({
       getEpisodes: async () => [pending('fresh', 'allin', daysAgo(1))], // nothing ready yet this week
@@ -123,7 +123,7 @@ describe('runWeeklyDigest', () => {
   })
 
   it('is best-effort per channel: one failed processing never blocks the send', async () => {
-    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent' }))
+    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent', messageId: '<root@muns.io>' }))
     const processEpisode = vi.fn(async (e: Episode) => {
       if (e.podcastId === 'oddlots') throw new Error('provider down')
       return sum({ synthesis: [`processed ${e.id}`] })
@@ -141,7 +141,7 @@ describe('runWeeklyDigest', () => {
   })
 
   it('does not backfill channels already covered this week', async () => {
-    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent' }))
+    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent', messageId: '<root@muns.io>' }))
     const processEpisode = vi.fn(async (e: Episode) => sum({ synthesis: [`processed ${e.id}`] }))
     const res = await runWeeklyDigest({
       getEpisodes: async () => [ep('ready', 'allin', daysAgo(1))], // already summarised → no work needed
@@ -179,7 +179,7 @@ describe('runWeeklyDigest', () => {
   })
 
   it('mails the shared edition to every subscriber', async () => {
-    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent' }))
+    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent', messageId: '<root@muns.io>' }))
     const res = await runWeeklyDigest({
       getEpisodes: async () => [ep('e1', 'allin', daysAgo(1)), ep('e2', 'oddlots', daysAgo(3))],
       subscriberStore: memSubscriberStore(subs('a@muns.io', 'b@muns.io')),
@@ -212,7 +212,7 @@ describe('runWeeklyDigest', () => {
     }))
 
   it('splits a long edition into ordered parts for every subscriber', async () => {
-    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent' }))
+    const sendEmail = vi.fn(async (msg: { email: string; subject: string; html: string; inReplyTo?: string }) => ({ ok: true, message: 'sent', messageId: `<${msg.email.split('@')[0]}${msg.inReplyTo ? '-reply' : '-root'}@muns.io>` }))
     const res = await runWeeklyDigest({
       getEpisodes: async () => heavyWeek(),
       subscriberStore: memSubscriberStore(subs('a@muns.io', 'b@muns.io')),
@@ -228,13 +228,15 @@ describe('runWeeklyDigest', () => {
     for (const email of ['a@muns.io', 'b@muns.io']) {
       const mine = calls.filter((m) => m.email === email)
       expect(mine).toHaveLength(parts)
-      mine.forEach((m, i) => expect(m.subject).toMatch(new RegExp(`\\(Part ${i + 1} of ${parts}\\)$`)))
+      mine.forEach(m => expect(m.subject).toBe(mine[0].subject))
+      expect(mine[0].inReplyTo).toBeUndefined()
+      expect(mine.slice(1).every(m => m.inReplyTo === `<${email.split('@')[0]}-root@muns.io>`)).toBe(true)
     }
   })
 
   it('a complete send supersedes an older remainder, so no stale part follows the new brief', async () => {
     const pending = memPendingStore({ parts: [{ subject: 'Old (Part 3 of 3)', html: '<p>old</p>' }], owed: [{ email: 'a@muns.io', next: 0 }], tries: 1 })
-    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent' }))
+    const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent', messageId: '<root@muns.io>' }))
     await runWeeklyDigest({
       getEpisodes: async () => heavyWeek(),
       subscriberStore: memSubscriberStore(subs('a@muns.io')),
@@ -252,7 +254,7 @@ describe('runWeeklyDigest', () => {
       peak = Math.max(peak, ++inFlight)
       await new Promise((r) => setTimeout(r, 1))
       inFlight--
-      return { ok: true, message: 'sent' }
+      return { ok: true, message: 'sent', messageId: '<root@muns.io>' }
     })
     const res = await runWeeklyDigest({
       getEpisodes: async () => [ep('e1', 'allin', daysAgo(1))],
@@ -267,7 +269,7 @@ describe('runWeeklyDigest', () => {
 
   it('stops a subscriber at a failed part and counts them as failed', async () => {
     const sendEmail = vi.fn(async (msg: { email: string; subject: string; html: string }) =>
-      msg.email === 'a@muns.io' && msg.subject.includes('(Part 1 of') ? { ok: false, message: 'rejected' } : { ok: true, message: 'sent' },
+      msg.email === 'a@muns.io' && !('inReplyTo' in msg) ? { ok: false, message: 'rejected' } : { ok: true, message: 'sent', messageId: '<root@muns.io>' },
     )
     const res = await runWeeklyDigest({
       getEpisodes: async () => heavyWeek(),
@@ -284,11 +286,11 @@ describe('runWeeklyDigest', () => {
   it('retries a later part the endpoint refused as busy, so a transient failure still completes the brief', async () => {
     let failedOnce = false
     const sendEmail = vi.fn(async (msg: { email: string; subject: string; html: string }) => {
-      if (!failedOnce && msg.subject.includes('(Part 2 of')) {
+      if (!failedOnce && new RegExp('<title>[^<]*\\(Part 2 of \\d+\\)</title>').test(msg.html)) {
         failedOnce = true
         return { ok: false, message: 'busy', retryable: true }
       }
-      return { ok: true, message: 'sent' }
+      return { ok: true, message: 'sent', messageId: '<root@muns.io>' }
     })
     const res = await runWeeklyDigest({
       getEpisodes: async () => heavyWeek(),
@@ -306,7 +308,7 @@ describe('runWeeklyDigest', () => {
     const pending = memPendingStore()
     let down = true
     const sendEmail = vi.fn(async (msg: { email: string; subject: string; html: string }) =>
-      down && msg.email === 'a@muns.io' && msg.subject.includes('(Part 2 of') ? { ok: false, message: 'timeout' } : { ok: true, message: 'sent' },
+      down && msg.email === 'a@muns.io' && new RegExp('<title>[^<]*\\(Part 2 of \\d+\\)</title>').test(msg.html) ? { ok: false, message: 'timeout' } : { ok: true, message: 'sent', messageId: '<root@muns.io>' },
     )
     const res = await runWeeklyDigest({
       getEpisodes: async () => heavyWeek(),
@@ -317,7 +319,7 @@ describe('runWeeklyDigest', () => {
     })
     const parts = (res.body as { parts?: number }).parts ?? 0
     expect(res.body).toMatchObject({ ok: false, sent: 1, failed: 1, owed: 1 })
-    expect(pending.value()).toMatchObject({ owed: [{ email: 'a@muns.io', next: 1 }], tries: 0 })
+    expect(pending.value()).toMatchObject({ owed: [{ email: 'a@muns.io', next: 1, threadMessageId: '<root@muns.io>' }], tries: 0 })
     expect(pending.value()!.parts).toHaveLength(parts)
 
     // Next tick: the SAME stored parts, from Part 2 on, to that reader only.
@@ -325,14 +327,14 @@ describe('runWeeklyDigest', () => {
     sendEmail.mockClear()
     expect(await resumeOwedParts({ pendingStore: pending.store, sendEmail, retryDelayMs: 0 })).toEqual({ delivered: 1, owed: 0 })
     expect(sendEmail.mock.calls.map(([m]) => m.email)).toEqual(Array(parts - 1).fill('a@muns.io'))
-    expect(sendEmail.mock.calls[0][0].subject).toMatch(/\(Part 2 of \d+\)$/)
+    expect(sendEmail.mock.calls[0][0]).toMatchObject({ inReplyTo: '<root@muns.io>' })
     expect(pending.value()).toBeNull() // cleared once delivered
   })
 
   it('does not save anything for a reader who got no part at all (nothing half-sent)', async () => {
     const pending = memPendingStore()
     const sendEmail = vi.fn(async (msg: { email: string; subject: string; html: string }) =>
-      msg.email === 'a@muns.io' ? { ok: false, message: 'rejected' } : { ok: true, message: 'sent' },
+      msg.email === 'a@muns.io' ? { ok: false, message: 'rejected' } : { ok: true, message: 'sent', messageId: '<root@muns.io>' },
     )
     const res = await runWeeklyDigest({
       getEpisodes: async () => heavyWeek(),
@@ -349,7 +351,7 @@ describe('runWeeklyDigest', () => {
   it('counts failed sends without throwing, and reports ok:false', async () => {
     const sendEmail = vi
       .fn()
-      .mockResolvedValueOnce({ ok: true, message: 'sent' })
+      .mockResolvedValueOnce({ ok: true, message: 'sent', messageId: '<root@muns.io>' })
       .mockResolvedValueOnce({ ok: false, message: 'rejected' })
     const res = await runWeeklyDigest({
       getEpisodes: async () => [ep('e1', 'allin', daysAgo(1))],
@@ -371,16 +373,25 @@ describe('resumeOwedParts — finishing a split brief on later ticks', () => {
   })
 
   it('keeps what still fails, advancing past what went out, and gives up after MAX_RESUME_TICKS', async () => {
-    const pending = memPendingStore({ parts, owed: [{ email: 'a@muns.io', next: 1 }], tries: 0 })
+    const pending = memPendingStore({ parts, owed: [{ email: 'a@muns.io', next: 1, threadMessageId: '<root@muns.io>' }], tries: 0 })
     // Part 2 goes out, Part 3 keeps failing.
-    const sendEmail = vi.fn(async (msg: { email: string; subject: string; html: string }) => (msg.subject.includes('Part 3') ? { ok: false, message: 'down' } : { ok: true, message: 'sent' }))
+    const sendEmail = vi.fn(async (msg: { email: string; subject: string; html: string }) => (msg.html === '<p>3</p>' ? { ok: false, message: 'down' } : { ok: true, message: 'sent', messageId: '<reply@muns.io>' }))
     expect(await resumeOwedParts({ pendingStore: pending.store, sendEmail, retryDelayMs: 0 })).toEqual({ delivered: 0, owed: 1 })
     expect(pending.value()).toMatchObject({ owed: [{ email: 'a@muns.io', next: 2 }], tries: 1 })
+    expect(pending.value()!.owed[0].threadMessageId).toBe('<root@muns.io>')
     for (let t = 2; t < MAX_RESUME_TICKS; t++) await resumeOwedParts({ pendingStore: pending.store, sendEmail, retryDelayMs: 0 })
     expect(pending.value()).toMatchObject({ tries: MAX_RESUME_TICKS - 1 })
     await resumeOwedParts({ pendingStore: pending.store, sendEmail, retryDelayMs: 0 })
     expect(pending.value()).toBeNull() // given up — never retried forever
-    expect(sendEmail.mock.calls.filter(([m]) => m.subject.includes('Part 2'))).toHaveLength(1) // Part 2 sent once, not re-sent
+    expect(sendEmail.mock.calls.filter(([m]) => m.html === '<p>2</p>')).toHaveLength(1) // Part 2 sent once, not re-sent
+  })
+
+  it('never sends an old queued remainder without its root Message-ID', async () => {
+    const pending = memPendingStore({ parts, owed: [{ email: 'a@muns.io', next: 1 }], tries: 0 })
+    const sendEmail = vi.fn()
+    expect(await resumeOwedParts({ pendingStore: pending.store, sendEmail })).toEqual({ delivered: 0, owed: 1 })
+    expect(sendEmail).not.toHaveBeenCalled()
+    expect(pending.value()).toMatchObject({ tries: 1, owed: [{ next: 1 }] })
   })
 })
 

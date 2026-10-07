@@ -16,7 +16,7 @@ import { fileSubscriberStore } from './server/subscriberStore.node'
 import { handleSchedule } from './server/scheduleStore'
 import { fileScheduleStore } from './server/scheduleStore.node'
 import { checkCronAuth, processPendingBatch, runWeeklyDigest } from './server/weeklyDigest'
-import { readEmailContent, sendRawEmail, sendRawEmailParts, type RawEmail } from './src/lib/email'
+import { readEmailContent, sendRawEmail, sendRawEmailParts, validMessageId, type RawEmail } from './src/lib/email'
 import { reportId, reportUrl } from './server/reportStore'
 import { contentDispositionInline, REPORT_DL_PARAM } from './src/lib/reportName'
 import { cleanAttachments } from './src/lib/email'
@@ -161,17 +161,18 @@ function liveApiPlugin(config: {
       server.middlewares.use('/api/email/send', async (req, res) => {
         if (req.method !== 'POST') return json(res, 405, { ok: false, message: 'method_not_allowed' })
         try {
-          const b = JSON.parse((await readBody(req)) || '{}') as { to?: string; subject?: unknown; text?: unknown; html?: unknown; parts?: unknown; attachments?: unknown }
+          const b = JSON.parse((await readBody(req)) || '{}') as { to?: string; subject?: unknown; text?: unknown; html?: unknown; parts?: unknown; attachments?: unknown; threadMessageId?: unknown }
           const to = (b.to ?? '').trim()
           const content = readEmailContent(b)
           // Same recipient hardening as prod: one valid address, no header-injection newlines.
           if (!/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(to) || /[\r\n]/.test(to)) return json(res, 400, { ok: false, message: 'A valid recipient email is required.' })
           if (!content) return json(res, 400, { ok: false, message: 'A subject and exactly one of text or html are required.' })
+          if (b.threadMessageId !== undefined && !validMessageId(b.threadMessageId)) return json(res, 400, { ok: false, message: 'A valid thread Message-ID is required.' })
           const attachments = config.emailAttachments ? cleanAttachments(b.attachments) : []
           const base = { email: to, ...(attachments.length ? { attachments } : {}) }
           const result = await sendRawEmailParts(
             content.map((m): RawEmail => ({ ...base, ...m })),
-            { token: config.emailToken },
+            { token: config.emailToken, threadMessageId: validMessageId(b.threadMessageId), threaded: b.parts !== undefined },
           )
           json(res, result.ok ? 200 : 502, result)
         } catch {

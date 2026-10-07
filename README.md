@@ -224,8 +224,11 @@ report** button.
 **A long week arrives in parts.** Gmail clips any email whose HTML passes ~102KB
 (everything after the cut hides behind *"[Message clipped] View entire message"*),
 and a 20+ episode week is well past that. So `weeklyBriefEmailParts`
-(`src/lib/email.ts`) splits the edition into emails of at most 70KB, titled
-*"… (Part 1 of 3)"*, *"(Part 2 of 3)"*, and so on. Every part is a complete email
+(`src/lib/email.ts`) splits the edition into messages of at most 70KB in **one email conversation**.
+Every part has the same week-specific subject; *"Part 1 of 3"*, *"Part 2 of 3"*,
+and so on remain visible in the body. The first send returns its transport
+`data.messageId`; later parts send `inReplyTo` and `references: [messageId]`
+through the same raw-email API. Every part is a complete email
 with the header, the dashboard button and the **Download PDF** button, and the PDF
 is always the whole edition. A section that spills over carries on in the next part
 as *"(continued)"*, and each part but the last points to the next one. A normal week
@@ -233,7 +236,7 @@ still goes out as one email, unchanged. Parts are sent in order and a failed par
 stops the send, so nobody gets Part 3 without Part 2. A later part the endpoint
 refuses as busy (429/503) is retried on the spot; anything else might already have
 been delivered, so it is left for the cron: a reader left part-way is saved in KV
-with the exact parts, and every following tick sends them the rest (for up to ~3h).
+with the exact parts and that recipient's root Message-ID, and every following tick sends them the rest (for up to ~3h).
 The on-demand proxy takes all of a recipient's parts in one
 request (`parts: [...]`), so its per-recipient cooldown still counts one brief; if that
 stops part-way, "try again" in the app sends only the remaining parts. A
@@ -246,6 +249,11 @@ session cookie (this was the *"Couldn't reach the email service"* bug). Instead,
 subscribe-welcome and "Email this edition" POST to `POST /api/email/send`
 (`functions/api/email/send.ts`), which holds the service token server-side and
 relays it — the browser never sees the token.
+
+If the first send returns no valid Message-ID, later parts are withheld rather
+than sent as new conversations. Older queued remainders without that ID cannot
+be threaded and expire under the existing bounded retry policy. Retry state for
+"Email this edition" also keeps the root, including when only one part remains.
 
 Because Cloudflare Pages can't run cron itself, the Monday timer is a scheduled
 **GitHub Actions** workflow ([`.github/workflows/weekly-digest.yml`](./.github/workflows/weekly-digest.yml))

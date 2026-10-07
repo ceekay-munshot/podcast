@@ -14,7 +14,7 @@ describe('emailWeeklyEdition — a split brief that stops part-way', () => {
   const fetchMock = vi.fn()
   const reply = (body: object, status = 200) => ({ ok: status < 300, status, json: async () => body })
   const sends = () =>
-    fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/email/send')).map(([, init]) => JSON.parse(init.body) as { parts?: { subject: string }[] })
+    fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/email/send')).map(([, init]) => JSON.parse(init.body) as { parts?: { subject: string }[]; threadMessageId?: string })
 
   beforeEach(() => {
     fetchMock.mockReset()
@@ -25,7 +25,7 @@ describe('emailWeeklyEdition — a split brief that stops part-way', () => {
 
   it('retrying sends only the parts that never went out, then starts fresh next time', async () => {
     fetchMock.mockImplementationOnce(async () => reply({ url: 'https://x.test/r/1.pdf' })) // PDF hosting
-    fetchMock.mockImplementationOnce(async () => reply({ ok: false, message: 'Sent 1 of 2 parts — busy', sent: 1 }, 502))
+    fetchMock.mockImplementationOnce(async () => reply({ ok: false, message: 'Sent 1 of 2 parts — busy', sent: 1, threadMessageId: '<root@muns.io>' }, 502))
     const first = await emailWeeklyEdition('a@muns.io', BIG, episodeById, podcastById)
     expect(first.ok).toBe(false)
     expect(first.message).toBe('Sent 1 of 2 parts — busy. Try again to send the remaining parts.')
@@ -35,6 +35,7 @@ describe('emailWeeklyEdition — a split brief that stops part-way', () => {
     fetchMock.mockClear()
     const retry = await emailWeeklyEdition('a@muns.io', BIG, episodeById, podcastById)
     expect(retry.ok).toBe(true)
+    expect(sends()[0].threadMessageId).toBe('<root@muns.io>')
     expect(sends()[0].parts!.map((p) => p.subject)).toEqual(all.slice(1).map((p) => p.subject)) // no Part 1 again
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/report'))).toBe(false) // same parts, no re-render
 
@@ -51,6 +52,6 @@ describe('emailWeeklyEdition — a split brief that stops part-way', () => {
     fetchMock.mockClear()
     await emailWeeklyEdition('b@muns.io', BIG, episodeById, podcastById)
     expect(sends()[0].parts!.length).toBeGreaterThan(1)
-    expect(sends()[0].parts![0].subject).toContain('(Part 1 of')
+    expect(sends()[0].parts![0].subject).not.toContain('(Part ')
   })
 })

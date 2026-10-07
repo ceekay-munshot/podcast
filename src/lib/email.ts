@@ -9,7 +9,8 @@ import { groupQuantByEpisode } from './weeklyQuant'
 //
 // POST https://devde.muns.io/email/send/raw
 //   body: { email, subject, text }  OR  { email, subject, html }   (exactly one)
-//   ok:   { data: { message }, message, success: true }
+//   ok:   { data: { message, messageId }, message, success: true }
+//   reply: inReplyTo + references: [rootMessageId], with the same edition subject
 //
 // The endpoint authenticates with the signed-in user's session (it "works with
 // the user token using the dashboard"). This app runs inside the chat.muns.io
@@ -33,6 +34,10 @@ export interface EmailResult {
   /** The endpoint answered that it did NOT take the message and to try later (HTTP 429
    *  or 503) — the one failure that can be re-sent without risking a duplicate. */
   retryable?: boolean
+  /** Confirmed transport Message-ID, never a Gmail conversation ID. */
+  messageId?: string
+  /** First part's Message-ID, retained when a send needs to resume. */
+  threadMessageId?: string
 }
 
 /** A file attached to an email. `content` is base64 (no `data:` prefix). Delivery
@@ -46,6 +51,7 @@ export interface EmailAttachment {
 interface BaseEmail {
   email: string
   subject: string
+  inReplyTo?: string
   /** Optional attachments — only sent through when non-empty (else the body is byte-
    *  for-byte the historical text/html contract). */
   attachments?: EmailAttachment[]
@@ -57,8 +63,12 @@ export type RawEmail = BaseEmail & ({ text: string; html?: never } | { html: str
 interface EmailEndpointResponse {
   success?: boolean
   message?: string
-  data?: { message?: string }
+  data?: { message?: string; messageId?: unknown }
 }
+
+/** Header-safe RFC Message-ID in the form returned by the raw-email API. */
+export const validMessageId = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.length <= 998 && /^<[^<>\s@]+@[^<>\s@]+>$/.test(value) ? value : undefined
 
 /** Send one email through the Munshot raw-email endpoint. Resolves `{ ok }`;
  *  never throws (network/CORS/HTTP errors become `ok: false`). */
@@ -71,6 +81,7 @@ export async function sendRawEmail(message: RawEmail, opts: { token?: string } =
   if (!email) return { ok: false, message: 'A recipient email is required.' }
   if (!subject) return { ok: false, message: 'An email subject is required.' }
   if (hasText === hasHtml) return { ok: false, message: 'Send exactly one of text or html.' }
+  if (message.inReplyTo !== undefined && !validMessageId(message.inReplyTo)) return { ok: false, message: 'A valid reply Message-ID is required.' }
 
   const body: Record<string, unknown> = { email, subject }
   if (hasText) body.text = (message as { text: string }).text
@@ -79,6 +90,7 @@ export async function sendRawEmail(message: RawEmail, opts: { token?: string } =
   // byte-for-byte the historical text/html contract (and the endpoint never sees an
   // empty `attachments: []` it might choke on).
   if (message.attachments?.length) body.attachments = message.attachments
+  if (message.inReplyTo) Object.assign(body, { inReplyTo: message.inReplyTo, references: [message.inReplyTo] })
 
   const headers: Record<string, string> = { 'content-type': 'application/json' }
   if (opts.token) headers.authorization = `Bearer ${opts.token}`
@@ -97,7 +109,8 @@ export async function sendRawEmail(message: RawEmail, opts: { token?: string } =
       /* non-JSON (e.g. an HTML error page) — fall back to status below */
     }
     if (res.ok && payload?.success) {
-      return { ok: true, message: str(payload.data?.message) || str(payload.message) || 'Email sent.' }
+      const messageId = validMessageId(payload.data?.messageId)
+      return { ok: true, message: str(payload.data?.message) || str(payload.message) || 'Email sent.', ...(messageId ? { messageId } : {}) }
     }
     // The endpoint sometimes nests a non-string error (e.g. { message: { statusCode } }),
     // so coerce to a clean string — never let an object reach the UI as "[object Object]".
@@ -116,29 +129,47 @@ export async function sendRawEmail(message: RawEmail, opts: { token?: string } =
  *  a hiccup). Any other failure — a lost response, a timeout — may still have been
  *  delivered, so it is never re-sent here, where it could duplicate the part. Part 1
  *  isn't retried either: failing there leaves nothing half-sent. Never throws. */
-export async function sendInOrder<M>(
+export async function sendInOrder<M extends { email: string; subject: string; inReplyTo?: string }>(
   messages: M[],
   send: (m: M) => Promise<EmailResult>,
-  opts: { retries?: number; retryDelayMs?: number } = {},
+  opts: { retries?: number; retryDelayMs?: number; threadMessageId?: string; threaded?: boolean } = {},
 ): Promise<EmailResult & { sent: number }> {
+  if (!messages.length) return { ok: false, message: 'Nothing to send.', sent: 0 }
+  let root = validMessageId(opts.threadMessageId)
+  if (opts.threadMessageId !== undefined && !root) return { ok: false, message: 'A valid thread Message-ID is required.', sent: 0 }
+  // Older browsers / queued editions may still carry the old per-part subjects.
+  const threaded = messages.length > 1 || opts.threaded || !!root
+  const editionSubject = (value: string) => threaded ? value.trim().replace(/\s+\(Part \d+ of \d+\)$/, '') : value.trim()
+  const subject = editionSubject(messages[0].subject)
+  if (messages.some(m => m.email.trim().toLowerCase() !== messages[0].email.trim().toLowerCase() || editionSubject(m.subject) !== subject)) {
+    return { ok: false, message: 'All parts must have the same recipient and edition subject.', sent: 0 }
+  }
+  if (threaded && !root && /\(Part ([2-9]\d*|1\d+) of \d+\)$/.test(messages[0].subject)) {
+    return { ok: false, message: 'The original email Message-ID is unavailable; remaining parts were not sent.', sent: 0 }
+  }
   const retries = opts.retries ?? 2
   const delayMs = opts.retryDelayMs ?? 1000
   const attempt = (m: M) => send(m).catch((): EmailResult => ({ ok: false, message: "Couldn't reach the email service." }))
   let res: EmailResult = { ok: false, message: 'Nothing to send.' }
   for (let i = 0; i < messages.length; i++) {
-    res = await attempt(messages[i])
-    for (let n = 1; !res.ok && res.retryable && i > 0 && n <= retries; n++) {
+    const message = { ...messages[i], subject, ...(root ? { inReplyTo: root } : {}) }
+    res = await attempt(message)
+    for (let n = 1; !res.ok && res.retryable && (i > 0 || !!opts.threadMessageId) && n <= retries; n++) {
       await new Promise((r) => setTimeout(r, delayMs * n))
-      res = await attempt(messages[i])
+      res = await attempt(message)
     }
-    if (!res.ok) return { ...(i ? { ok: false, message: `Sent ${i} of ${messages.length} parts — ${res.message}` } : res), sent: i }
+    if (!res.ok) return { ...(i ? { ok: false, message: `Sent ${i} of ${messages.length} parts — ${res.message}` } : res), sent: i, ...(root ? { threadMessageId: root } : {}) }
+    if (!root) root = validMessageId(res.messageId)
+    if (i < messages.length - 1 && !root) {
+      return { ok: false, message: 'Part 1 sent, but its Message-ID is unavailable; remaining parts were not sent.', sent: i + 1 }
+    }
   }
-  return { ...res, sent: messages.length }
+  return { ...res, sent: messages.length, ...(root ? { threadMessageId: root } : {}) }
 }
 
 /** `sendInOrder` through the Munshot raw-email endpoint. */
-export function sendRawEmailParts(messages: RawEmail[], opts: { token?: string; retryDelayMs?: number } = {}): Promise<EmailResult> {
-  return sendInOrder(messages, (m) => sendRawEmail(m, { token: opts.token }), { retryDelayMs: opts.retryDelayMs })
+export function sendRawEmailParts(messages: RawEmail[], opts: { token?: string; retryDelayMs?: number; threadMessageId?: string; threaded?: boolean } = {}): Promise<EmailResult & { sent: number }> {
+  return sendInOrder(messages, (m) => sendRawEmail(m, { token: opts.token }), { retryDelayMs: opts.retryDelayMs, threadMessageId: opts.threadMessageId, threaded: opts.threaded })
 }
 
 // ── proxy request → message(s) (shared by the prod proxy + dev middleware) ───
@@ -746,8 +777,8 @@ export function weeklyBriefEmailHtml(
 }
 
 /** The weekly edition as the emails to send, in order. One email (the plain title as
- *  subject) when it fits under `maxBytes`; otherwise "(Part n of N)" emails, each
- *  standalone and each linking the full PDF — never more than MAX_EMAIL_PARTS (a
+ *  subject) when it fits under `maxBytes`; otherwise parts sharing that subject,
+ *  numbered in the body and each linking the full PDF — never more than MAX_EMAIL_PARTS (a
  *  longer week ends there with a pointer to the full edition). */
 export function weeklyBriefEmailParts(
   weekly: WeeklySummary,
@@ -776,10 +807,10 @@ export function weeklyBriefEmailParts(
   const kept = cut ? packed.slice(0, MAX_EMAIL_PARTS) : packed
   const total = kept.length
   return kept.map((secs, i) => {
-    const subject = weeklyPartSubject(weekly.rangeLabel, i + 1, total)
+    const partTitle = weeklyPartSubject(weekly.rangeLabel, i + 1, total)
     const last = i + 1 === total
     const next = last ? undefined : weeklyPartSubject(weekly.rangeLabel, i + 2, total)
-    return { subject, html: weeklyEmailDoc(weekly, subject, secs, opts.pdfUrl, { index: i + 1, total, next, cut: last && cut }) }
+    return { subject: title, html: weeklyEmailDoc(weekly, partTitle, secs, opts.pdfUrl, { index: i + 1, total, next, cut: last && cut }) }
   })
 }
 
