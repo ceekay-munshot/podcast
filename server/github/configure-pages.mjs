@@ -1,3 +1,4 @@
+import { appendFileSync } from 'node:fs'
 // Called only by the explicitly enabled GitHub deployment workflow.
 // Credentials stay in process memory and are sent only to Cloudflare's API.
 const required = name => { if (!process.env[name]) throw Error(`Missing ${name}`); return process.env[name] }
@@ -18,3 +19,8 @@ const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${ac
 const result = await response.json()
 if (!response.ok || !result.success) throw Error(`Cloudflare gateway configuration failed (${response.status})`)
 console.log('Configured the production stateless gateway without a storage binding.')
+
+// Wrangler is the source of truth for non-secret Pages variables. Render these
+// into the deployment config too; dashboard-only plain variables are discarded
+// by `pages deploy`, while encrypted secrets are retained.
+appendFileSync('wrangler.toml', `\n[vars]\nPODCAST_BACKGROUND_ENABLED = "${process.env.PODCAST_BACKGROUND_ENABLED === '1' ? '1' : '0'}"\nSITE_URL = ${JSON.stringify(process.env.SITE_URL || 'https://podcast-afg.pages.dev')}\n`)
