@@ -33,7 +33,9 @@ export async function opaqueName(value: string, secret: string): Promise<string>
 }
 export function viewIdentity(method: string, path: string, user: string | null): string { return JSON.stringify([method, path, user]) }
 export class GitHub {
-  constructor(private token: string, private fetcher: typeof fetch = fetch) {}
+  // Worker globals are receiver-sensitive. Keep a normal global fetch call
+  // inside an arrow rather than invoking the native function as this.fetcher.
+  constructor(private token: string, private fetcher: typeof fetch = (input, init) => fetch(input, init)) {}
   async request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       const response = await this.fetcher(`https://api.github.com/repos/${REPOSITORY}/${path}`, {
