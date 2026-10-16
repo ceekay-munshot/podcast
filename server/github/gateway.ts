@@ -2,7 +2,7 @@ import { USER_HEADER, userKeyFrom } from '../identity'
 import { contentDispositionInline } from '../../src/lib/reportName'
 import { GitHub, GitHubError, QUEUE_PREFIX, STATE_BRANCH, base64, open, opaqueName, seal, unbase64, viewIdentity, type PreparedResponse, type QueuedRequest } from './protocol'
 
-export interface GatewayEnv { PODCAST_GITHUB_TOKEN?: string; PODCAST_GATEWAY_KEY?: string; SITE_URL?: string; GITHUB_BACKGROUND_ENABLED?: string }
+export interface GatewayEnv { PODCAST_GITHUB_TOKEN?: string; PODCAST_GATEWAY_KEY?: string; SITE_URL?: string; PODCAST_BACKGROUND_ENABLED?: string }
 const json = (status: number, value: unknown) => Response.json(value, { status, headers: { 'cache-control': 'no-store' } })
 const MAX_BODY = 12_000_000
 async function boundedBody(request: Request): Promise<Uint8Array> {
@@ -20,7 +20,7 @@ async function boundedBody(request: Request): Promise<Uint8Array> {
   return bytes
 }
 export async function gateway(request: Request, env: GatewayEnv): Promise<Response> {
-  if (!env.PODCAST_GITHUB_TOKEN || !env.PODCAST_GATEWAY_KEY || env.GITHUB_BACKGROUND_ENABLED !== '1') return json(503, { error: 'migration_not_enabled' })
+  if (!env.PODCAST_GITHUB_TOKEN || !env.PODCAST_GATEWAY_KEY || env.PODCAST_BACKGROUND_ENABLED !== '1') return json(503, { error: 'migration_not_enabled' })
   const url = new URL(request.url), user = userKeyFrom(request.headers.get(USER_HEADER)), secret = env.PODCAST_GATEWAY_KEY
   if (url.pathname.startsWith('/api/cron/')) return json(410, { error: 'background_work_moved_to_github' })
   // Retain the existing identity boundary and reject foreign browser mutations.

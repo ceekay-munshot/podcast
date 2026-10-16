@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { gateway } from './gateway'
 import { GitHub, base64, open, seal, type PreparedResponse, type QueuedRequest } from './protocol'
 const secret = base64(new Uint8Array(32).fill(41))
-const env = { PODCAST_GITHUB_TOKEN: 'fixture', PODCAST_GATEWAY_KEY: secret, GITHUB_BACKGROUND_ENABLED: '1' }
+const env = { PODCAST_GITHUB_TOKEN: 'fixture', PODCAST_GATEWAY_KEY: secret, PODCAST_BACKGROUND_ENABLED: '1' }
 describe('stateless transport gateway', () => {
   afterEach(() => vi.restoreAllMocks())
   it('saves an encrypted queue before dispatch and retains work if wakeup fails', async () => {
