@@ -119,7 +119,7 @@ what to syndicate — not something a different feed URL fixes.
 
 For normal use nothing needs configuring: the user pastes their member feed in
 Discover and it's persisted with their tracked shows (`localStorage` + the per-user
-channel roster in KV), exactly like any other `feedUrl`, and the app fetches their
+encrypted channel roster on GitHub), exactly like any other `feedUrl`, and the app fetches their
 paid episodes from then on. The UI says on the card that the URL is a credential.
 
 The one path that can't see a user's feed is the **Monday digest cron** — it has no
@@ -173,7 +173,7 @@ Clean, minimal, editorial SaaS. A near-white `#fafbfc` canvas, white cards with 
 ## Per-user sign-in inside chat.muns.io
 
 Embedded in chat.muns.io, every user gets their own roster + processed history
-(KV keys scoped by the Munshot identity), while episode summaries stay one
+(stored keys scoped by the Munshot identity), while episode summaries stay one
 global cache shared by everyone. The dashboard side is fully wired
 (`src/lib/munshot.ts` — it announces `dashboard:ready` and consumes
 `host:init`), **but the host platform must send the other half of the
@@ -203,152 +203,49 @@ zebra source table — with real, selectable text. Fonts follow the same serif/
 sans/mono split as the `.doc` (Times / Helvetica / Courier ≈ Georgia / Calibri /
 Consolas), the standard PDF families, so nothing needs embedding.
 
-## Weekly email digest (the Monday send) + the PDF report
+## Weekly email digest and hosted PDF
 
-The weekly brief is **investable-research-grade**, modelled on Guidepoint AskGP:
-a synthesised cross-episode **Overview** (with `[n]` citations), thematic
-**Key Points**, a **Quantitative Summary** table, a **Comparison Across Sources**
-table, and grouped **Sources**. Each episode also carries an *investable insight*
-(what changed · why it matters · who benefits · who's at risk · diligence
-questions — `server/summarize.ts`, `SUMMARY_REVISION` r7), which the weekly
-synthesis (`synthesizeWeekly`) rolls up across the week. The on-screen Weekly
-page, the emailed brief, the PDF, and the Word export all render this one shape.
+The scheduled workflow now runs collection, processing, PDF generation and email
+sending **inside GitHub Actions**. Cloudflare serves static assets plus the
+approved stateless gateway; it has no active storage binding or model/mail work.
+See [the migration and operations guide](docs/github-background-migration.md) for
+credentials, encrypted storage, cutover, verification and recovery procedures.
 
-**The email is a brief that links to a hosted PDF.** The raw-email endpoint can't
-carry attachments, so the cron renders the edition to a real `.pdf` (jsPDF —
-`weeklyPdfBytes` in `src/lib/pdfRender.ts`), stores the bytes in KV keyed by a
-content hash (`server/reportStore.ts`, served at `GET /api/report/:id`, 30-day
-TTL), and sends a polished HTML brief with a prominent **Download full PDF
-report** button.
+The existing subscriber list and chosen day/time/timezone remain authoritative.
+The workflow wakes every 30 minutes and checks that schedule; neither browser
+wakeups nor manual workflow dispatches force an extra edition. GitHub cron can be
+delayed, so the stored schedule gates the first available tick after the due time.
+The last-sent marker migrates with the data. Missing credentials or unresolved
+parts fail the workflow visibly; repository Actions notification preferences
+control failure notifications.
 
-**A long week arrives in parts.** Gmail clips any email whose HTML passes ~102KB
-(everything after the cut hides behind *"[Message clipped] View entire message"*),
-and a 20+ episode week is well past that. So `weeklyBriefEmailParts`
-(`src/lib/email.ts`) splits the edition into messages of at most 70KB in **one email conversation**.
-Every part has the same week-specific subject; *"Part 1 of 3"*, *"Part 2 of 3"*,
-and so on remain visible in the body. The first send returns its transport
-`data.messageId`; later parts send `inReplyTo` and `references: [messageId]`
-through the same raw-email API. Every part is a complete email
-with the header, the dashboard button and the **Download PDF** button, and the PDF
-is always the whole edition. A section that spills over carries on in the next part
-as *"(continued)"*, and each part but the last points to the next one. A normal week
-still goes out as one email, unchanged. Parts are sent in order and a failed part
-stops the send, so nobody gets Part 3 without Part 2. A later part the endpoint
-refuses as busy (429/503) is retried on the spot; anything else might already have
-been delivered, so it is left for the cron: a reader left part-way is saved in KV
-with the exact parts and that recipient's root Message-ID, and every following tick sends them the rest (for up to ~3h).
-The on-demand proxy takes all of a recipient's parts in one
-request (`parts: [...]`), so its per-recipient cooldown still counts one brief; if that
-stops part-way, "try again" in the app sends only the remaining parts. A
-week too long for 8 emails (`MAX_EMAIL_PARTS`), or a single block too big for any
-one email, points to the PDF and dashboard instead of being clipped.
+Every long edition is delivered completely in one conversation, as sequential
+HTML parts below the clipping budget. All parts share the same subject; replies
+use Part 1's confirmed transport Message-ID in `inReplyTo` and `references`.
+There is no eight-part cutoff, and oversized paragraphs continue in later parts.
+Every part links the full hosted PDF and retains attachments when already enabled.
 
-**All sends route through our own origin.** The app is a partitioned iframe, so a
-cross-origin browser send to the raw-email endpoint can't carry the muns.io
-session cookie (this was the *"Couldn't reach the email service"* bug). Instead,
-subscribe-welcome and "Email this edition" POST to `POST /api/email/send`
-(`functions/api/email/send.ts`), which holds the service token server-side and
-relays it — the browser never sees the token.
+The exact edition, all recipients and the schedule slot are committed before
+sending. A durable claim precedes each provider call, and confirmed receipts
+survive runner restarts. Accepted parts are not sent again. Unsent parts remain
+saved until completed; they no longer disappear after six ticks. Unknown provider
+outcomes remain saved for reconciliation instead of being blindly resent. A
+missing root Message-ID blocks later parts until the original root is recovered.
 
-If the first send returns no valid Message-ID, later parts are withheld rather
-than sent as new conversations. Older queued remainders without that ID cannot
-be threaded and expire under the existing bounded retry policy. Retry state for
-"Email this edition" also keeps the root, including when only one part remains.
+Background batches retain the existing ten-episode/30-minute limit even when
+browser actions wake runners. The processor covers seed shows plus user-added
+tracked feeds; the shared emailed edition remains seed-only so private additions
+are not sent to other subscribers. Existing providers and models are retained.
 
-Because Cloudflare Pages can't run cron itself, the Monday timer is a scheduled
-**GitHub Actions** workflow ([`.github/workflows/weekly-digest.yml`](./.github/workflows/weekly-digest.yml))
-that POSTs `/api/cron/weekly-digest`. It assembles the edition server-side
-(`server/weeklyDigest.ts` → `assembleWeekly` + `synthesizeWeekly` with a
-deterministic fallback), renders + hosts the PDF, and mails every subscriber.
-Only episodes summarised **and** published in the last 7 days are included; with
-none, it skips (never an empty email).
+All data is encrypted on `codex/podcast-state` in this public repo. No subscriber
+addresses, private feed credentials, transcripts, queued request bodies or secrets
+are published in plaintext. Existing PDF content-hash URLs remain available.
+Queued requests survive workflow replacement, and the browser polls saved results
+without resubmitting a send. Interactive jobs may take a few minutes to start.
 
-### If auto-processing breaks, you find out
-
-A 200 from the cron endpoint is not the same as a healthy tick. Auto-processing can be
-completely dead while the endpoint answers perfectly — a revoked LLM key used to report
-`{processed: 0, remaining: 0}`, byte-for-byte what a quiet, healthy tick looks like, so
-it could stay dead indefinitely with nothing anywhere saying so.
-
-`processPendingBatch` now returns a `BatchReport` that separates the two:
-
-| Signal | Meaning | Workflow reaction |
-|---|---|---|
-| `skipped: 'no_llm_key'` | No summariser configured. Nothing will **ever** process. | Fails the run |
-| `error` | The batch threw. | Fails the run |
-| `failed` > 0 with `processed` 0 | Every episode failed — provider likely down. | Warning |
-| `skipped: 'budget_spent'` | Ran out of wall-clock mid-batch. Self-heals next tick. | Silent |
-| `failed` > 0 with `processed` > 0 | A bad feed or two. Normal. | Silent |
-
-A failed run emails the repo owner, so a dead processor surfaces on its own instead of
-being noticed weeks later through a growing "still queued" count.
-
-### Running the digest by hand
-
-A manual run (`workflow_dispatch`) **only ticks the auto-processor** by default; the
-send stays gated on the app's chosen schedule, exactly like a scheduled tick. Emailing
-every subscriber immediately is the opt-in `force_send` input.
-
-This used to be one button: any manual run forced a send, so there was no way to kick
-the processor without mailing the whole subscriber list.
-
-### Keeping the schedule alive
-
-GitHub disables scheduled workflows in a **public** repo after 60 days with no
-repository activity — which would stop `weekly-digest.yml`, and with it the
-auto-processing below, with no sign of it inside the app (the Weekly page would
-simply start showing a growing "still queued" count again).
-
-[`.github/workflows/keep-schedules-alive.yml`](./.github/workflows/keep-schedules-alive.yml)
-guards that. It runs weekly and does **nothing** while the repo is active; only once
-there has been no commit for `STALE_AFTER_DAYS` (50, leaving margin under GitHub's
-60) does it push a one-line heartbeat, which counts as repository activity and resets
-the clock. Normal development never produces a heartbeat commit.
-
-GitHub also emails the repo owner before disabling a schedule, and it can be
-re-enabled from the Actions tab in one click — this just means nobody has to notice
-that email.
-
-### Auto-processing
-
-Every tick of that same workflow — not just the send — summarises a bounded batch
-of the week's pending episodes (`processPendingBatch`), writing each to the shared
-summary cache. That is what makes episodes turn **ready** on their own: nobody has
-to open the app, and the "Catch up now" button on Weekly Summary is only a *skip
-the wait* shortcut, never a required step.
-
-The batch works over the seed shows **plus every user-added channel** on the
-stored rosters. `collectTrackedChannels` (`server/channelStore.ts`) scans the KV
-roster keys — the anonymous `channels:v1` and each per-user `u:<uid>:channels:v1` —
-and `getAllEpisodes` (`server/feeds.ts`) pools those feeds in with the seed
-sources. Untracked shows and entries with no feed are skipped, so a channel
-somebody deselected never costs an LLM call. A roster longer than
-`CHANNELS_PER_TICK` is covered across consecutive ticks (the window rotates by a
-tick index) rather than starving its tail.
-
-Before this, the batch saw only the hardcoded `SOURCES` list, so anything added
-from Discover sat *detected* forever and could only be summarised by hand.
-
-The **emailed** edition stays seed-only on purpose: it is one edition shared by
-every subscriber, and `PODCASTS` (its show lookup) knows only the seed shows —
-folding one user's private additions in would put their channels in everyone
-else's inbox. Their episodes are still summarised, so the app shows them ready.
-
-**Setup — Pages env + repo secrets:**
-
-| Where | Name | Purpose |
-|-------|------|---------|
-| Pages project (Settings → Variables) | `MUNSHOT_EMAIL_TOKEN` | **Service** token authorizing server-to-server sends (the "god token"). Used by the cron *and* the `/api/email/send` proxy. Store as an **encrypted secret** — never commit it. |
-| Pages project | `CRON_SECRET` | Bearer token guarding `/api/cron/weekly-digest`. |
-| Pages project | `SITE_URL` | Deployed origin, e.g. `https://podcast-afg.pages.dev` — required to build an absolute link to the hosted PDF (a cron has no request). |
-| Pages project | `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`) + optional `SUMMARY_MODEL` | The summariser. Use a strong model (e.g. `claude-opus-4-8`) — the investable-insight + quant extraction quality scales with model strength. |
-| GitHub repo (Settings → Secrets → Actions) | `SITE_URL`, `CRON_SECRET` | Same values as the Pages vars. |
-
-Trigger it by hand any time from the Actions tab (**workflow_dispatch**) to test.
-Locally, `vite dev` mirrors every route (`/api/email/send`, `/api/report/:id`,
-`/api/cron/weekly-digest`); set `MUNSHOT_EMAIL_TOKEN` + `SITE_URL` in `.env` /
-`.env.local` to exercise real sends. The cron is open locally when no
-`CRON_SECRET` is set.
+The keepalive workflow enables the digest workflow through GitHub's API; it no
+longer writes heartbeat commits directly to main. Code changes use PRs, while
+runtime data is stored only on the dedicated encrypted state/queue branches.
 
 ## What's mocked vs. real
 
