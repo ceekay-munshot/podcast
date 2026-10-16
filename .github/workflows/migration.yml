@@ -1,0 +1,40 @@
+name: Podcast migration verification
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Import refuses existing state; verify is read-only; prepare refreshes read views. None sends email or calls models.'
+        type: choice
+        options: [verify, import, prepare]
+        default: verify
+        required: true
+permissions:
+  contents: write
+concurrency:
+  group: podcast-github-state
+  cancel-in-progress: false
+jobs:
+  migration:
+    if: vars.GITHUB_DEPLOY_ENABLED == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build:runner
+      - name: Run the approved migration operation without mail or model credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PODCAST_STATE_KEY: ${{ secrets.PODCAST_STATE_KEY }}
+          PODCAST_GATEWAY_KEY: ${{ secrets.PODCAST_GATEWAY_KEY }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          case "$OPERATION" in
+            import|verify|prepare) node .cache/runner.mjs "$OPERATION" ;;
+            *) exit 1 ;;
+          esac

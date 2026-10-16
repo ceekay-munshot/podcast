@@ -1,91 +1,48 @@
 name: Weekly digest
 
-# Ticks the auto-processor and sends the Munshot weekly brief on the schedule chosen
-# in the app (day · time · timezone). Cloudflare Pages can't run cron itself, and a YAML cron is a fixed UTC
-# string — so this workflow PINGS the deployed /api/cron/weekly-digest endpoint
-# every 30 minutes, and the endpoint decides whether it's the chosen send time
-# (de-duped to once per week). A manual run forces an immediate send.
-#
-# Required repository secrets (Settings → Secrets and variables → Actions):
-#   SITE_URL     — the deployed site origin, e.g. https://podcast.pages.dev
-#   CRON_SECRET  — the same value bound as the CRON_SECRET env var on the Pages
-#                  project (Settings → Functions/Variables). Guards the endpoint.
-#
-# The Pages project ALSO needs MUNSHOT_EMAIL_TOKEN set (a service token for the
-# raw-email endpoint) — a cron has no user session to authenticate the send with.
-
 on:
   schedule:
-    - cron: '*/30 * * * *' # every 30 min; the endpoint gates on the chosen schedule
-  # A manual run defaults to SAFE: it ticks the auto-processor and leaves the send
-  # gated on the app's schedule, exactly like a scheduled tick. Sending the brief to
-  # every subscriber is opt-in per run — it used to be what ANY manual run did, which
-  # made "kick the processor now" and "email everyone now" the same button.
-  workflow_dispatch:
-    inputs:
-      force_send:
-        description: 'Also send the weekly brief NOW to every subscriber (leave off to only process episodes)'
-        type: boolean
-        default: false
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}
 
-# Don't let two runs overlap (e.g. a manual run during the scheduled one).
+# All browser actions and the scheduled edition use the same durable queue and
+# single writer. Replaced pending runs cannot lose queued requests.
 concurrency:
-  group: weekly-digest
+  group: podcast-github-state
   cancel-in-progress: false
-
+permissions:
+  contents: write
 jobs:
-  send:
+  process:
+    if: vars.GITHUB_BACKGROUND_ENABLED == '1'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - name: Trigger the weekly digest
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Build the Node runner
+        run: npm run build:runner
+      - name: Process queued actions and the scheduled edition
         env:
+          GH_TOKEN: ${{ github.token }}
+          PODCAST_STATE_KEY: ${{ secrets.PODCAST_STATE_KEY }}
+          PODCAST_GATEWAY_KEY: ${{ secrets.PODCAST_GATEWAY_KEY }}
           SITE_URL: ${{ secrets.SITE_URL }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
-        run: |
-          if [ -z "$SITE_URL" ] || [ -z "$CRON_SECRET" ]; then
-            echo "::error::SITE_URL and CRON_SECRET repository secrets must be set."
-            exit 1
-          fi
-          # Only an explicit force_send=true forces the email. Scheduled ticks (where
-          # the input is empty) and default manual runs both let the endpoint decide
-          # from the app's chosen day/time/timezone — the auto-processor runs either way.
-          url="${SITE_URL%/}/api/cron/weekly-digest"
-          if [ "${{ inputs.force_send }}" = "true" ]; then
-            echo "force_send=true — this run WILL email every subscriber."
-            url="${url}?force=1"
-          fi
-          # Generous timeout: a tick may summarise a bounded batch of pending episodes
-          # before (maybe) sending, so allow well beyond a bare send.
-          code=$(curl -sS -o /tmp/digest.json -w '%{http_code}' \
-            -X POST "$url" \
-            -H "authorization: Bearer ${CRON_SECRET}" \
-            --max-time 280)
-          echo "HTTP ${code}"
-          cat /tmp/digest.json || true
-          echo
-          # Surface a non-2xx as a failed run so the schedule is visibly broken if it breaks.
-          if [ "${code}" -lt 200 ] || [ "${code}" -ge 300 ]; then
-            echo "::error::weekly-digest endpoint returned HTTP ${code}"
-            exit 1
-          fi
-
-          # A 200 is not the same as healthy. Auto-processing can be dead while the
-          # endpoint answers perfectly — that is exactly how it stayed broken before —
-          # so read the batch report and make a dead processor LOUD. GitHub emails the
-          # repo owner on a failed run, which is the alarm.
-          skipped=$(jq -r '.batch.skipped // empty' /tmp/digest.json 2>/dev/null || true)
-          err=$(jq -r '.batch.error // empty' /tmp/digest.json 2>/dev/null || true)
-          failed=$(jq -r '.batch.failed // 0' /tmp/digest.json 2>/dev/null || echo 0)
-
-          if [ "$skipped" = "no_llm_key" ]; then
-            echo "::error::Auto-processing is DEAD: no LLM key is configured on the Pages project. No episode will ever be summarised until this is set."
-            exit 1
-          fi
-          if [ -n "$err" ]; then
-            echo "::error::Auto-processing threw: ${err}"
-            exit 1
-          fi
-          # Some failures are normal (one bad feed); ALL of them failing is not.
-          if [ "$failed" != "0" ] && [ "$(jq -r '.batch.processed // 0' /tmp/digest.json)" = "0" ]; then
-            echo "::warning::Every episode in this batch failed to summarise (${failed}). If this repeats, the LLM provider is likely failing."
-          fi
+          MUNSHOT_EMAIL_TOKEN: ${{ secrets.MUNSHOT_EMAIL_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUMMARY_MODEL: ${{ secrets.SUMMARY_MODEL }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+          DEEPGRAM_MODEL: ${{ vars.DEEPGRAM_MODEL }}
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
+          temp_claude_token: ${{ secrets.temp_claude_token }}
+          BEDROCK_MODEL_ID: ${{ vars.BEDROCK_MODEL_ID }}
+          BEDROCK_REGION: ${{ vars.BEDROCK_REGION }}
+          MEMBER_FEEDS: ${{ secrets.MEMBER_FEEDS }}
+          EMAIL_ATTACHMENTS: ${{ vars.EMAIL_ATTACHMENTS }}
+        run: node .cache/runner.mjs tick

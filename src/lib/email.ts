@@ -176,9 +176,8 @@ export function sendRawEmailParts(messages: RawEmail[], opts: { token?: string; 
 // A request carries ONE message (`subject` + text|html) or, for a weekly brief split
 // to stay under Gmail's clip, an ordered `parts` list. The parts travel as one
 // request so the proxy's per-recipient cooldown still means "one brief", not "one part".
-/** Most emails one brief may become — enforced by BOTH the proxy and the splitter
- *  (`weeklyBriefEmailParts` never returns more), so every rendered brief is sendable. */
-export const MAX_EMAIL_PARTS = 8
+// Parts are bounded by each message's byte budget and the gateway request-size
+// guard, never by truncating the end of a long edition.
 
 export type EmailContent = { subject: string } & ({ text: string; html?: never } | { html: string; text?: never })
 
@@ -197,7 +196,7 @@ export function readEmailContent(body: { subject?: unknown; text?: unknown; html
     const m = one(body)
     return m ? [m] : null
   }
-  if (!Array.isArray(body.parts) || !body.parts.length || body.parts.length > MAX_EMAIL_PARTS) return null
+  if (!Array.isArray(body.parts) || !body.parts.length) return null
   const parts = body.parts.map(one)
   return parts.every((p): p is EmailContent => p !== null) ? parts : null
 }
@@ -534,40 +533,61 @@ function renderBlocks(blocks: Block[]): string {
   return out
 }
 
-/** Greedily pack the sections, in order, into parts of at most `room` bytes of body.
- *  A block too big for even a fresh part is replaced by `tooLong` (a pointer to the full
- *  edition), since no split of the email could carry it without Gmail clipping it. */
-function packSections(sections: Section[], room: number, tooLong: Block): Section[][] {
+/** Split generated email HTML at text boundaries, retaining balanced/reopened
+ * tags. Oversized paragraphs and cards continue instead of being replaced by a
+ * link. Entity tokens and Unicode code points are never cut in half. */
+function splitBlock(html: string, room: number): string[] {
+  if (utf8Bytes(html) <= room) return [html]
+  if (room < 1000) throw new Error('Email byte budget is too small to retain complete content')
+  const parts: string[] = [], stack: { name: string; tag: string }[] = []
+  let current = '', used = 0
+  const closing = () => stack.slice().reverse().map(t => `</${t.name}>`).join('')
+  const flush = () => {
+    parts.push(current + closing())
+    current = stack.map(t => t.tag).join(''); used = utf8Bytes(current)
+  }
+  const append = (text: string) => { current += text; used += utf8Bytes(text) }
+  for (const token of html.match(/<[^>]*>|&(?:#\d+|#x[0-9a-f]+|[a-z]+);|[^<&]+|[<&]/gi) || []) {
+    if (token.startsWith('<')) {
+      const end = /^<\/([a-z0-9]+)/i.exec(token), start = /^<([a-z0-9]+)/i.exec(token)
+      if (used + utf8Bytes(token) + utf8Bytes(closing()) > room) flush()
+      append(token)
+      if (end) { if (stack.at(-1)?.name === end[1].toLowerCase()) stack.pop() }
+      else if (start && !/\/\s*>$/.test(token) && !/^(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i.test(start[1])) stack.push({ name: start[1].toLowerCase(), tag: token })
+    } else {
+      const words = token.startsWith('&') ? [token] : token.match(/\s+|\S+/g) || []
+      const units = words.flatMap(word => utf8Bytes(word) > room / 2 ? Array.from(word) : [word])
+      for (const unit of units) {
+        if (used + utf8Bytes(unit) + utf8Bytes(closing()) > room) flush()
+        append(unit)
+      }
+    }
+  }
+  if (current) parts.push(current)
+  return parts
+}
+
+/** Pack every section and block, in order, with no fixed part-count cutoff. */
+function packSections(sections: Section[], room: number): Section[][] {
   const parts: Section[][] = [[]]
   let used = 0
   for (const s of sections) {
     let slice: Section | undefined
     let started = false
     for (const block of s.blocks) {
-      let b = block
-      for (;;) {
+      const overhead = utf8Bytes(sectionHead(s.label, true)) + (block.wrap ? utf8Bytes(block.wrap('')) : 0)
+      for (const html of splitBlock(block.html, room - overhead)) {
+        const b = { ...block, html }
         const last = slice?.blocks[slice.blocks.length - 1]
         const head = utf8Bytes(sectionHead(s.label, started))
         const wrapped = b.wrap ? utf8Bytes(b.wrap('')) : 0
-        if (b !== tooLong && head + wrapped + utf8Bytes(b.html) > room) {
-          b = tooLong
-          continue
+        let cost = (slice ? 0 : head) + (b.wrap && last?.wrap !== b.wrap ? wrapped : 0) + utf8Bytes(b.html)
+        if (used && used + cost > room) {
+          parts.push([]); used = 0; slice = undefined
+          cost = head + wrapped + utf8Bytes(b.html)
         }
-        const cost = (slice ? 0 : head) + (b.wrap && last?.wrap !== b.wrap ? wrapped : 0) + utf8Bytes(b.html)
-        // An empty part always takes the block, so a tiny budget can't loop forever.
-        if (used + cost <= room || used === 0) {
-          if (!slice) {
-            slice = { label: s.label, blocks: [], continued: started }
-            parts[parts.length - 1].push(slice)
-          }
-          slice.blocks.push(b)
-          used += cost
-          started = true
-          break
-        }
-        parts.push([])
-        used = 0
-        slice = undefined
+        if (!slice) { slice = { label: s.label, blocks: [], continued: started }; parts[parts.length - 1].push(slice) }
+        slice.blocks.push(b); used += cost; started = true
       }
     }
   }
@@ -719,7 +739,7 @@ interface PartInfo {
   total: number
   /** Subject of the next part — absent on the last one. */
   next?: string
-  /** The edition ran past MAX_EMAIL_PARTS and stops here (last part only). */
+  /** The edition ran past the email budget and stops here (last part only). */
   cut?: boolean
 }
 
@@ -778,8 +798,7 @@ export function weeklyBriefEmailHtml(
 
 /** The weekly edition as the emails to send, in order. One email (the plain title as
  *  subject) when it fits under `maxBytes`; otherwise parts sharing that subject,
- *  numbered in the body and each linking the full PDF — never more than MAX_EMAIL_PARTS (a
- *  longer week ends there with a pointer to the full edition). */
+ *  numbered in the body and each linking the complete PDF. Every part is retained. */
 export function weeklyBriefEmailParts(
   weekly: WeeklySummary,
   episodeById: ById<Episode>,
@@ -799,18 +818,13 @@ export function weeklyBriefEmailParts(
     utf8Bytes(weeklyEmailDoc(weekly, worst, [], opts.pdfUrl, { index: 98, total: 99, next: worst })),
     utf8Bytes(weeklyEmailDoc(weekly, worst, [], opts.pdfUrl, { index: 99, total: 99, cut: true })),
   )
-  const tooLong: Block = {
-    html: `<p style="font-family:${SANS};font-size:13px;line-height:1.55;color:${C.body};margin:0 0 12px;">This part is too long to show in an email — read it in full in ${elsewhere(opts.pdfUrl)}.</p>`,
-  }
-  const packed = packSections(sections, max - chrome, tooLong)
-  const cut = packed.length > MAX_EMAIL_PARTS
-  const kept = cut ? packed.slice(0, MAX_EMAIL_PARTS) : packed
+  const kept = packSections(sections, max - chrome - 512)
   const total = kept.length
   return kept.map((secs, i) => {
     const partTitle = weeklyPartSubject(weekly.rangeLabel, i + 1, total)
     const last = i + 1 === total
     const next = last ? undefined : weeklyPartSubject(weekly.rangeLabel, i + 2, total)
-    return { subject: title, html: weeklyEmailDoc(weekly, partTitle, secs, opts.pdfUrl, { index: i + 1, total, next, cut: last && cut }) }
+    return { subject: title, html: weeklyEmailDoc(weekly, partTitle, secs, opts.pdfUrl, { index: i + 1, total, next }) }
   })
 }
 

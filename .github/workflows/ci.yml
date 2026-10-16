@@ -28,7 +28,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       # `ci` not `install`: fails loudly on a lockfile that has drifted from
@@ -49,3 +49,15 @@ jobs:
       # build break surfaces here instead of after merge.
       - name: Build
         run: npm run build
+      - name: Build the GitHub runner
+        run: npm run build:runner
+      - name: Build the stateless gateway
+        run: npx --yes wrangler@4.119.0 pages functions build functions --outdir .cache/gateway-build --metafile .cache/gateway-meta.json
+      - name: Verify the gateway contains no processing or storage implementation
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const meta = JSON.parse(fs.readFileSync('.cache/gateway-meta.json', 'utf8'));
+          const banned = Object.keys(meta.inputs).filter(path => /server\/(api\/|summarize|feeds|weeklyDigest|github\/(runner|state|scheduled|delivery))|jspdf/.test(path));
+          if (banned.length) throw Error('Background modules leaked into gateway: ' + banned.join(', '));
+          JS

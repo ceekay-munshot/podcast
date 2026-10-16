@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { onRequestPost } from '../functions/api/email/send'
+import { onRequestPost } from './api/email/send'
 
 const request = (body: object) => new Request('https://podcast.pages.dev/api/email/send', {
   method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://chat.muns.io' }, body: JSON.stringify(body),

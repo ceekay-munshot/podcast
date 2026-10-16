@@ -1,0 +1,36 @@
+name: Deploy static site and gateway
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+concurrency:
+  group: podcast-pages-deploy
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  deploy:
+    if: vars.GITHUB_DEPLOY_ENABLED == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Configure the stateless gateway
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PODCAST_GITHUB_TOKEN: ${{ secrets.PODCAST_GITHUB_TOKEN }}
+          PODCAST_GATEWAY_KEY: ${{ secrets.PODCAST_GATEWAY_KEY }}
+          GITHUB_BACKGROUND_ENABLED: ${{ vars.GITHUB_BACKGROUND_ENABLED }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: node server/github/configure-pages.mjs
+      - name: Upload static assets and stateless gateway
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: '489675fbe898cd94904c654de83ade00'
+        run: npx --yes wrangler@4.119.0 pages deploy dist --project-name podcast --branch main --commit-hash "$GITHUB_SHA"

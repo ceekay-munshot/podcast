@@ -106,6 +106,25 @@ describe('pickBackfillTargets', () => {
 })
 
 describe('runWeeklyDigest', () => {
+  it('freezes the full edition and schedule before the first durable send, and never sends if saving fails', async () => {
+    const events: string[] = []
+    let saved: PendingDelivery | null = null
+    const sendEmail = vi.fn(async () => {
+      expect(events.slice(0, 2)).toEqual(['schedule', 'edition'])
+      expect(saved?.owed).toHaveLength(1)
+      expect(saved?.parts[0].html).toContain('A concrete synthesis')
+      return { ok: true, message: 'sent', messageId: '<root@muns.io>' }
+    })
+    const deps = { getEpisodes: async () => [ep('fresh', 'allin', daysAgo(1))], subscriberStore: memSubscriberStore(subs('a@muns.io')), sendEmail, durableDelivery: true, now: NOW,
+      onDeliveryPrepared: async () => { events.push('schedule') },
+      pendingStore: { get: async () => saved, put: async (value: PendingDelivery | null) => { events.push('edition'); saved = value } },
+    }
+    expect((await runWeeklyDigest(deps)).body).toMatchObject({ ok: true, sent: 1 })
+    expect(saved).toBeNull()
+    sendEmail.mockClear()
+    await expect(runWeeklyDigest({ ...deps, pendingStore: { get: async () => null, put: async () => { throw Error('GitHub unavailable') } } })).rejects.toThrow('GitHub unavailable')
+    expect(sendEmail).not.toHaveBeenCalled()
+  })
   it('backfills uncovered channels before sending so the brief is never empty', async () => {
     const sendEmail = vi.fn(async (_msg: { email: string; subject: string; html: string }) => ({ ok: true, message: 'sent', messageId: '<root@muns.io>' }))
     const processEpisode = vi.fn(async (e: Episode) => sum({ synthesis: [`processed ${e.id}`] }))
