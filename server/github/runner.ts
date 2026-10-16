@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { gunzipSync } from 'node:zlib'
 import { USER_HEADER } from '../identity'
 import { contentDispositionInline } from '../../src/lib/reportName'
 import { kvSummaryStore } from '../summaryStore'
@@ -48,7 +49,17 @@ async function prepareStoredViews() {
 }
 if (mode === 'import') {
   if (loaded) throw new Error('Existing state found; import refuses to overwrite it')
-  const archive = JSON.parse(readFileSync(required('PODCAST_IMPORT_FILE'), 'utf8')) as { records: ArchivedRecord[]; exportedAt: string }
+  let archiveText: string
+  if (process.env.PODCAST_IMPORT_FILE) archiveText = readFileSync(process.env.PODCAST_IMPORT_FILE, 'utf8')
+  else {
+    // Migration verification runs on GitHub too. The staging branch contains
+    // only a compressed, encrypted snapshot, never plaintext source data.
+    const snapshot = await github.file('snapshot.enc', 'codex/podcast-migration-snapshot')
+    if (!snapshot) throw new Error('The encrypted migration snapshot is missing')
+    const payload = await open<{ gzip: string }>(snapshot, stateKey)
+    archiveText = gunzipSync(unbase64(payload.gzip)).toString('utf8')
+  }
+  const archive = JSON.parse(archiveText) as { records: ArchivedRecord[]; exportedAt: string }
   for (const row of archive.records) {
     if (!row.sha256) throw new Error('Import requires byte hashes for every record')
     const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', unbase64(row.value))), b => b.toString(16).padStart(2, '0')).join('')
@@ -59,7 +70,7 @@ if (mode === 'import') {
   console.log(JSON.stringify({ imported: archive.records.length, prepared: true }))
 } else {
   if (!loaded) throw new Error('Migration snapshot is not imported; refusing an empty state')
-  if (mode === 'prepare') { await prepareStoredViews(); console.log(JSON.stringify({ prepared: true })); }
+  if (mode === 'prepare') { await prepareStoredViews(); await view('/api/episodes', null); await state.checkpoint(); console.log(JSON.stringify({ prepared: true })); }
   else if (mode === 'verify') {
     // Purely read-only, no model calls, no sends and no state commits.
     let reports = 0, verified = 0

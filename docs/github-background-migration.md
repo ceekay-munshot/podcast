@@ -49,10 +49,13 @@ unnecessary Cloudflare builds.
    encrypted local backup and the project/deployment configuration. Preserve the
    subscriber list, selected schedule, last-sent marker and any partially delivered
    edition's exact parts, attachments, next index and root Message-ID.
-4. Run `node .cache/runner.mjs import` with `PODCAST_IMPORT_FILE` pointing to the
-   private, locally decrypted archive. Import refuses to overwrite existing state.
-   It does not call the mail/model services. Run `verify` read-only and compare all
-   imported hashes and counts. `prepare` prepares the local-store read endpoints.
+4. Stage a compressed AES-encrypted `snapshot.enc` on
+   `codex/podcast-migration-snapshot`, then use the **Podcast migration verification**
+   workflow's `import` operation. Import refuses to overwrite existing state.
+   That workflow has no mail/model credentials. Run its `verify` operation read-only
+   and compare all imported hashes/counts; `prepare` refreshes read views/feeds.
+   Local recovery may instead run `node .cache/runner.mjs import` with
+   `PODCAST_IMPORT_FILE` pointing to the private, locally decrypted archive.
 5. Enable the GitHub background variable and workflow; deploy that gateway
    configuration. Let the ordinary schedule continue. Verify the live response
    runtime, existing PDF bytes, selected schedule and subscriber count. Do not
