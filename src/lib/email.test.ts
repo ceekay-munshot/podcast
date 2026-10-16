@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   EMAIL_PART_MAX_BYTES,
-  MAX_EMAIL_PARTS,
   episodeBriefEmailHtml,
   readEmailContent,
   sendRawEmail,
@@ -216,7 +215,7 @@ describe('readEmailContent — proxy request body', () => {
     expect(readEmailContent({ parts: [] })).toBeNull()
     expect(readEmailContent({ parts: 'nope' })).toBeNull()
     expect(readEmailContent({ parts: [{ subject: 'ok', html: '<p>1</p>' }, { subject: 'bad\n', html: '<p>2</p>' }] })).toBeNull()
-    expect(readEmailContent({ parts: Array.from({ length: MAX_EMAIL_PARTS + 1 }, () => ({ subject: 'S', html: '<p>h</p>' })) })).toBeNull()
+    expect(readEmailContent({ parts: Array.from({ length: 12 }, () => ({ subject: 'S', html: '<p>h</p>' })) })).toHaveLength(12)
   })
 })
 
@@ -386,25 +385,27 @@ describe("weeklyBriefEmailParts — splitting a long edition under Gmail's clip"
     expect(parts[parts.length - 1].html).toContain('Open all of these on your Munshot dashboard')
   })
 
-  it('stands a pointer to the full edition in for a block too big for any one email', () => {
+  it('continues oversized blocks without losing text', () => {
     const huge = { ...WEEKLY, episodeReadouts: [{ ...WEEKLY.episodeReadouts![0], evidence: 'A runaway paragraph. '.repeat(6_000) }, ...WEEKLY.episodeReadouts!.slice(1)] }
     const parts = weeklyBriefEmailParts(huge, episodeById, podcastById, { pdfUrl })
     for (const p of parts) expect(bytes(p.html)).toBeLessThanOrEqual(EMAIL_PART_MAX_BYTES)
     const all = parts.map((p) => p.html).join('')
-    expect(all).not.toContain('A runaway paragraph.')
-    expect(all).toContain('too long to show in an email')
+    expect(all.split('runaway').length - 1).toBe(6000)
+    expect(all.split('paragraph.').length - 1).toBe(6000)
+    expect(all).not.toContain('too long to show in an email')
     expect(all).toContain(`>${WEEKLY.episodeReadouts![1].episode}<`) // the rest of the section still goes out
   })
 
-  it('never returns more parts than the proxy accepts, ending on a pointer to the full edition', () => {
+  it('retains the complete edition when it needs more than eight parts', () => {
     const parts = weeklyBriefEmailParts(BIG, episodeById, podcastById, { pdfUrl, maxBytes: 12_000 })
-    expect(parts).toHaveLength(MAX_EMAIL_PARTS)
+    expect(parts.length).toBeGreaterThan(8)
     expect(readEmailContent({ parts })).not.toBeNull() // sendable through /api/email/send
     const last = parts[parts.length - 1]
     expect(last.subject).toBe(title)
     expect(last.html).not.toContain('Continued in Part')
-    expect(last.html).toContain("That's all that fits in email")
+    expect(last.html).not.toContain("That's all that fits in email")
     expect(last.html).toContain(pdfUrl)
+    expect(parts.map(part => part.html).join('')).toContain(`>${readouts.at(-1)!.episode}<`)
     for (const p of parts) expect(bytes(p.html)).toBeLessThanOrEqual(12_000)
   })
 

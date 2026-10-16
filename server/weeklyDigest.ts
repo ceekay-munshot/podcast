@@ -255,6 +255,8 @@ export interface PendingDelivery {
   owed: OwedParts[]
   /** Ticks already spent resuming; given up after MAX_RESUME_TICKS. */
   tries: number
+  /** GitHub delivery journal: never expire/drop a reader's remaining parts. */
+  durable?: boolean
 }
 export interface PendingDeliveryStore {
   get(): Promise<PendingDelivery | null>
@@ -317,14 +319,14 @@ export async function resumeOwedParts(
     if (!res.ok) still.push({ email: o.email, next: o.next + res.sent, threadMessageId: res.threadMessageId ?? o.threadMessageId })
   })
   const tries = p.tries + 1
-  await deps.pendingStore.put(still.length && tries < MAX_RESUME_TICKS ? { ...p, owed: still, tries } : null).catch(() => {})
+  await deps.pendingStore.put(still.length && (p.durable || tries < MAX_RESUME_TICKS) ? { ...p, owed: still, tries } : null)
   return { delivered: p.owed.length - still.length, owed: still.length }
 }
 
 /** Build this week's shared edition and mail it to every subscriber. Returns a
  *  report (also useful as the HTTP response body). Never throws on a single
  *  failed send — those are counted, not fatal. */
-export async function runWeeklyDigest(deps: DigestDeps): Promise<{ status: number; body: DigestReport }> {
+export async function runWeeklyDigest(deps: DigestDeps & { durableDelivery?: boolean; onDeliveryPrepared?: () => Promise<void> }): Promise<{ status: number; body: DigestReport }> {
   const now = deps.now ?? Date.now()
   const podcastById = (id: string): Podcast | undefined => PODCASTS.find((p) => p.id === id)
 
@@ -400,6 +402,17 @@ export async function runWeeklyDigest(deps: DigestDeps): Promise<{ status: numbe
   // Attach the same bytes when enabled; encoded once and shared across all recipients.
   const attachments: EmailAttachment[] | undefined =
     deps.attachPdf && pdfBytes ? [{ filename: fileName, content: bytesToBase64(pdfBytes), contentType: 'application/pdf' }] : undefined
+
+  if (deps.durableDelivery) {
+    if (!deps.pendingStore) throw new Error('Durable delivery requires a pending store')
+    const previous = await deps.pendingStore.get()
+    if (previous?.owed.length) throw new Error('Finish the saved edition before preparing another')
+    // Freeze every part, attachment and recipient BEFORE any external send.
+    await deps.onDeliveryPrepared?.()
+    await deps.pendingStore.put({ parts, attachments, owed: subscribers.map(sub => ({ email: sub.email, next: 0 })), tries: 0, durable: true })
+    const result = await resumeOwedParts({ ...deps, pendingStore: deps.pendingStore })
+    return { status: 200, body: { ok: !result?.owed, sent: result?.delivered ?? 0, failed: result?.owed ?? 0, recipients: subscribers.length, backfilled, rangeLabel: weekly.rangeLabel, episodeCount: ready.length, parts: parts.length, owed: result?.owed ?? 0 } }
+  }
 
   let sent = 0
   let failed = 0

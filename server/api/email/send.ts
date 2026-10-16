@@ -1,4 +1,4 @@
-import { sendRawEmailParts, cleanAttachments, readEmailContent, validMessageId, type RawEmail } from '../../../src/lib/email'
+import { sendInOrder, sendRawEmail, cleanAttachments, readEmailContent, validMessageId, type EmailResult, type RawEmail } from '../../../src/lib/email'
 import type { KVNamespace } from '../../../server/summaryStore'
 
 // Cloudflare Pages Function → POST /api/email/send (production).
@@ -22,6 +22,7 @@ const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } })
 
 interface Env {
+  SEND_EMAIL?: (message: RawEmail) => Promise<EmailResult>
   MUNSHOT_EMAIL_TOKEN?: string
   SUMMARIES?: KVNamespace
   SITE_URL?: string
@@ -101,9 +102,10 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
   }
 
   const base = { email: to, ...(attachments.length ? { attachments } : {}) }
-  const res = await sendRawEmailParts(
+  const res = await sendInOrder(
     content.map((m): RawEmail => ({ ...base, ...m })),
-    { token: env.MUNSHOT_EMAIL_TOKEN, threadMessageId: validMessageId(body.threadMessageId), threaded: body.parts !== undefined },
+    env.SEND_EMAIL ?? ((message) => sendRawEmail(message, { token: env.MUNSHOT_EMAIL_TOKEN })),
+    { threadMessageId: validMessageId(body.threadMessageId), threaded: body.parts !== undefined },
   )
   return json(res.ok ? 200 : 502, res)
 }
