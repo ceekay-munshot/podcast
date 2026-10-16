@@ -65,7 +65,12 @@ export async function gateway(request: Request, env: GatewayEnv): Promise<Respon
       await github.request('actions/workflows/weekly-digest.yml/dispatches', 'POST', { ref: 'main' }).catch(() => undefined)
     }
     return cached ? prepared(cached) : json(202, { pending: true, job: id })
-  } catch (error) { return json(error instanceof Error && error.message === 'too_large' ? 413 : 503, { error: 'github_gateway_unavailable' }) }
+  } catch (error) {
+    const status = error instanceof Error && error.message === 'too_large' ? 413 : 503
+    const code = error instanceof GitHubError ? `github_${error.status}` : error instanceof Error ? error.name : 'unknown'
+    // Diagnostic class only: never return request bodies, user keys or secrets.
+    return Response.json({ error: 'github_gateway_unavailable', code }, { status, headers: { 'cache-control': 'no-store' } })
+  }
 }
 function prepared(value: PreparedResponse, downloadName?: string | null): Response {
   const headers = new Headers(value.headers)

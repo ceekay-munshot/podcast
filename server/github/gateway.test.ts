@@ -5,6 +5,14 @@ const secret = base64(new Uint8Array(32).fill(41))
 const env = { PODCAST_GITHUB_TOKEN: 'fixture', PODCAST_GATEWAY_KEY: secret, PODCAST_BACKGROUND_ENABLED: '1' }
 describe('stateless transport gateway', () => {
   afterEach(() => vi.restoreAllMocks())
+  it('does not invoke the Worker native fetch with a GitHub client receiver', async () => {
+    const native = vi.spyOn(globalThis, 'fetch').mockImplementation(function (this: unknown) {
+      if (this instanceof GitHub) throw new TypeError('Illegal invocation')
+      return Promise.resolve(Response.json({ object: { sha: 'state-head' } }))
+    })
+    expect(await new GitHub('fixture').head()).toBe('state-head')
+    expect(native).toHaveBeenCalledTimes(1)
+  })
   it('saves an encrypted queue before dispatch and retains work if wakeup fails', async () => {
     vi.spyOn(GitHub.prototype, 'head').mockImplementation(async branch => branch ? null : 'state-head')
     const commit = vi.spyOn(GitHub.prototype, 'commit').mockResolvedValue('queue-commit')
