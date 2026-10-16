@@ -10,7 +10,7 @@ permissions:
   contents: read
 jobs:
   deploy:
-    if: vars.GITHUB_DEPLOY_ENABLED == '1'
+    if: vars.PODCAST_DEPLOY_ENABLED == '1'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -26,7 +26,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           PODCAST_GITHUB_TOKEN: ${{ secrets.PODCAST_GITHUB_TOKEN }}
           PODCAST_GATEWAY_KEY: ${{ secrets.PODCAST_GATEWAY_KEY }}
-          GITHUB_BACKGROUND_ENABLED: ${{ vars.GITHUB_BACKGROUND_ENABLED }}
+          PODCAST_BACKGROUND_ENABLED: ${{ vars.PODCAST_BACKGROUND_ENABLED }}
           SITE_URL: ${{ secrets.SITE_URL }}
         run: node server/github/configure-pages.mjs
       - name: Upload static assets and stateless gateway

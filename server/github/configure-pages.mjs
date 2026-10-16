@@ -9,7 +9,7 @@ const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${ac
     env_vars: {
       PODCAST_GITHUB_TOKEN: { type: 'secret_text', value: required('PODCAST_GITHUB_TOKEN') },
       PODCAST_GATEWAY_KEY: { type: 'secret_text', value: required('PODCAST_GATEWAY_KEY') },
-      GITHUB_BACKGROUND_ENABLED: { type: 'plain_text', value: process.env.GITHUB_BACKGROUND_ENABLED === '1' ? '1' : '0' },
+      PODCAST_BACKGROUND_ENABLED: { type: 'plain_text', value: process.env.PODCAST_BACKGROUND_ENABLED === '1' ? '1' : '0' },
       SITE_URL: { type: 'plain_text', value: process.env.SITE_URL || 'https://podcast-afg.pages.dev' },
     },
     kv_namespaces: { SUMMARIES: null },

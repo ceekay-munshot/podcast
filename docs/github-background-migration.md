@@ -29,7 +29,7 @@ GitHub Actions secrets:
   `BEDROCK_REGION`, `DEEPGRAM_MODEL`, `EMAIL_ATTACHMENTS` retain their old values.
 - `CLOUDFLARE_API_TOKEN`: token restricted to this account's Pages deployment.
 
-Repository variables `GITHUB_DEPLOY_ENABLED` and `GITHUB_BACKGROUND_ENABLED`
+Repository variables `PODCAST_DEPLOY_ENABLED` and `PODCAST_BACKGROUND_ENABLED`
 default to disabled. Enable only as part of the verified cutover. The deployment
 workflow builds in GitHub, configures the production gateway, and uploads static
 assets/functions to the existing Pages project. Disconnect *all* Cloudflare Git
