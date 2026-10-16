@@ -8,6 +8,10 @@ import { GitHubState, type ArchivedRecord } from './state'
 import { durableSender } from './delivery'
 import { route, type RunnerEnv } from './router'
 import { scheduledTick } from './scheduled'
+import { testNewsletter } from './testNewsletter'
+import { kvReportStore, reportUrl } from '../reportStore'
+import { weeklyPdfBytes } from '../../src/lib/pdfRender'
+import type { Episode } from '../../src/lib/types'
 
 function required(name: string): string { const value = process.env[name]; if (!value) throw new Error(`Missing ${name}`); return value }
 const github = new GitHub(required('GH_TOKEN'))
@@ -83,6 +87,33 @@ if (mode === 'import') {
       if (name.startsWith('rpt:')) reports++; verified++
     }
     console.log(JSON.stringify({ runtime: 'github-actions', verified, reports, summaryStore: !!kvSummaryStore(state) }))
+  } else if (mode === 'test-newsletter') {
+    const id = required('PODCAST_TEST_ID')
+    const result = await testNewsletter(state, {
+      id, selector: required('PODCAST_TEST_RECIPIENT'), stateKey,
+      getEpisodes: async () => {
+        const stored = await state.preparedRecord(`views/${await opaqueName(viewIdentity('GET', '/api/episodes', null), gatewayKey)}.enc`)
+        if (!stored || stored.status !== 200) throw new Error('Saved episode view is unavailable')
+        const episodes = JSON.parse(new TextDecoder().decode(unbase64(stored.body))) as Episode[]
+        if (!Array.isArray(episodes)) throw new Error('Saved episode view is invalid')
+        return episodes
+      },
+      generatePdf: weeklyPdfBytes,
+      publishPdf: async (bytes, filename) => {
+        const report = await kvReportStore(state).put(bytes)
+        await view(`/api/report/${report}`, null)
+        await view(`/api/report/${report}.pdf`, null)
+        await state.checkpoint()
+        const url = reportUrl(env.SITE_URL, report, filename)
+        const response = await fetch(url, { signal: AbortSignal.timeout(30_000) })
+        const actual = new Uint8Array(await response.arrayBuffer()), expected = new Uint8Array(bytes)
+        if (!response.ok || !response.headers.get('content-type')?.includes('application/pdf') || actual.length !== expected.length || actual.some((b, i) => b !== expected[i])) throw new Error('Published full PDF could not be verified; no test mail sent')
+        return url
+      },
+      sendEmail: durableSender(state, stateKey, required('MUNSHOT_EMAIL_TOKEN'), `podcast-test:${id}`),
+    })
+    console.log(JSON.stringify(result))
+    if (!result.ok) throw new Error('Test delivery requires attention; saved parts must be reconciled before another test')
   } else if (mode === 'tick') {
     // Queues are durable refs. GitHub concurrency may replace a pending workflow,
     // but cannot replace or lose any queued browser request.
