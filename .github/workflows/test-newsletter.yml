@@ -1,0 +1,42 @@
+name: Test newsletter to one subscriber
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_id:
+        description: 'Unique UUID; reuse the same ID to resume without duplicate sends'
+        required: true
+        type: string
+      recipient_selector:
+        description: 'State-key HMAC of newsletter-test:<subscriber email>; never a plaintext address'
+        required: true
+        type: string
+
+concurrency:
+  group: podcast-github-state
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  send-test:
+    if: vars.PODCAST_BACKGROUND_ENABLED == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build:runner
+      - name: Send frozen test edition and verify full hosted PDF
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PODCAST_STATE_KEY: ${{ secrets.PODCAST_STATE_KEY }}
+          PODCAST_GATEWAY_KEY: ${{ secrets.PODCAST_GATEWAY_KEY }}
+          MUNSHOT_EMAIL_TOKEN: ${{ secrets.MUNSHOT_EMAIL_TOKEN }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+          PODCAST_TEST_ID: ${{ inputs.test_id }}
+          PODCAST_TEST_RECIPIENT: ${{ inputs.recipient_selector }}
+        run: node .cache/runner.mjs test-newsletter
