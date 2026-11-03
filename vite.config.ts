@@ -15,7 +15,10 @@ import { handleSubscribers } from './server/subscriberStore'
 import { fileSubscriberStore } from './server/subscriberStore.node'
 import { handleSchedule } from './server/scheduleStore'
 import { fileScheduleStore } from './server/scheduleStore.node'
-import { checkCronAuth, processPendingBatch, runWeeklyDigest } from './server/weeklyDigest'
+import { checkCronAuth, processPendingBatch, readyThisWeek, runWeeklyDigest } from './server/weeklyDigest'
+import { assembleWeekly, hashKey, mergeWeeklyAi } from './src/lib/weeklyAssemble'
+import { PODCASTS } from './src/lib/mock-data'
+import { sharedSummaryKey } from './server/summaryStore'
 import { readEmailContent, sendRawEmail, sendRawEmailParts, validMessageId, type RawEmail } from './src/lib/email'
 import { reportId, reportUrl } from './server/reportStore'
 import { contentDispositionInline, REPORT_DL_PARAM } from './src/lib/reportName'
@@ -274,6 +277,26 @@ function liveApiPlugin(config: {
           )
         } catch {
           json(res, 200, [])
+        }
+      })
+
+      // Read-only latest weekly report (dev mirror of server/api/weekly.ts).
+      // Deterministic assembly from the shared summaries — no LLM call.
+      server.middlewares.use('/api/weekly', async (_req, res) => {
+        try {
+          const now = Date.now()
+          const all = await getLiveEpisodes(store, config.memberFeeds)
+          const ready = readyThisWeek(all, now)
+          const podcastById = (id: string) => PODCASTS.find((p) => p.id === id)
+          if (!ready.length) return json(res, 200, { generatedAt: new Date(now).toISOString(), weekly: null, note: 'no_ready_episodes_this_week' })
+          let weekly = assembleWeekly(ready, podcastById)
+          try {
+            const cached = await store?.get(sharedSummaryKey(`weekly:${hashKey(ready)}`))
+            if (cached?.weekly) weekly = mergeWeeklyAi(weekly, cached.weekly)
+          } catch { /* deterministic base is already a complete report */ }
+          json(res, 200, { generatedAt: new Date(now).toISOString(), weekly })
+        } catch {
+          json(res, 200, { generatedAt: new Date().toISOString(), weekly: null, note: 'weekly_unavailable' })
         }
       })
 
