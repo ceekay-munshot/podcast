@@ -38,7 +38,7 @@ export async function gateway(request: Request, env: GatewayEnv): Promise<Respon
       if (response.user !== user) return json(403, { error: 'forbidden' })
       return prepared(response)
     }
-    if (!/^\/api\/(channels|processed|episodes|summary|search-podcasts|resolve-video|email\/send|report(?:\/[a-f0-9]{40}(?:\.pdf)?)?|schedule\/weekly|subscriptions\/weekly)$/.test(url.pathname)) return json(404, { error: 'not_found' })
+    if (!/^\/api\/(channels|processed|episodes|summary|search-podcasts|resolve-video|email\/send|report(?:\/[a-f0-9]{40}(?:\.pdf)?)?|schedule\/weekly|subscriptions\/weekly|weekly)$/.test(url.pathname)) return json(404, { error: 'not_found' })
     if (!['GET', 'POST', 'PUT', 'DELETE'].includes(request.method)) return json(405, { error: 'method_not_allowed' })
     // Reports use content-hash IDs and preserve all existing inbox links.
     const path = url.pathname + (url.pathname.startsWith('/api/report/') ? '' : url.search)

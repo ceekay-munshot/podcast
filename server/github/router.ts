@@ -9,6 +9,7 @@ import * as subscribers from '../api/subscriptions/weekly'
 import * as email from '../api/email/send'
 import * as report from '../api/report/index'
 import * as reportRead from '../api/report/[id]'
+import * as weekly from '../api/weekly'
 import type { KVNamespace } from '../summaryStore'
 import type { EmailResult, RawEmail } from '../../src/lib/email'
 
@@ -27,6 +28,7 @@ export async function route(request: Request, env: RunnerEnv): Promise<Response>
   if (path === '/api/schedule/weekly') return schedule.onRequest(context)
   if (path === '/api/subscriptions/weekly') return subscribers.onRequest(context)
   if (path === '/api/episodes' && method === 'GET') return episodes.onRequestGet(context)
+  if (path === '/api/weekly' && method === 'GET') return weekly.onRequestGet(context)
   if (path === '/api/summary' && method === 'POST') return summary.onRequestPost(context)
   if (path === '/api/search-podcasts' && method === 'GET') return search.onRequestGet(context)
   if (path === '/api/resolve-video' && method === 'GET') return video.onRequestGet(context)
