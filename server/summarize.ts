@@ -104,9 +104,19 @@ type Provider = 'openai' | 'anthropic' | 'bedrock'
 // synthesizeWeekly. The bedrock branch is checked FIRST but only ever matches
 // when explicitly toggled on (llmProvider === 'claude' + a key present) — with
 // the toggle unset, this is exactly the original openaiKey/anthropicKey ternary.
-function resolveProvider(config: SummarizeConfig): Provider | null {
-  if (config.llmProvider === 'claude' && config.bedrockKey) return 'bedrock'
-  return config.openaiKey ? 'openai' : config.anthropicKey ? 'anthropic' : null
+export function resolveProvider(config: SummarizeConfig): Provider | null {
+  // An explicit LLM_PROVIDER wins when its key is present. Otherwise prefer Bedrock
+  // whenever a Bedrock key is configured — so setting BEDROCK_API_KEY alone switches
+  // the whole app to Claude-on-Bedrock (the paramemo/tybourne convention), with
+  // OpenAI then Anthropic as the fallback when no Bedrock key is set.
+  const forced = config.llmProvider?.trim().toLowerCase()
+  if (forced === 'openai') return config.openaiKey ? 'openai' : null
+  if (forced === 'anthropic') return config.anthropicKey ? 'anthropic' : null
+  if (forced === 'claude' || forced === 'bedrock') return config.bedrockKey ? 'bedrock' : null
+  if (config.bedrockKey) return 'bedrock'
+  if (config.openaiKey) return 'openai'
+  if (config.anthropicKey) return 'anthropic'
+  return null
 }
 
 /** Whether `config` carries a usable key for ANY supported path — the gate

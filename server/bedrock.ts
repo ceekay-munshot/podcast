@@ -6,14 +6,16 @@
 //
 // Auth: Bedrock's bearer-token API (not SigV4) — the same shape as the OpenAI /
 // Anthropic-direct fetches this repo already makes, just against the Bedrock
-// Runtime Converse endpoint.
+// Runtime Converse endpoint. Set BEDROCK_API_KEY (the Bedrock-console bearer key,
+// the same convention as the paramemo/tybourne repos) and this path is selected.
 //
-// ASSUMPTION TO VERIFY: model id and region default to Claude Sonnet 4.5 in
-// us-east-1. Override with BEDROCK_MODEL_ID / BEDROCK_REGION if the target AWS
-// account uses a different region or has a different model access grant.
+// The model + region default to Claude Sonnet 4.6 on the global cross-region
+// profile in us-east-1 — the exact model the tybourne newsletter already runs on,
+// so it is known-granted in this account. Override with BEDROCK_MODEL_IDS /
+// AWS_REGION (or the older BEDROCK_MODEL_ID / BEDROCK_REGION) if needed.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const DEFAULT_BEDROCK_MODEL = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
+export const DEFAULT_BEDROCK_MODEL = 'global.anthropic.claude-sonnet-4-6'
 export const DEFAULT_BEDROCK_REGION = 'us-east-1'
 
 /** Calls Claude on Bedrock with forced tool use and returns the RAW tool-input
