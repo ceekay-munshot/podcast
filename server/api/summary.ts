@@ -8,10 +8,11 @@ import { kvSummaryStore, type KVNamespace } from '../../server/summaryStore'
 // SUMMARIES (a KV namespace binding) is the shared, persistent summary cache:
 // when bound, a processed episode is reused across all users instead of recomputed.
 //
-// Opt-in Claude-via-Bedrock path (server/bedrock.ts): set LLM_PROVIDER=claude
-// and a temp_claude_token secret to route through Bedrock instead — see
-// resolveProvider in server/summarize.ts. Leaving LLM_PROVIDER unset keeps the
-// OpenAI/Anthropic-direct behavior above exactly as-is.
+// Claude-via-Bedrock path (server/bedrock.ts): set BEDROCK_API_KEY (the Bedrock
+// bearer key, same convention as the paramemo/tybourne repos) and it is used
+// automatically — no other flag needed (see resolveProvider in summarize.ts).
+// LLM_PROVIDER can still force openai/anthropic; temp_claude_token stays supported
+// for back-compat.
 export const onRequestPost = async (context: {
   request: Request
   env: {
@@ -23,9 +24,12 @@ export const onRequestPost = async (context: {
     DEEPGRAM_MODEL?: string
     SUMMARIES?: KVNamespace
     LLM_PROVIDER?: string
+    BEDROCK_API_KEY?: string
     temp_claude_token?: string
     BEDROCK_MODEL_ID?: string
+    BEDROCK_MODEL_IDS?: string
     BEDROCK_REGION?: string
+    AWS_REGION?: string
   }
 }): Promise<Response> => {
   const config = {
@@ -38,9 +42,10 @@ export const onRequestPost = async (context: {
     // Shared cache — absent binding degrades gracefully to per-request compute.
     store: context.env?.SUMMARIES ? kvSummaryStore(context.env.SUMMARIES) : undefined,
     llmProvider: context.env?.LLM_PROVIDER,
-    bedrockKey: context.env?.temp_claude_token,
-    bedrockModel: context.env?.BEDROCK_MODEL_ID || undefined,
-    bedrockRegion: context.env?.BEDROCK_REGION || undefined,
+    // BEDROCK_API_KEY is the standard name (paramemo/tybourne); temp_claude_token kept for back-compat.
+    bedrockKey: context.env?.BEDROCK_API_KEY || context.env?.temp_claude_token,
+    bedrockModel: context.env?.BEDROCK_MODEL_ID || context.env?.BEDROCK_MODEL_IDS?.split(',')[0]?.trim() || undefined,
+    bedrockRegion: context.env?.AWS_REGION || context.env?.BEDROCK_REGION || undefined,
   }
   const headers = { 'content-type': 'application/json' }
 

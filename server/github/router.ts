@@ -17,7 +17,7 @@ export interface RunnerEnv {
   SUMMARIES: KVNamespace; SITE_URL: string; SEND_EMAIL: (message: RawEmail) => Promise<EmailResult>
   OPENAI_API_KEY?: string; ANTHROPIC_API_KEY?: string; SUMMARY_MODEL?: string
   GROQ_API_KEY?: string; DEEPGRAM_API_KEY?: string; DEEPGRAM_MODEL?: string
-  LLM_PROVIDER?: string; temp_claude_token?: string; BEDROCK_MODEL_ID?: string; BEDROCK_REGION?: string
+  LLM_PROVIDER?: string; BEDROCK_API_KEY?: string; temp_claude_token?: string; BEDROCK_MODEL_ID?: string; BEDROCK_MODEL_IDS?: string; BEDROCK_REGION?: string; AWS_REGION?: string
   EMAIL_ATTACHMENTS?: string; MEMBER_FEEDS?: string; MUNSHOT_EMAIL_TOKEN?: string
 }
 export async function route(request: Request, env: RunnerEnv): Promise<Response> {

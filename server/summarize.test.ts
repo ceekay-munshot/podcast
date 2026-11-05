@@ -150,17 +150,18 @@ describe('summarizeEpisode — Claude-via-Bedrock opt-in path', () => {
   const minimalArgs = { synthesis: ['point'], qa: [], highlights: [], tone: { overall: 'neutral', rationale: 'r', aspects: [] } }
   const bedrockLLM = () => ({ ok: true, json: async () => ({ output: { message: { content: [{ toolUse: { name: 'emit_summary', input: minimalArgs } }] } } }) })
 
-  it('stays on OpenAI when both an openaiKey and a bedrockKey are present but LLM_PROVIDER is unset (default)', async () => {
-    fetchMock.mockResolvedValueOnce(okLLM())
+  it('uses Bedrock whenever a bedrockKey is set — even alongside an openaiKey and with LLM_PROVIDER unset', async () => {
+    // Set BEDROCK_API_KEY and the app runs on Claude: Bedrock wins without any flag.
+    fetchMock.mockResolvedValueOnce(bedrockLLM())
     await summarizeEpisode(
       { id: 'live-toggle-default', title: 'T', show: 'S', notes: 'n' },
       { openaiKey: 'sk-test', bedrockKey: 'bedrock-key', store: memStore() },
     )
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(fetchMock.mock.calls[0][0]).toBe('https://api.openai.com/v1/chat/completions') // untouched default
+    expect(String(fetchMock.mock.calls[0][0])).toContain('bedrock-runtime') // Bedrock, not OpenAI
   })
 
-  it('routes to Bedrock only when LLM_PROVIDER=claude AND a bedrockKey is set, producing the same result shape', async () => {
+  it('routes to Bedrock with LLM_PROVIDER=claude + a bedrockKey, producing the same result shape', async () => {
     fetchMock.mockResolvedValueOnce(bedrockLLM())
     const result = await summarizeEpisode(
       { id: 'live-toggle-claude', title: 'T', show: 'S', notes: 'n' },
@@ -173,13 +174,23 @@ describe('summarizeEpisode — Claude-via-Bedrock opt-in path', () => {
     expect(result.summary.synthesis).toEqual(['point']) // same normalize() pipeline, same output shape
   })
 
-  it('falls back to the untouched openai/anthropic selection when LLM_PROVIDER=claude but no bedrockKey is set', async () => {
+  it('still lets LLM_PROVIDER=openai force OpenAI even when a bedrockKey is present', async () => {
     fetchMock.mockResolvedValueOnce(okLLM())
     await summarizeEpisode(
-      { id: 'live-toggle-nokey', title: 'T', show: 'S', notes: 'n' },
-      { openaiKey: 'sk-test', llmProvider: 'claude', store: memStore() },
+      { id: 'live-toggle-force-openai', title: 'T', show: 'S', notes: 'n' },
+      { openaiKey: 'sk-test', llmProvider: 'openai', bedrockKey: 'bedrock-key', store: memStore() },
     )
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.openai.com/v1/chat/completions')
+  })
+
+  it('fails loudly (no_api_key) when LLM_PROVIDER=claude but no bedrockKey is set — never a silent OpenAI fallback', async () => {
+    await expect(
+      summarizeEpisode(
+        { id: 'live-toggle-nokey', title: 'T', show: 'S', notes: 'n' },
+        { openaiKey: 'sk-test', llmProvider: 'claude', store: memStore() },
+      ),
+    ).rejects.toThrow('no_api_key')
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })
 

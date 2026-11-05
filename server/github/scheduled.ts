@@ -10,7 +10,7 @@ import type { GitHubState } from './state'
 import type { RunnerEnv } from './router'
 
 export async function scheduledTick(state: GitHubState, env: RunnerEnv) {
-  if (!env.MUNSHOT_EMAIL_TOKEN || !(env.OPENAI_API_KEY || env.ANTHROPIC_API_KEY || (env.LLM_PROVIDER === 'claude' && env.temp_claude_token))) throw new Error('Required email/model credentials are missing')
+  if (!env.MUNSHOT_EMAIL_TOKEN || !(env.BEDROCK_API_KEY || env.OPENAI_API_KEY || env.ANTHROPIC_API_KEY || (env.LLM_PROVIDER === 'claude' && env.temp_claude_token))) throw new Error('Required email/model credentials are missing')
   const pendingStore: PendingDeliveryStore = {
     get: async () => {
       const value = await state.get(PENDING_DELIVERY_KEY, 'json') as PendingDelivery | null
@@ -27,7 +27,14 @@ export async function scheduledTick(state: GitHubState, env: RunnerEnv) {
   // Includes the migrated legacy remainder with its exact next index and root ID.
   const resumed = await resumeOwedParts({ pendingStore, sendEmail: env.SEND_EMAIL })
   const summaryStore = kvSummaryStore(state)
-  const summarizeConfig = { openaiKey: env.OPENAI_API_KEY, anthropicKey: env.ANTHROPIC_API_KEY, model: env.SUMMARY_MODEL, store: summaryStore, llmProvider: env.LLM_PROVIDER, bedrockKey: env.temp_claude_token, bedrockModel: env.BEDROCK_MODEL_ID, bedrockRegion: env.BEDROCK_REGION }
+  const summarizeConfig = {
+    openaiKey: env.OPENAI_API_KEY, anthropicKey: env.ANTHROPIC_API_KEY, model: env.SUMMARY_MODEL, store: summaryStore,
+    llmProvider: env.LLM_PROVIDER,
+    // BEDROCK_API_KEY is the standard name (paramemo/tybourne); temp_claude_token kept for back-compat.
+    bedrockKey: env.BEDROCK_API_KEY || env.temp_claude_token,
+    bedrockModel: env.BEDROCK_MODEL_ID || env.BEDROCK_MODEL_IDS?.split(',')[0]?.trim() || undefined,
+    bedrockRegion: env.AWS_REGION || env.BEDROCK_REGION,
+  }
   const memberFeeds = parseMemberFeeds(env.MEMBER_FEEDS)
   const channels = await collectTrackedChannels(state, SEED_IDS)
   const titles = new Map(channels.map(channel => [channel.id, channel.title]))

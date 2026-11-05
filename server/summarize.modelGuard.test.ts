@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { redactSecrets, safeModel } from './summarize'
+import { redactSecrets, resolveProvider, safeModel } from './summarize'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Guards against the misconfiguration that took the weekly brief down for weeks:
@@ -55,5 +55,32 @@ describe('redactSecrets', () => {
   it('leaves ordinary text alone', () => {
     const msg = 'anthropic 429: rate limit exceeded, retry after 2s'
     expect(redactSecrets(msg)).toBe(msg)
+  })
+})
+
+// Provider selection after the Bedrock standardisation: setting a Bedrock key alone
+// routes to Claude-on-Bedrock (the paramemo/tybourne convention), with OpenAI /
+// Anthropic as the fallback, and LLM_PROVIDER still able to force a specific one.
+describe('resolveProvider', () => {
+  it('uses Bedrock when a Bedrock key is set and nothing is forced', () => {
+    expect(resolveProvider({ bedrockKey: 'k' })).toBe('bedrock')
+  })
+  it('prefers Bedrock over OpenAI/Anthropic when its key is present', () => {
+    expect(resolveProvider({ bedrockKey: 'k', openaiKey: 'o', anthropicKey: 'a' })).toBe('bedrock')
+  })
+  it('falls back to OpenAI, then Anthropic, when no Bedrock key is set', () => {
+    expect(resolveProvider({ openaiKey: 'o', anthropicKey: 'a' })).toBe('openai')
+    expect(resolveProvider({ anthropicKey: 'a' })).toBe('anthropic')
+    expect(resolveProvider({})).toBeNull()
+  })
+  it('honours an explicit LLM_PROVIDER override', () => {
+    // force OpenAI even though a Bedrock key is present
+    expect(resolveProvider({ llmProvider: 'openai', openaiKey: 'o', bedrockKey: 'k' })).toBe('openai')
+    expect(resolveProvider({ llmProvider: 'anthropic', anthropicKey: 'a', bedrockKey: 'k' })).toBe('anthropic')
+    // the legacy toggle still works
+    expect(resolveProvider({ llmProvider: 'claude', bedrockKey: 'k' })).toBe('bedrock')
+    // a forced provider with no matching key resolves to nothing, not a silent fallback
+    expect(resolveProvider({ llmProvider: 'claude' })).toBeNull()
+    expect(resolveProvider({ llmProvider: 'openai', bedrockKey: 'k' })).toBeNull()
   })
 })
