@@ -499,15 +499,34 @@ describe('processPendingBatch — health reporting', () => {
     expect(res.processed).toBe(1)
     expect(res.failed).toBe(1)
     expect(processEpisode).toHaveBeenCalledTimes(2) // the throw did not abort the batch
+    // The real reason must survive, not be swallowed — this is what makes a dead
+    // pipeline diagnosable instead of a silent `failed: 1`.
+    expect(res.failureReasons).toEqual({ 'provider down': 1 })
   })
 
-  it('counts an empty summary as failed, not a silent skip', async () => {
+  it('aggregates one recurring failure across the whole batch (the provider-down case)', async () => {
+    const eps = [pending('a1', 'allin', daysAgo(1)), pending('a2', 'allin', daysAgo(2)), pending('o1', 'oddlots', daysAgo(3))]
+    // Every episode hits the same provider fault — e.g. a bad key or model id.
+    const processEpisode = vi.fn(async () => {
+      throw new Error('openai 404: {"error":{"message":"The model `gpt-9o` does not exist"}}')
+    })
+    const res = await processPendingBatch({ getEpisodes: async () => eps, processEpisode, now: NOW }, { limit: 10 })
+    expect(res.processed).toBe(0)
+    expect(res.failed).toBe(3)
+    // One distinct reason, counted 3× — exactly what the runner surfaces as the top cause.
+    expect(Object.keys(res.failureReasons ?? {})).toHaveLength(1)
+    expect(Object.values(res.failureReasons ?? {})[0]).toBe(3)
+    expect(Object.keys(res.failureReasons ?? {})[0]).toContain('does not exist')
+  })
+
+  it('counts an empty summary as failed, with a reason, not a silent skip', async () => {
     const res = await processPendingBatch({
       getEpisodes: async () => [pending('a', 'allin', daysAgo(1))],
       processEpisode: async () => null,
       now: NOW,
     })
     expect(res).toMatchObject({ processed: 0, failed: 1 })
+    expect(res.failureReasons).toEqual({ 'summariser returned no summary': 1 })
   })
 
   it('marks a budget-exhausted batch distinctly from a broken one', async () => {

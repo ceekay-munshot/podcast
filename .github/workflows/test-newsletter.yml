@@ -7,9 +7,13 @@ on:
         description: 'Unique UUID; reuse the same ID to resume without duplicate sends'
         required: true
         type: string
+      recipient_email:
+        description: 'Internal test recipient — an @muns.io address only (e.g. ceekay@muns.io). Simplest option; leave recipient_selector blank.'
+        required: false
+        type: string
       recipient_selector:
-        description: 'State-key HMAC of newsletter-test:<subscriber email>; never a plaintext address'
-        required: true
+        description: 'Alternative to recipient_email: state-key HMAC of newsletter-test:<subscriber email>, to test to a real subscriber without a plaintext address.'
+        required: false
         type: string
 
 concurrency:
@@ -38,5 +42,6 @@ jobs:
           MUNSHOT_EMAIL_TOKEN: ${{ secrets.MUNSHOT_EMAIL_TOKEN }}
           SITE_URL: ${{ secrets.SITE_URL }}
           PODCAST_TEST_ID: ${{ inputs.test_id }}
+          PODCAST_TEST_EMAIL: ${{ inputs.recipient_email }}
           PODCAST_TEST_RECIPIENT: ${{ inputs.recipient_selector }}
         run: node .cache/runner.mjs test-newsletter

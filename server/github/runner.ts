@@ -7,6 +7,7 @@ import { GitHub, QUEUE_PREFIX, STATE_BRANCH, base64, open, opaqueName, unbase64,
 import { GitHubState, type ArchivedRecord } from './state'
 import { durableSender } from './delivery'
 import { route, type RunnerEnv } from './router'
+import type { BatchReport } from '../weeklyDigest'
 import { scheduledTick } from './scheduled'
 import { testNewsletter } from './testNewsletter'
 import { kvReportStore, reportUrl } from '../reportStore'
@@ -89,8 +90,17 @@ if (mode === 'import') {
     console.log(JSON.stringify({ runtime: 'github-actions', verified, reports, summaryStore: !!kvSummaryStore(state) }))
   } else if (mode === 'test-newsletter') {
     const id = required('PODCAST_TEST_ID')
+    // Name the recipient one of two ways. Internal path: an explicit @muns.io address
+    // (PODCAST_TEST_EMAIL) whose selector is derived here with the state key — a
+    // one-click "send a test to me" with no secret-handling by the operator. Normal
+    // path: a pre-computed selector (PODCAST_TEST_RECIPIENT) that keeps a real
+    // subscriber's address out of the workflow inputs. The @muns.io gate means an
+    // explicit test can never reach an outsider.
+    const testEmail = process.env.PODCAST_TEST_EMAIL?.trim().toLowerCase() || undefined
+    if (testEmail && !/^[^@\s]+@muns\.io$/.test(testEmail)) throw new Error('PODCAST_TEST_EMAIL must be an @muns.io address')
+    const selector = testEmail ? await opaqueName(`newsletter-test:${testEmail}`, stateKey) : required('PODCAST_TEST_RECIPIENT')
     const result = await testNewsletter(state, {
-      id, selector: required('PODCAST_TEST_RECIPIENT'), stateKey,
+      id, selector, recipientEmail: testEmail, stateKey,
       getEpisodes: async () => {
         const stored = await state.preparedRecord(`views/${await opaqueName(viewIdentity('GET', '/api/episodes', null), gatewayKey)}.enc`)
         if (!stored || stored.status !== 200) throw new Error('Saved episode view is unavailable')
@@ -148,7 +158,19 @@ if (mode === 'import') {
     // The expensive feed fetch is once per scheduled tick on the GitHub runner.
     await view('/api/episodes', null)
     await state.checkpoint()
+    // A tick that TRIED to summarise episodes and failed EVERY ONE is the provider
+    // being down or misconfigured (bad key, bad model, rate limit) — never an idle
+    // tick. Name the cause loudly and fail the run so it can't go unnoticed again:
+    // this is the exact gap that let the weekly brief go quiet for weeks while the
+    // runs still looked green.
+    const batch: BatchReport = report.batch
+    const systemicFailure = batch.processed === 0 && (batch.failed ?? 0) > 0
+    if (systemicFailure) {
+      const reasons: Record<string, number> = batch.failureReasons ?? {}
+      const top = Object.entries(reasons).sort((a, b) => b[1] - a[1])[0]
+      console.log(`::error::Auto-processing produced NO summaries this tick — all ${batch.failed} episode(s) failed${top ? `. Top reason: ${top[0]} (×${top[1]})` : ''}. The weekly brief has nothing to send until this is resolved.`)
+    }
     console.log(JSON.stringify({ completed, needsAttention, report }))
-    if (needsAttention || report.ok === false || ('skipped' in report.batch && report.batch.skipped === 'no_llm_key')) process.exitCode = 1
+    if (needsAttention || report.ok === false || systemicFailure || batch.skipped === 'no_llm_key') process.exitCode = 1
   } else throw new Error('Unknown runner mode')
 }

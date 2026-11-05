@@ -3,7 +3,7 @@ import { PODCASTS } from '../src/lib/mock-data'
 import { assembleWeekly, buildCitations, buildWeeklySources, hashKey, mergeWeeklyAi } from '../src/lib/weeklyAssemble'
 import { weeklyBriefEmailParts, bytesToBase64, sendInOrder, validMessageId, type EmailAttachment, type EmailPart, type EmailResult } from '../src/lib/email'
 import { weeklyReportFilename } from '../src/lib/reportName'
-import { hasLlmKey, summarizeEpisode, synthesizeWeekly, type SummarizeConfig } from './summarize'
+import { hasLlmKey, redactSecrets, summarizeEpisode, synthesizeWeekly, type SummarizeConfig } from './summarize'
 import type { KVNamespace, SummaryStore } from './summaryStore'
 import type { SubscriberStore } from './subscriberStore'
 
@@ -189,6 +189,12 @@ export interface BatchReport {
   /** Episodes the summariser threw on or returned nothing for. Present only when
    *  non-zero: `failed` high with `processed` 0 means the provider itself is down. */
   failed?: number
+  /** When `failed` > 0, the distinct failure reasons and how many episodes hit each
+   *  (each truncated). This is what turns a bare "10 failed" into an actionable cause
+   *  — e.g. `{ "openai 401: invalid api key": 10 }` or `{ "openai 404: model ... does
+   *  not exist": 10 }` — instead of a silent count. The cron logs it and raises it as
+   *  a GitHub annotation, so a down provider or a bad key/model can never go unseen. */
+  failureReasons?: Record<string, number>
 }
 
 /** Auto-processor: summarise up to `limit` of THIS WEEK's pending episodes (writing
@@ -213,6 +219,15 @@ export async function processPendingBatch(
   let processed = 0
   let failed = 0
   let budgetSpent = false
+  // Capture WHY each episode failed, not just that it did. The summariser throws a
+  // descriptive error on a provider fault (e.g. `openai 401: ...`, `openai 404: model
+  // ... does not exist`), but it used to be swallowed by a bare `catch {}` — which is
+  // exactly why the weekly brief went quiet for weeks with nothing saying the cause.
+  const reasons: Record<string, number> = {}
+  const noteReason = (reason: string) => {
+    const key = redactSecrets(reason).replace(/\s+/g, ' ').trim().slice(0, 180) || 'unknown error'
+    reasons[key] = (reasons[key] ?? 0) + 1
+  }
   for (const ep of pending.slice(0, limit)) {
     if (Date.now() - start > budgetMs) {
       budgetSpent = true
@@ -220,9 +235,13 @@ export async function processPendingBatch(
     }
     try {
       if (await processEpisode(ep)) processed++
-      else failed++ // returned no summary — counts as a failure, not a silent skip
-    } catch {
+      else {
+        failed++ // returned no summary — counts as a failure, not a silent skip
+        noteReason('summariser returned no summary')
+      }
+    } catch (e) {
       failed++ // one episode's failure is isolated — keep going
+      noteReason(e instanceof Error ? e.message : String(e))
     }
   }
   return {
@@ -230,6 +249,7 @@ export async function processPendingBatch(
     remaining: Math.max(0, pending.length - processed),
     ...(budgetSpent ? { skipped: 'budget_spent' as const } : {}),
     ...(failed ? { failed } : {}),
+    ...(failed ? { failureReasons: reasons } : {}),
   }
 }
 
