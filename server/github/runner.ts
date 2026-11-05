@@ -90,8 +90,17 @@ if (mode === 'import') {
     console.log(JSON.stringify({ runtime: 'github-actions', verified, reports, summaryStore: !!kvSummaryStore(state) }))
   } else if (mode === 'test-newsletter') {
     const id = required('PODCAST_TEST_ID')
+    // Name the recipient one of two ways. Internal path: an explicit @muns.io address
+    // (PODCAST_TEST_EMAIL) whose selector is derived here with the state key — a
+    // one-click "send a test to me" with no secret-handling by the operator. Normal
+    // path: a pre-computed selector (PODCAST_TEST_RECIPIENT) that keeps a real
+    // subscriber's address out of the workflow inputs. The @muns.io gate means an
+    // explicit test can never reach an outsider.
+    const testEmail = process.env.PODCAST_TEST_EMAIL?.trim().toLowerCase() || undefined
+    if (testEmail && !/^[^@\s]+@muns\.io$/.test(testEmail)) throw new Error('PODCAST_TEST_EMAIL must be an @muns.io address')
+    const selector = testEmail ? await opaqueName(`newsletter-test:${testEmail}`, stateKey) : required('PODCAST_TEST_RECIPIENT')
     const result = await testNewsletter(state, {
-      id, selector: required('PODCAST_TEST_RECIPIENT'), stateKey,
+      id, selector, recipientEmail: testEmail, stateKey,
       getEpisodes: async () => {
         const stored = await state.preparedRecord(`views/${await opaqueName(viewIdentity('GET', '/api/episodes', null), gatewayKey)}.enc`)
         if (!stored || stored.status !== 200) throw new Error('Saved episode view is unavailable')

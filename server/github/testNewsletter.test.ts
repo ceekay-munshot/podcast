@@ -87,3 +87,34 @@ describe('single-subscriber manual newsletter', () => {
     expect(f.deps.publishPdf).toHaveBeenCalledOnce()
   })
 })
+
+// The internal "send a test to me" path: an explicit @muns.io recipient, so the
+// founder can check an edition before it goes to real subscribers — gated so a test
+// can never reach an outsider, and without needing to be a subscriber first.
+describe('internal @muns.io test recipient', () => {
+  it('sends to an explicit @muns.io address that is NOT a subscriber, leaving subscriber data untouched', async () => {
+    const f = fixture()
+    const email = 'ceekay@muns.io' // deliberately absent from the subscriber list
+    f.deps.selector = await opaqueName(`newsletter-test:${email}`, secret)
+    const result = await testNewsletter(f.state, { ...f.deps, recipientEmail: email })
+    expect(result.ok).toBe(true)
+    expect(result.parts).toBeGreaterThan(1)
+    expect(f.transport.mock.calls.every(([m]) => m.email === email)).toBe(true)
+    for (const [key, value] of Object.entries(f.initial)) expect(f.rows.get(key)).toBe(value)
+  })
+
+  it('refuses an explicit recipient that is not @muns.io — never mails an outsider', async () => {
+    const f = fixture()
+    const email = 'stranger@gmail.com'
+    f.deps.selector = await opaqueName(`newsletter-test:${email}`, secret)
+    await expect(testNewsletter(f.state, { ...f.deps, recipientEmail: email })).rejects.toThrow('@muns.io')
+    expect(f.transport).not.toHaveBeenCalled()
+  })
+
+  it('refuses when the selector does not match the explicit recipient', async () => {
+    const f = fixture()
+    f.deps.selector = await opaqueName('newsletter-test:someoneelse@muns.io', secret)
+    await expect(testNewsletter(f.state, { ...f.deps, recipientEmail: 'ceekay@muns.io' })).rejects.toThrow('does not match')
+    expect(f.transport).not.toHaveBeenCalled()
+  })
+})

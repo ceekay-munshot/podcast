@@ -25,6 +25,12 @@ interface Deps {
   id: string
   selector: string
   stateKey: string
+  /** Optional internal-test recipient: an explicit `@muns.io` address to send the
+   *  frozen edition to (e.g. the founder checking a send before it goes wide),
+   *  bypassing the subscriber-list match. Gated to `@muns.io` so a test can never
+   *  reach an outsider, and still verified against `selector`. When omitted, the
+   *  recipient is resolved by matching `selector` against the real subscribers. */
+  recipientEmail?: string
   getEpisodes: () => Promise<Episode[]>
   generatePdf: typeof weeklyPdfBytes
   /** Must publish and verify the complete PDF before returning its URL. */
@@ -44,12 +50,24 @@ export async function testNewsletter(state: Pick<GitHubState, 'get' | 'put' | 'c
   if (edition && edition.selector !== deps.selector) throw new Error('Test recipient cannot change')
   const save = async () => { await state.put(key, JSON.stringify(edition)); await state.checkpoint() }
   if (!edition) {
-    const subscribers = await kvSubscriberStore(state).get()
-    const matches = []
-    for (const subscriber of subscribers ?? []) {
-      if (await opaqueName(`newsletter-test:${subscriber.email.trim().toLowerCase()}`, deps.stateKey) === deps.selector) matches.push(subscriber)
+    // Resolve exactly one recipient. Internal path: an explicit @muns.io address
+    // (gated so a test can never reach an outsider), still cross-checked against the
+    // selector so the frozen edition's identity stays consistent on resume. Normal
+    // path: match the secret-derived selector against the real subscriber list.
+    let recipientEmail: string
+    if (deps.recipientEmail) {
+      recipientEmail = deps.recipientEmail.trim().toLowerCase()
+      if (!/^[^@\s]+@muns\.io$/.test(recipientEmail)) throw new Error('Explicit test recipient must be an @muns.io address')
+      if (await opaqueName(`newsletter-test:${recipientEmail}`, deps.stateKey) !== deps.selector) throw new Error('Test selector does not match the recipient')
+    } else {
+      const subscribers = await kvSubscriberStore(state).get()
+      const matches = []
+      for (const subscriber of subscribers ?? []) {
+        if (await opaqueName(`newsletter-test:${subscriber.email.trim().toLowerCase()}`, deps.stateKey) === deps.selector) matches.push(subscriber)
+      }
+      if (matches.length !== 1) throw new Error('Test must identify exactly one existing subscriber')
+      recipientEmail = matches[0].email
     }
-    if (matches.length !== 1) throw new Error('Test must identify exactly one existing subscriber')
     const ready = readyThisWeek(await deps.getEpisodes(), deps.now ?? Date.now())
     if (!ready.length) throw new Error('No saved ready episodes for this week')
     const podcastById = (id: string): Podcast | undefined => PODCASTS.find(p => p.id === id)
@@ -70,7 +88,7 @@ export async function testNewsletter(state: Pick<GitHubState, 'get' | 'put' | 'c
     if (parts.length < 2) throw new Error('Test edition must contain multiple complete parts')
     const subject = `[TEST ${deps.id.slice(0, 8)}] ${parts[0].subject}`
     edition = { selector: deps.selector, pdfUrl, episodeCount: ready.length, parts: parts.length, subject, accepted: [], pending: {
-      parts: parts.map(part => ({ ...part, subject })), owed: [{ email: matches[0].email, next: 0 }], tries: 0, durable: true,
+      parts: parts.map(part => ({ ...part, subject })), owed: [{ email: recipientEmail, next: 0 }], tries: 0, durable: true,
     } }
     await save()
   }
