@@ -7,6 +7,7 @@ import { GitHub, QUEUE_PREFIX, STATE_BRANCH, base64, open, opaqueName, unbase64,
 import { GitHubState, type ArchivedRecord } from './state'
 import { durableSender } from './delivery'
 import { route, type RunnerEnv } from './router'
+import type { BatchReport } from '../weeklyDigest'
 import { scheduledTick } from './scheduled'
 import { testNewsletter } from './testNewsletter'
 import { kvReportStore, reportUrl } from '../reportStore'
@@ -148,7 +149,19 @@ if (mode === 'import') {
     // The expensive feed fetch is once per scheduled tick on the GitHub runner.
     await view('/api/episodes', null)
     await state.checkpoint()
+    // A tick that TRIED to summarise episodes and failed EVERY ONE is the provider
+    // being down or misconfigured (bad key, bad model, rate limit) — never an idle
+    // tick. Name the cause loudly and fail the run so it can't go unnoticed again:
+    // this is the exact gap that let the weekly brief go quiet for weeks while the
+    // runs still looked green.
+    const batch: BatchReport = report.batch
+    const systemicFailure = batch.processed === 0 && (batch.failed ?? 0) > 0
+    if (systemicFailure) {
+      const reasons: Record<string, number> = batch.failureReasons ?? {}
+      const top = Object.entries(reasons).sort((a, b) => b[1] - a[1])[0]
+      console.log(`::error::Auto-processing produced NO summaries this tick — all ${batch.failed} episode(s) failed${top ? `. Top reason: ${top[0]} (×${top[1]})` : ''}. The weekly brief has nothing to send until this is resolved.`)
+    }
     console.log(JSON.stringify({ completed, needsAttention, report }))
-    if (needsAttention || report.ok === false || ('skipped' in report.batch && report.batch.skipped === 'no_llm_key')) process.exitCode = 1
+    if (needsAttention || report.ok === false || systemicFailure || batch.skipped === 'no_llm_key') process.exitCode = 1
   } else throw new Error('Unknown runner mode')
 }
