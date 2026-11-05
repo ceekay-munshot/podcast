@@ -68,6 +68,36 @@ export interface SummarizeResult {
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini'
 const DEFAULT_ANTHROPIC_MODEL = 'claude-opus-4-8'
 
+/** Redact secret-shaped tokens from any string before it is logged or thrown. A
+ *  provider's error body echoes request fields (e.g. a mis-set `model`), so a
+ *  credential that lands somewhere it never should can't leak into a log or a CI
+ *  annotation. Belt-and-braces alongside `safeModel` below. */
+export function redactSecrets(text: string): string {
+  return text
+    .replace(/sk-[A-Za-z0-9_-]{6,}/g, 'sk-***redacted***')
+    .replace(/(bearer\s+)[A-Za-z0-9._-]{8,}/gi, '$1***redacted***')
+}
+
+/** A model id is configuration, never a secret. If `SUMMARY_MODEL` is mis-set to an
+ *  API key (`sk-…`), a bearer token, or anything that isn't a plausible model id,
+ *  using it would (a) 404 EVERY call and (b) transmit the secret to the provider as
+ *  the `model` field (and into its echoed error). Ignore it, fall back to the
+ *  provider default so the pipeline keeps working, and warn ONCE so the
+ *  misconfiguration stays visible and fixable rather than silently papered over. */
+let warnedBadModel = false
+export function safeModel(model: string | undefined, fallback: string): string {
+  const m = (model ?? '').trim()
+  if (!m) return fallback
+  if (/^sk-/i.test(m) || /\s/.test(m) || m.length > 80) {
+    if (!warnedBadModel) {
+      warnedBadModel = true
+      console.log(`::warning::SUMMARY_MODEL is not a valid model id (looks like a secret or is malformed) — falling back to ${fallback}. Set it to a model name such as gpt-4o-mini, or unset it.`)
+    }
+    return fallback
+  }
+  return m
+}
+
 type Provider = 'openai' | 'anthropic' | 'bedrock'
 
 // Single source of truth for provider selection, shared by summarizeEpisode and
@@ -528,7 +558,7 @@ const cache = new Map<string, SummarizeResult>()
 export async function summarizeEpisode(input: SummarizeInput, config: SummarizeConfig): Promise<SummarizeResult> {
   const provider = resolveProvider(config)
   if (!provider) throw new Error('no_api_key')
-  const model = provider === 'bedrock' ? config.bedrockModel || DEFAULT_BEDROCK_MODEL : config.model || (provider === 'openai' ? DEFAULT_OPENAI_MODEL : DEFAULT_ANTHROPIC_MODEL)
+  const model = provider === 'bedrock' ? config.bedrockModel || DEFAULT_BEDROCK_MODEL : safeModel(config.model, provider === 'openai' ? DEFAULT_OPENAI_MODEL : DEFAULT_ANTHROPIC_MODEL)
 
   // Shared, persistent cache (KV in prod, filesystem in dev), keyed by the stable
   // episode id: the FIRST user to open an episode pays the transcription + LLM
@@ -610,7 +640,7 @@ async function viaOpenAI(prompt: { system: string; user: string }, apiKey: strin
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    throw new Error(`openai ${res.status}: ${body.slice(0, 200)}`)
+    throw new Error(`openai ${res.status}: ${redactSecrets(body).slice(0, 200)}`)
   }
   const data: { choices?: Array<{ message?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }> } = await res.json()
   const args = data.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments
@@ -637,7 +667,7 @@ async function viaAnthropic(prompt: { system: string; user: string }, apiKey: st
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    throw new Error(`anthropic ${res.status}: ${body.slice(0, 200)}`)
+    throw new Error(`anthropic ${res.status}: ${redactSecrets(body).slice(0, 200)}`)
   }
   const data: { content?: Array<{ type: string; name?: string; input?: unknown }> } = await res.json()
   const toolUse = (data.content ?? []).find((b) => b.type === 'tool_use' && b.name === 'emit_summary')
@@ -823,7 +853,7 @@ export async function synthesizeWeekly(input: SynthesizeWeeklyInput, config: Sum
   const provider = resolveProvider(config)
   if (!provider) return null
   if (!input.sources.length) return null
-  const model = provider === 'bedrock' ? config.bedrockModel || DEFAULT_BEDROCK_MODEL : config.model || (provider === 'openai' ? DEFAULT_OPENAI_MODEL : DEFAULT_ANTHROPIC_MODEL)
+  const model = provider === 'bedrock' ? config.bedrockModel || DEFAULT_BEDROCK_MODEL : safeModel(config.model, provider === 'openai' ? DEFAULT_OPENAI_MODEL : DEFAULT_ANTHROPIC_MODEL)
 
   // Shared-store reuse: the SAME episode-set (same id) is synthesised once total —
   // a browser visit and the Monday cron reuse each other's result.

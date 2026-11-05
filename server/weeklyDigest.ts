@@ -3,7 +3,7 @@ import { PODCASTS } from '../src/lib/mock-data'
 import { assembleWeekly, buildCitations, buildWeeklySources, hashKey, mergeWeeklyAi } from '../src/lib/weeklyAssemble'
 import { weeklyBriefEmailParts, bytesToBase64, sendInOrder, validMessageId, type EmailAttachment, type EmailPart, type EmailResult } from '../src/lib/email'
 import { weeklyReportFilename } from '../src/lib/reportName'
-import { hasLlmKey, summarizeEpisode, synthesizeWeekly, type SummarizeConfig } from './summarize'
+import { hasLlmKey, redactSecrets, summarizeEpisode, synthesizeWeekly, type SummarizeConfig } from './summarize'
 import type { KVNamespace, SummaryStore } from './summaryStore'
 import type { SubscriberStore } from './subscriberStore'
 
@@ -225,7 +225,7 @@ export async function processPendingBatch(
   // exactly why the weekly brief went quiet for weeks with nothing saying the cause.
   const reasons: Record<string, number> = {}
   const noteReason = (reason: string) => {
-    const key = reason.replace(/\s+/g, ' ').trim().slice(0, 180) || 'unknown error'
+    const key = redactSecrets(reason).replace(/\s+/g, ' ').trim().slice(0, 180) || 'unknown error'
     reasons[key] = (reasons[key] ?? 0) + 1
   }
   for (const ep of pending.slice(0, limit)) {
