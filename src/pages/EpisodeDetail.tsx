@@ -4,11 +4,12 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useAppData } from '../store/AppData'
 import { useSentiment } from '../store/Sentiment'
 import { downloadSummary } from '../lib/exportSummary'
+import { downloadTranscript } from '../lib/exportTranscript'
 import { downloadSummaryPdf } from '../lib/pdfRender'
 import { emailEpisodeSummary, registerWeeklyRecipient, unregisterWeeklyRecipient } from '../lib/api'
 import { addRecipient, loadRecipients, removeRecipient } from '../lib/recipientsStore'
 import { formatDuration, longDate, statusMeta } from '../lib/format'
-import type { Episode, EpisodeInsight, ProcessingStatus, QuantPoint, Takeaway, TranscriptSegment } from '../lib/types'
+import type { Episode, EpisodeInsight, Podcast, ProcessingStatus, QuantPoint, Takeaway, TranscriptSegment } from '../lib/types'
 import { CoverTile } from '../components/CoverTile'
 import { Icon } from '../components/Icon'
 import { DownloadMenu } from '../components/DownloadMenu'
@@ -202,6 +203,7 @@ export default function EpisodeDetail() {
             disabled={!episode.summary}
             onPdf={() => void downloadSummaryPdf(episode, podcast)}
             onWord={() => void downloadSummary(episode, podcast)}
+            onTranscript={episode.transcript?.length ? () => downloadTranscript(episode, podcast) : undefined}
             onEmail={userEmail && episode.summary ? () => emailEpisodeSummary([userEmail, ...extraRecipients], episode, podcast) : undefined}
             recipients={
               userEmail
@@ -234,7 +236,7 @@ export default function EpisodeDetail() {
           {tab === 'highlights' && <HighlightsTab episode={episode} hasTranscript={hasTranscript} onOpen={openTranscript} />}
           {tab === 'qa' && <QATab episode={episode} />}
           {tab === 'transcript' && (
-            <TranscriptTab episode={episode} focusId={jumpTo} focusLabel={jumpLabel} focusTick={jumpTick} />
+            <TranscriptTab episode={episode} podcast={podcast} focusId={jumpTo} focusLabel={jumpLabel} focusTick={jumpTick} />
           )}
         </>
       )}
@@ -687,11 +689,13 @@ function QATab({ episode }: { episode: Episode }) {
 // ── Transcript tab — Highlights list ↔ transcript ────────────────────────────
 function TranscriptTab({
   episode,
+  podcast,
   focusId,
   focusLabel,
   focusTick,
 }: {
   episode: Episode
+  podcast?: Podcast
   focusId?: string | null
   focusLabel?: string
   focusTick?: number
@@ -771,6 +775,18 @@ function TranscriptTab({
 
       {/* Transcript */}
       <article className="col-span-12 rounded-2xl border border-outline-variant bg-surface-container-lowest p-md shadow-card md:col-span-8">
+        <div className="mb-md flex items-center justify-between gap-sm">
+          <p className="text-metadata text-secondary">
+            {segments.length} segment{segments.length === 1 ? '' : 's'}
+          </p>
+          <button
+            onClick={() => downloadTranscript(episode, podcast)}
+            title="Download the full transcript as a .txt file"
+            className="press inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-outline-variant bg-surface px-3 py-2 text-metadata font-semibold text-on-surface hover:bg-surface-container-low"
+          >
+            <Icon name="download" size={16} /> Download .txt
+          </button>
+        </div>
         <div className="relative mb-md">
           <Icon name="search" size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-outline" />
           <input

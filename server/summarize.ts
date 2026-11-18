@@ -59,6 +59,13 @@ export interface SummarizeResult {
   summary: Summary
   transcript: TranscriptSegment[]
   transcriptSource?: 'feed' | 'groq' | 'deepgram'
+  /** True once we actually RAN the transcription chain for this episode (i.e. we had
+   *  a usable source AND, for audio, a provider key). Lets a cached result with an
+   *  empty transcript be told apart: "we tried and nothing came back" (leave it) vs.
+   *  "we never had the means to try" (re-attempt when the means now exist). Absent on
+   *  entries cached before this field existed — treated as not-yet-attempted so the
+   *  gentle backfill fills them in on the next open. */
+  transcriptAttempted?: boolean
   /** Present only for weekly-synthesis results (synthesizeWeekly), so the shared
    *  store can cache the cross-episode narrative under the `weekly:<hash>` id and
    *  reuse it across users — the episode `summary` field is then just a stub. */
@@ -565,6 +572,25 @@ function buildTranscript(raw: RawSeg[], highlights: Highlight[]): { segments: Tr
 // in summaryStore.ts now (it keys both caches).
 const cache = new Map<string, SummarizeResult>()
 
+/** Whether a transcript could, in principle, be produced for this input RIGHT NOW:
+ *  a publisher feed transcript needs only its URL; episode audio needs a provider
+ *  key (Groq or Deepgram). Used both to decide whether to re-attempt a stale empty
+ *  cache entry and to record `transcriptAttempted` on the result. */
+function canTranscribe(input: SummarizeInput, config: SummarizeConfig): boolean {
+  return !!input.transcriptUrl || (!!input.audioUrl && !!(config.deepgramKey || config.groqKey))
+}
+
+/** A cached result worth recomputing purely to fill in a MISSING transcript: it has
+ *  none, we never actually ran the transcription chain for it, and a transcript is
+ *  obtainable now. This is the "gentle backfill" — an episode summarised before the
+ *  transcription keys were wired in (or before a member feed supplied its audio)
+ *  picks up its transcript the next time it is opened, instead of serving the old
+ *  empty copy forever. Episodes that genuinely yield nothing are marked attempted and
+ *  are NOT re-tried on every visit. */
+function needsTranscriptBackfill(cached: SummarizeResult, input: SummarizeInput, config: SummarizeConfig): boolean {
+  return cached.transcript.length === 0 && !cached.transcriptAttempted && canTranscribe(input, config)
+}
+
 export async function summarizeEpisode(input: SummarizeInput, config: SummarizeConfig): Promise<SummarizeResult> {
   const provider = resolveProvider(config)
   if (!provider) throw new Error('no_api_key')
@@ -578,7 +604,11 @@ export async function summarizeEpisode(input: SummarizeInput, config: SummarizeC
   const sharedKey = input.id ? sharedSummaryKey(input.id) : null
   if (!input.force && sharedKey && config.store) {
     const shared = await config.store.get(sharedKey)
-    if (shared) return shared
+    // Serve the cached work — UNLESS it's an entry with no transcript that we can now
+    // fill in (gentle backfill), in which case fall through and recompute with the
+    // transcription chain. A richer transcript-based summary replaces the old
+    // show-notes one, and the Transcript tab stops saying "not ingested yet".
+    if (shared && !needsTranscriptBackfill(shared, input, config)) return shared
   }
 
   // Best available source: real transcript (provider chain) > show-notes.
@@ -598,7 +628,7 @@ export async function summarizeEpisode(input: SummarizeInput, config: SummarizeC
   const idPart = input.id ?? `n:${stableHash(`${input.show} ${input.notes ?? ''}`)}`
   const cacheKey = `${provider}:${model}:${transcript ? 't' : 'n'}:r${SUMMARY_REVISION}::${idPart}`
   const hit = input.force ? undefined : cache.get(cacheKey)
-  if (hit) return hit
+  if (hit && !needsTranscriptBackfill(hit, input, config)) return hit
 
   const raw =
     provider === 'openai'
@@ -610,12 +640,16 @@ export async function summarizeEpisode(input: SummarizeInput, config: SummarizeC
 
   // Bundle the real transcript (the same one the summary was built from) so the
   // Transcript tab renders it — no second transcription, no extra cost.
+  const attemptedTranscript = canTranscribe(input, config)
   let result: SummarizeResult
   if (transcript && transcript.segments.length) {
     const built = buildTranscript(transcript.segments, summary.highlights)
-    result = { summary: { ...summary, highlights: built.highlights }, transcript: built.segments, transcriptSource: transcript.source }
+    result = { summary: { ...summary, highlights: built.highlights }, transcript: built.segments, transcriptSource: transcript.source, transcriptAttempted: true }
   } else {
-    result = { summary, transcript: [] }
+    // Record whether we actually had the means to transcribe (source + key). A genuine
+    // "ran it, nothing came back" won't be re-attempted on every open; a "no source or
+    // key yet" stays eligible for the backfill once a member feed or key is in place.
+    result = { summary, transcript: [], transcriptAttempted: attemptedTranscript }
   }
 
   if (cache.size > 300) cache.clear()
