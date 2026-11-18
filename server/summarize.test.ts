@@ -107,6 +107,69 @@ describe('summarizeEpisode — shared store reuse', () => {
   })
 })
 
+describe('summarizeEpisode — transcript backfill (gentle self-heal)', () => {
+  // A Deepgram pre-recorded response carrying one long utterance (>200 chars so the
+  // provider chain accepts it).
+  const longText = 'This is the spoken transcript of the episode. '.repeat(10)
+  const okDeepgram = (text: string) => ({
+    ok: true,
+    json: async () => ({ results: { utterances: [{ start: 0, transcript: text, speaker: 0 }] } }),
+  })
+
+  it('recomputes a cached summary that has no transcript when one is now obtainable', async () => {
+    const store = memStore()
+    // An entry from before the transcription keys were wired in: a summary, but an
+    // empty transcript and no `transcriptAttempted` marker.
+    const stale: SummarizeResult = { summary: { synthesis: ['notes-only'], highlights: [], qa: [] }, transcript: [] }
+    store.map.set(sharedSummaryKey('live-backfill-old'), stale)
+    fetchMock
+      .mockResolvedValueOnce(okDeepgram(longText)) // transcription now runs…
+      .mockResolvedValueOnce(okLLM()) // …then the LLM, built from the transcript
+
+    const result = await summarizeEpisode(
+      { id: 'live-backfill-old', title: 'Backfill', show: 'Stratechery', audioUrl: 'https://cdn.example/ep.mp3' },
+      { openaiKey: 'sk-test', deepgramKey: 'dg-key', store },
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(2) // Deepgram + LLM — it did NOT serve the empty copy
+    expect(result.transcript.length).toBeGreaterThan(0)
+    expect(result.transcriptSource).toBe('deepgram')
+    expect(result.transcriptAttempted).toBe(true)
+    expect(store.map.get(sharedSummaryKey('live-backfill-old'))).toEqual(result) // healed for everyone
+  })
+
+  it('serves a cached empty transcript untouched once it has already been attempted', async () => {
+    const store = memStore()
+    // Audio exists and a key is set, but a prior run already tried and got nothing —
+    // marked attempted, so we must NOT burn another transcription on every open.
+    const attempted: SummarizeResult = { summary: { synthesis: ['notes-only'], highlights: [], qa: [] }, transcript: [], transcriptAttempted: true }
+    store.map.set(sharedSummaryKey('live-backfill-done'), attempted)
+
+    const result = await summarizeEpisode(
+      { id: 'live-backfill-done', title: 'Done', show: 'Stratechery', audioUrl: 'https://cdn.example/ep.mp3' },
+      { openaiKey: 'sk-test', deepgramKey: 'dg-key', store },
+    )
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(result).toEqual(attempted)
+  })
+
+  it('does not re-attempt when there is no audio/feed source or key to transcribe with', async () => {
+    const store = memStore()
+    const stale: SummarizeResult = { summary: { synthesis: ['notes-only'], highlights: [], qa: [] }, transcript: [] }
+    store.map.set(sharedSummaryKey('live-backfill-nomeans'), stale)
+
+    const result = await summarizeEpisode(
+      // No audioUrl / transcriptUrl and no transcription key → nothing to try; serve as-is.
+      { id: 'live-backfill-nomeans', title: 'No means', show: 'Stratechery', notes: 'just notes' },
+      { openaiKey: 'sk-test', store },
+    )
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(result).toEqual(stale)
+  })
+})
+
 describe('summarizeEpisode — ideas extraction', () => {
   it('passes through valid pitched ideas and drops malformed ones', async () => {
     const args = JSON.stringify({

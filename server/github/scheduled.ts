@@ -34,6 +34,16 @@ export async function scheduledTick(state: GitHubState, env: RunnerEnv) {
     bedrockKey: env.BEDROCK_API_KEY || env.temp_claude_token,
     bedrockModel: env.BEDROCK_MODEL_ID || env.BEDROCK_MODEL_IDS?.split(',')[0]?.trim() || undefined,
     bedrockRegion: env.AWS_REGION || env.BEDROCK_REGION,
+    // Transcription chain (feed transcript → Groq → Deepgram). Previously omitted
+    // here, so the background auto-processor could only ever surface a publisher's
+    // OWN feed transcript — every other episode's Transcript tab stayed empty
+    // ("not ingested yet") even though the Deepgram/Groq keys were sitting right
+    // here in the env. The per-episode time budget in processPendingBatch keeps a
+    // slow transcription from starving a tick: one long episode transcribes, then
+    // the loop stops on budget and the rest resume on the next tick.
+    deepgramKey: env.DEEPGRAM_API_KEY,
+    deepgramModel: env.DEEPGRAM_MODEL || undefined,
+    groqKey: env.GROQ_API_KEY,
   }
   const memberFeeds = parseMemberFeeds(env.MEMBER_FEEDS)
   const channels = await collectTrackedChannels(state, SEED_IDS)

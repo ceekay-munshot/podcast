@@ -27,6 +27,7 @@ interface Recipients {
 export function DownloadMenu({
   onPdf,
   onWord,
+  onTranscript,
   onEmail,
   emailSubtitle,
   recipients,
@@ -34,6 +35,9 @@ export function DownloadMenu({
 }: {
   onPdf: () => void
   onWord: () => void
+  /** When provided, adds a "Transcript (.txt)" item (only pass it when a transcript
+   *  actually exists for the episode). */
+  onTranscript?: () => void
   /** Resolves to the send result; rejection is treated as a failure. */
   onEmail?: () => Promise<{ ok: boolean; message?: string }>
   /** Caption under the email item when there's no recipient management. */
@@ -162,6 +166,9 @@ export function DownloadMenu({
         >
           <MenuItem icon="picture_as_pdf" title="PDF" subtitle="Full design · downloads a .pdf" onClick={() => pick(onPdf)} />
           <MenuItem icon="description" title="Word (.doc)" subtitle="Editable document" onClick={() => pick(onWord)} />
+          {onTranscript && (
+            <MenuItem icon="subject" title="Transcript (.txt)" subtitle="Full timestamped transcript" onClick={() => pick(onTranscript)} />
+          )}
           {onEmail && (
             <button
               role="menuitem"
