@@ -380,9 +380,40 @@
   transition-duration: 260ms;
 }
 
+/* Transcript "Transcribing…" loader: an audio equalizer (bars bouncing) plus a
+   shimmer skeleton, so the state reads as live, on-theme movement rather than text. */
+@keyframes eq-bounce {
+  0%, 100% { transform: scaleY(0.22); }
+  50% { transform: scaleY(1); }
+}
+.eq-bar {
+  height: 100%;
+  transform-origin: bottom center;
+  animation: eq-bounce 0.95s var(--ease-out, ease-in-out) infinite;
+}
+@keyframes shimmer-sweep {
+  0% { background-position: -450px 0; }
+  100% { background-position: 450px 0; }
+}
+.shimmer {
+  background-color: #eaeef4;
+  background-image: linear-gradient(90deg, #eaeef4 0%, #f6f9fc 50%, #eaeef4 100%);
+  background-size: 450px 100%;
+  background-repeat: no-repeat;
+  animation: shimmer-sweep 1.5s linear infinite;
+}
+
 /* Reduced motion: keep the color/opacity fades that aid comprehension; drop
    every transform-based movement and the entrance translate. */
 @media (prefers-reduced-motion: reduce) {
+  /* Loader: hold the bars at a steady mid-height and freeze the shimmer sweep. */
+  .eq-bar {
+    animation: none;
+    transform: scaleY(0.6);
+  }
+  .shimmer {
+    animation: none;
+  }
   html {
     scroll-behavior: auto;
   }
