@@ -693,49 +693,71 @@ function QATab({ episode }: { episode: Episode }) {
   )
 }
 
-// Transcript is being generated (or queued) — the episode has an audio/feed source,
-// so a transcript IS coming. Reassures the reader instead of implying it's missing.
+// Transcript is being generated — a live audio equalizer plus a shimmer skeleton
+// make "it's working, the transcript is coming" a VISUAL cue, not a block of text.
 function TranscriptPending({ active }: { active: boolean }) {
   return (
-    <div className="grid place-items-center gap-sm rounded-2xl border border-outline-variant bg-surface-container-lowest py-xl text-center shadow-card">
-      <span className="grid h-12 w-12 place-items-center rounded-full bg-[#eff5ff]">
-        <Icon name="graphic_eq" size={26} className="text-primary motion-safe:animate-pulse" />
-      </span>
-      <h3 className="text-[19px] font-semibold text-on-surface">Transcribing this episode…</h3>
-      <p className="max-w-md text-body-md text-secondary">
-        The full transcript is being generated and will appear here automatically — this can take a few minutes for a
-        long episode. It's processed once and then available to everyone, so you don't need to wait on this page.
-      </p>
-      <p className="mt-1 inline-flex items-center gap-1.5 text-metadata text-outline">
-        <Icon name="progress_activity" size={14} className="motion-safe:animate-spin" />
-        {active ? 'Working on it now' : 'Queued — processing in the background'}
-      </p>
+    <div className="grid place-items-center gap-md rounded-2xl border border-outline-variant bg-surface-container-lowest py-xl text-center shadow-card">
+      {/* Bouncing equalizer bars — on-theme for audio→text, and clearly in motion. */}
+      <div className="flex h-12 items-end gap-1.5" aria-hidden>
+        {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+          <span
+            key={i}
+            className="eq-bar w-2 rounded-full bg-gradient-to-t from-primary to-[#7cb0ff]"
+            style={{ animationDelay: `${i * 0.11}s` }}
+          />
+        ))}
+      </div>
+      <div className="grid gap-1">
+        <h3 className="text-[19px] font-semibold text-on-surface">Transcribing this episode…</h3>
+        <p className="text-body-md text-secondary">
+          Generating the full transcript — it appears here automatically{active ? '' : ', usually within a few minutes'}.
+        </p>
+      </div>
+      {/* Shimmer skeleton lines — implies the transcript streaming in. */}
+      <div className="mt-1 w-full max-w-md space-y-2.5" aria-hidden>
+        <div className="shimmer h-3 w-11/12 rounded-full" />
+        <div className="shimmer h-3 w-full rounded-full" />
+        <div className="shimmer h-3 w-4/5 rounded-full" />
+        <div className="shimmer h-3 w-10/12 rounded-full" />
+      </div>
     </div>
   )
 }
 
-// No audio/feed source we can fetch → a transcript genuinely can't be produced
-// (subscriber-only/paywalled audio, or a video-only episode). Say so plainly.
+// No audio/feed source we can fetch → a transcript genuinely can't be produced.
+// Red treatment, an explicit "Paywalled" badge for paid shows, and a Subscribe link.
 function TranscriptUnavailable({ episode, podcast }: { episode: Episode; podcast?: Podcast }) {
+  const access = podcast?.access
+  const isPaywalled = !!(
+    podcast?.memberFeedPage || podcast?.paidNote || podcast?.locked || access === 'paid' || access === 'partial' || access === 'private'
+  )
+  const subscribeUrl = podcast?.webUrl || podcast?.memberFeedPage || episode.sourceUrl
+  const show = podcast?.title
+  const whose = show ? `${show}'s` : "the publisher's"
   return (
-    <div className="grid place-items-center gap-sm rounded-2xl border border-dashed border-outline-variant bg-surface-container-low py-xl text-center">
-      <span className="grid h-12 w-12 place-items-center rounded-full bg-surface-container">
-        <Icon name="lock" size={24} className="text-outline" />
+    <div className="grid place-items-center gap-sm rounded-2xl border border-error/30 bg-error-container/50 py-xl text-center">
+      <span className="grid h-12 w-12 place-items-center rounded-full bg-error-container">
+        <Icon name="lock" size={24} className="text-error" />
       </span>
-      <h3 className="text-[19px] font-semibold text-on-surface-variant">Transcript unavailable</h3>
-      <p className="max-w-md text-body-md text-secondary">
-        We don't have an audio file we can transcribe for this episode — {podcast ? `${podcast.title}'s` : 'this show’s'}{' '}
-        audio is subscriber-only (paywalled) or published as video only, so a transcript can't be loaded. The summary
-        above is built from the publisher's show notes.
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-error px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-on-error">
+        <Icon name="lock" size={12} fill /> {isPaywalled ? 'Paywalled' : 'No audio'}
+      </span>
+      <h3 className="text-[19px] font-semibold text-on-error-container">Transcript unavailable</h3>
+      <p className="max-w-md text-body-md text-on-error-container/80">
+        {isPaywalled
+          ? `This episode is behind ${whose} paywall (subscriber-only audio), so a transcript can't be loaded. The summary above is built from the publisher's show notes.`
+          : "We don't have an audio file we can transcribe for this episode (it's published as video only), so a transcript can't be loaded. The summary above is built from the publisher's show notes."}
       </p>
-      {episode.sourceUrl && (
+      {subscribeUrl && (
         <a
-          href={episode.sourceUrl}
+          href={subscribeUrl}
           target="_blank"
           rel="noreferrer"
-          className="press mt-1 inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-3 py-2 text-metadata font-semibold text-on-surface hover:bg-surface-container-low"
+          className="press mt-1 inline-flex items-center gap-2 rounded-lg bg-error px-4 py-2.5 text-metadata font-semibold text-on-error hover:brightness-110"
         >
-          <Icon name="open_in_new" size={16} /> Listen or read at the source
+          <Icon name={isPaywalled ? 'lock_open' : 'open_in_new'} size={16} />
+          {isPaywalled ? `Subscribe${show ? ` to ${show}` : ''}` : 'Open at source'}
         </a>
       )}
     </div>
