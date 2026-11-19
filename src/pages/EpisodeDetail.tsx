@@ -41,7 +41,7 @@ export default function EpisodeDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [params] = useSearchParams()
-  const { episodeById, podcastById, summarizeEpisode, needsApiKey, identity } = useAppData()
+  const { episodeById, podcastById, summarizeEpisode, transcribing, needsApiKey, identity } = useAppData()
   const { on: sentimentOn } = useSentiment()
 
   // Where "Email this edition" sends: the signed-in user's address, or the one
@@ -236,7 +236,14 @@ export default function EpisodeDetail() {
           {tab === 'highlights' && <HighlightsTab episode={episode} hasTranscript={hasTranscript} onOpen={openTranscript} />}
           {tab === 'qa' && <QATab episode={episode} />}
           {tab === 'transcript' && (
-            <TranscriptTab episode={episode} podcast={podcast} focusId={jumpTo} focusLabel={jumpLabel} focusTick={jumpTick} />
+            <TranscriptTab
+              episode={episode}
+              podcast={podcast}
+              isTranscribing={transcribing.has(episode.id)}
+              focusId={jumpTo}
+              focusLabel={jumpLabel}
+              focusTick={jumpTick}
+            />
           )}
         </>
       )}
@@ -686,16 +693,68 @@ function QATab({ episode }: { episode: Episode }) {
   )
 }
 
+// Transcript is being generated (or queued) — the episode has an audio/feed source,
+// so a transcript IS coming. Reassures the reader instead of implying it's missing.
+function TranscriptPending({ active }: { active: boolean }) {
+  return (
+    <div className="grid place-items-center gap-sm rounded-2xl border border-outline-variant bg-surface-container-lowest py-xl text-center shadow-card">
+      <span className="grid h-12 w-12 place-items-center rounded-full bg-[#eff5ff]">
+        <Icon name="graphic_eq" size={26} className="text-primary motion-safe:animate-pulse" />
+      </span>
+      <h3 className="text-[19px] font-semibold text-on-surface">Transcribing this episode…</h3>
+      <p className="max-w-md text-body-md text-secondary">
+        The full transcript is being generated and will appear here automatically — this can take a few minutes for a
+        long episode. It's processed once and then available to everyone, so you don't need to wait on this page.
+      </p>
+      <p className="mt-1 inline-flex items-center gap-1.5 text-metadata text-outline">
+        <Icon name="progress_activity" size={14} className="motion-safe:animate-spin" />
+        {active ? 'Working on it now' : 'Queued — processing in the background'}
+      </p>
+    </div>
+  )
+}
+
+// No audio/feed source we can fetch → a transcript genuinely can't be produced
+// (subscriber-only/paywalled audio, or a video-only episode). Say so plainly.
+function TranscriptUnavailable({ episode, podcast }: { episode: Episode; podcast?: Podcast }) {
+  return (
+    <div className="grid place-items-center gap-sm rounded-2xl border border-dashed border-outline-variant bg-surface-container-low py-xl text-center">
+      <span className="grid h-12 w-12 place-items-center rounded-full bg-surface-container">
+        <Icon name="lock" size={24} className="text-outline" />
+      </span>
+      <h3 className="text-[19px] font-semibold text-on-surface-variant">Transcript unavailable</h3>
+      <p className="max-w-md text-body-md text-secondary">
+        We don't have an audio file we can transcribe for this episode — {podcast ? `${podcast.title}'s` : 'this show’s'}{' '}
+        audio is subscriber-only (paywalled) or published as video only, so a transcript can't be loaded. The summary
+        above is built from the publisher's show notes.
+      </p>
+      {episode.sourceUrl && (
+        <a
+          href={episode.sourceUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="press mt-1 inline-flex items-center gap-2 rounded-lg border border-outline-variant bg-surface px-3 py-2 text-metadata font-semibold text-on-surface hover:bg-surface-container-low"
+        >
+          <Icon name="open_in_new" size={16} /> Listen or read at the source
+        </a>
+      )}
+    </div>
+  )
+}
+
 // ── Transcript tab — Highlights list ↔ transcript ────────────────────────────
 function TranscriptTab({
   episode,
   podcast,
+  isTranscribing,
   focusId,
   focusLabel,
   focusTick,
 }: {
   episode: Episode
   podcast?: Podcast
+  /** True while a transcript fetch for this episode is in flight. */
+  isTranscribing?: boolean
   focusId?: string | null
   focusLabel?: string
   focusTick?: number
@@ -718,15 +777,14 @@ function TranscriptTab({
   }, [focusTick])
 
   if (!segments.length) {
-    return (
-      <div className="grid place-items-center gap-sm rounded-2xl border border-dashed border-outline-variant bg-surface-container-low py-xl text-center">
-        <Icon name="graphic_eq" size={32} className="text-outline" />
-        <h3 className="text-[19px] font-semibold text-on-surface-variant">Transcript not ingested yet</h3>
-        <p className="max-w-md text-body-md text-secondary">
-          Once the transcription API returns this episode's text, the full transcript appears here with the summary's
-          highlights linked inline.
-        </p>
-      </div>
+    // Three honest states instead of one ambiguous "not ingested yet":
+    //  • has an audio/feed source  → it's being (or about to be) transcribed → loader
+    //  • no source we can fetch     → it genuinely can't be produced (paywalled / video-only)
+    const hasSource = !!(episode.transcriptUrl || episode.audioUrl)
+    return hasSource ? (
+      <TranscriptPending active={!!isTranscribing} />
+    ) : (
+      <TranscriptUnavailable episode={episode} podcast={podcast} />
     )
   }
 

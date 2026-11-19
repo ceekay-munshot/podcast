@@ -118,6 +118,11 @@ function EmptyState() {
 
 function LoadingState() {
   return (
+    <>
+      <p className="mb-3 inline-flex items-center gap-1.5 text-metadata text-secondary">
+        <Icon name="progress_activity" size={14} className="motion-safe:animate-spin" />
+        Loading past editions…
+      </p>
     <ol className="relative ml-2 border-l border-outline-variant">
       {[0, 1, 2].map((i) => (
         <li key={i} className="relative mb-4 pl-6">
@@ -130,5 +135,6 @@ function LoadingState() {
         </li>
       ))}
     </ol>
+    </>
   )
 }

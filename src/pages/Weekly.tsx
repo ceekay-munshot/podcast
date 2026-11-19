@@ -891,6 +891,10 @@ function GeneratingState({ count }: { count: number }) {
       <p className="max-w-sm text-metadata text-secondary">
         Reading across {count} analysed episode{count === 1 ? '' : 's'} to find the through-line, themes, and what actually mattered.
       </p>
+      <p className="mt-1 inline-flex items-center gap-1.5 text-metadata text-outline">
+        <Icon name="progress_activity" size={14} className="motion-safe:animate-spin" />
+        This runs in the background and appears automatically — you can leave this page, it'll be ready when you're back.
+      </p>
     </div>
   )
 }
