@@ -39,6 +39,9 @@ interface AppData {
    *  Pass `{ force: true }` to regenerate an already-summarized episode, bypassing
    *  the server + client caches (the Refresh button). */
   summarizeEpisode: (episode: Episode, podcast?: Podcast, opts?: { force?: boolean }) => Promise<void>
+  /** Episode ids whose transcript is being fetched right now (a quiet hydrate of an
+   *  already-READY episode). Drives the Transcript tab's "Transcribing…" loader. */
+  transcribing: Set<string>
   /** Bulk "process this week" — summarises the given episodes sequentially. Lives in
    *  the provider so the run KEEPS GOING across navigation and the page re-attaches to
    *  its live `weekProgress` on return. No-op if one is already running. */
@@ -91,6 +94,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [weekly, setWeekly] = useState<WeeklySummary | null>(null)
   const [needsApiKey, setNeedsApiKey] = useState(false)
   const summarizing = useRef<Set<string>>(new Set()) // episode ids with an in-flight summary request
+  // Episode ids whose transcript is actively being fetched (a quiet hydrate of an
+  // already-READY episode). Reactive — unlike `summarizing` — so the Transcript tab
+  // can show a "Transcribing…" loader instead of a bare empty panel.
+  const [transcribing, setTranscribing] = useState<Set<string>>(() => new Set())
   // Bulk "process this week" — held in the provider so it survives page navigation.
   const [weekProcessing, setWeekProcessing] = useState(false)
   const [weekProgress, setWeekProgress] = useState({ done: 0, total: 0, title: '' })
@@ -375,6 +382,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     )
       return
     summarizing.current.add(episode.id)
+    // A quiet transcript hydrate (already-READY episode, just fetching its transcript)
+    // otherwise shows no progress at all. Flag it reactively so the Transcript tab can
+    // render a "Transcribing…" loader. A full (re)generate drives the status pipeline
+    // instead, so only the hydrate case needs this.
+    const isHydrate = !willGenerate && needsTranscript
+    if (isHydrate) setTranscribing((s) => { const n = new Set(s); n.add(episode.id); return n })
     // A summary started under one identity must never write into another's
     // state, localStorage cache, or server history (episode ids are global, so
     // a stale write WOULD land) — if the user switched mid-flight, drop it all.
@@ -421,6 +434,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       }
       // A hydrate failure leaves the existing summary intact (status stays 'ready').
     } finally {
+      // Always clear the transcribing flag (pure UI state) so the loader resolves
+      // whether the hydrate succeeded, returned nothing, or threw.
+      if (isHydrate) setTranscribing((s) => { const n = new Set(s); n.delete(episode.id); return n })
       // Same-epoch calls own their marker. A stale call's marker was already
       // removed by the boot reset's clear(); any marker present now belongs to
       // a NEWER call for the same (globally-shared) episode id — deleting it
@@ -476,12 +492,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       toggleTracked,
       addPodcast,
       summarizeEpisode,
+      transcribing,
       weekProcessing,
       weekProgress,
       processWeek,
       cancelProcessWeek,
     }),
-    [loading, podcasts, episodes, weekly, identity, needsApiKey, podcastById, episodeById, episodesByPodcast, toggleTracked, addPodcast, summarizeEpisode, weekProcessing, weekProgress, processWeek, cancelProcessWeek],
+    [loading, podcasts, episodes, weekly, identity, needsApiKey, podcastById, episodeById, episodesByPodcast, toggleTracked, addPodcast, summarizeEpisode, transcribing, weekProcessing, weekProgress, processWeek, cancelProcessWeek],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
